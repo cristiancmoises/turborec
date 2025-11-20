@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  TURBO RECORDER - High Quality Video Recorder
-# - Captures X11 screen (detects real screen) and upscales to 4K (CPU lanczos -> hwupload)
-# - Mixes monitor + mic reliably (thread queues, resample, volumes, amix)
-# - VAAPI hardware encode (h264_vaapi), FLAC audio @ 96 kHz
+#  TURBO RECORDER — High Quality Video Recorder
+#  - Stable input ordering (X11 first, audio after)
+#  - Minimal filters: no pan/aformat; just resample + amix when needed
+#  - Works with Pulse/ PipeWire source names 
 # =============================================================================
 
 set -euo pipefail
@@ -12,28 +12,29 @@ IFS=$'\n\t'
 # ---------------------------
 # Configurable defaults
 # ---------------------------
-VID_DIR="$HOME/Videos"
-AUD_DIR="$HOME/Audio"
+VID_DIR="${VID_DIR:-$HOME/Videos}"
+AUD_DIR="${AUD_DIR:-$HOME/Audio}"
 
-REQUEST_RECORDING_RES="3840x2160"
-OUTPUT_RES="3840x2160"
-FPS="23"
+REQUEST_RECORDING_RES="${REQUEST_RECORDING_RES:-3840x2160}"
+OUTPUT_RES="${OUTPUT_RES:-3840x2160}"
+FPS="${FPS:-23}"
 
-VAAPI_DEVICE="/dev/dri/renderD128"
-ENCODER="h264_vaapi"   # or hevc_vaapi
-QP="14"
-BITRATE="25000k"
-MAXRATE="40000k"
-BUFFSIZE="40000k"
+VAAPI_DEVICE="${VAAPI_DEVICE:-/dev/dri/renderD128}"
+ENCODER="${ENCODER:-h264_vaapi}"   # or hevc_vaapi
+QP="${QP:-14}"
+BITRATE="${BITRATE:-25000k}"
+MAXRATE="${MAXRATE:-40000k}"
+BUFFSIZE="${BUFFSIZE:-40000k}"
 
-AUDIO_RATE="96000"
+AUDIO_RATE="${AUDIO_RATE:-96000}"
 
-# Fixed monitor source requested by user
-MONITOR_SOURCE="alsa_output.pci-0000_0b_00.6.analog-stereo.monitor"
-# If your Pulse source name for the monitor sink ends without ".monitor", use:
-# MONITOR_SOURCE="alsa_output.pci-0000_0b_00.6.analog-stereo"
-# Replace MIC_SOURCE below if you know a preferred mic; otherwise numeric index or "default" will be chosen.
-PREFERRED_MIC=""
+# ---------------------------
+# Sources
+# ---------------------------
+# Your monitor (speakers) loopback source (ends with .monitor)
+MONITOR_SOURCE="${MONITOR_SOURCE:-alsa_output.pci-0000_0b_00.6.analog-stereo.monitor}"
+# Your default microphone (exact Pulse source name)
+MIC_SOURCE="${MIC_SOURCE:-alsa_input.usb-Focusrite_Scarlett_Solo_4th_Gen_S1XA3TZ3C2C25C-00.analog-surround-40}"
 
 # ---------------------------
 # Helpers
@@ -42,16 +43,13 @@ die(){ printf '%s\n' "$*" >&2; exit 1; }
 ensure_dir(){ local d="$1"; [ -e "$d" ] && [ ! -d "$d" ] && die "Not a directory: $d"; mkdir -p "$d"; }
 timestamp(){ date +"%Y-%m-%d_%H-%M-%S"; }
 
-# ---------------------------
-# X11 detection and resolution
-# ---------------------------
 detect_screen_size(){
   if command -v xdpyinfo >/dev/null 2>&1; then
     xdpyinfo 2>/dev/null | awk '/dimensions:/ {print $2; exit}'
     return
   fi
   if command -v xrandr >/dev/null 2>&1; then
-    xrandr --query 2>/dev/null | awk '/ connected/ { split($3,a,/x/); if (a[1] ~ /^[0-9]+$/) { print a[1]"x"a[2]; exit } }'
+    xrandr --query 2>/dev/null | awk '/ connected/ { split($4,a,/[+x]/); if (a[1] ~ /^[0-9]+$/) { print a[1]"x"a[2]; exit } }'
     return
   fi
   printf ''
@@ -74,93 +72,110 @@ compute_capture_res(){
 build_x11_args(){ X11_ARGS=( -f x11grab -r "$FPS" -s "$CAPTURE_RES" -i ":0.0+0,0" ); }
 
 # ---------------------------
-# Pulse selection helpers (choose mic if not set)
+# Sanity checks for Pulse sources
 # ---------------------------
-find_pulse_source_by_pattern(){
-  pactl list short sources 2>/dev/null | awk -v pat="$1" 'tolower($0) ~ tolower(pat) { print $1; exit }'
+check_pulse_source(){
+  local name="$1"
+  pactl list short sources | awk -v m="$name" '$2==m {found=1} END{exit !found}'
 }
 
-choose_mic_source(){
-  if [ -n "${PREFERRED_MIC:-}" ]; then
-    MIC_SOURCE="$PREFERRED_MIC"
-    return
+validate_sources(){
+  if ! check_pulse_source "$MIC_SOURCE"; then
+    die "Mic source not found in Pulse: $MIC_SOURCE"
   fi
-  # Try common patterns
-  MIC_SOURCE="$(find_pulse_source_by_pattern "usb.*input" || true)"
-  [ -z "$MIC_SOURCE" ] && MIC_SOURCE="$(find_pulse_source_by_pattern "alsa_input" || true)"
-  [ -z "$MIC_SOURCE" ] && MIC_SOURCE="$(find_pulse_source_by_pattern "default" || true)"
-  # Fallback to first source index if still empty
-  if [ -z "${MIC_SOURCE:-}" ]; then
-    mapfile -t _srcs < <(pactl list short sources 2>/dev/null || true)
-    if [ "${#_srcs[@]}" -gt 0 ]; then
-      MIC_SOURCE="$(awk '{print $1}' <<<"${_srcs[0]}")"
-    else
-      MIC_SOURCE="default"
-    fi
+  if ! check_pulse_source "$MONITOR_SOURCE"; then
+    die "Monitor source not found in Pulse: $MONITOR_SOURCE"
   fi
 }
 
 # ---------------------------
-# Audio mix filter builder (explicit volumes + resample + amix -> [a])
-# ---------------------------
-build_mix_filter(){
-  # Adjust mon_vol and mic_vol to taste (1.0 = unity)
-  local mon_vol=1.0
-  local mic_vol=1.0
-  printf "[0]aresample=48000,volume=%s[mon];[1]aformat=sample_rates=48000:channel_layouts=mono|stereo,pan=stereo|c0=c0|c1=c0,volume=%s[mic];[mon][mic]amix=inputs=2:weights=%s %s:duration=longest:dropout_transition=2,aresample=%s[a]" \
-    "$mon_vol" "$mic_vol" "$mon_vol" "$mic_vol" "$AUDIO_RATE"
-}
-
-# ---------------------------
-# Audio-only functions
-# ---------------------------
-audio_internal_only(){
-  ensure_dir "$AUD_DIR"
-  ffmpeg -y -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" -af "aresample=${AUDIO_RATE}" -c:a flac -ar "$AUDIO_RATE" -ac 2 "${AUD_DIR}/audio_internal_$(timestamp).flac"
-}
-
-audio_microphone_only(){
-  ensure_dir "$AUD_DIR"
-  ffmpeg -y -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" -af "aformat=channel_layouts=mono|stereo,pan=stereo|c0=c0|c1=c0,aresample=${AUDIO_RATE}" -c:a flac -ar "$AUDIO_RATE" -ac 2 "${AUD_DIR}/audio_mic_$(timestamp).flac"
-}
-
-audio_internal_and_mic(){
-  ensure_dir "$AUD_DIR"
-  ffmpeg -y -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" -filter_complex "$(build_mix_filter)" -map "[a]" -c:a flac -ar "$AUDIO_RATE" -ac 2 "${AUD_DIR}/audio_mixed_$(timestamp).flac"
-}
-
-# ---------------------------
-# Video functions (CPU upscale -> hwupload -> encode)
+# Video filter
 # ---------------------------
 vaapi_vf_cpu_upscale(){
   local w="${OUTPUT_RES%x*}" h="${OUTPUT_RES#*x}"
   printf 'scale=w=%s:h=%s:flags=lanczos,format=nv12,hwupload' "$w" "$h"
 }
 
+# ---------------------------
+# Audio-only
+# ---------------------------
+audio_internal_only(){
+  ensure_dir "$AUD_DIR"
+  ffmpeg -y -loglevel error \
+    -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
+    -af "aresample=${AUDIO_RATE}" \
+    -c:a flac -ar "$AUDIO_RATE" -ac 2 \
+    "${AUD_DIR}/audio_internal_$(timestamp).flac"
+}
+
+audio_microphone_only(){
+  ensure_dir "$AUD_DIR"
+  ffmpeg -y -loglevel error \
+    -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
+    -af "aresample=${AUDIO_RATE}" \
+    -c:a flac -ar "$AUDIO_RATE" -ac 2 \
+    "${AUD_DIR}/audio_mic_$(timestamp).flac"
+}
+
+audio_internal_and_mic(){
+  ensure_dir "$AUD_DIR"
+  ffmpeg -y -loglevel error \
+    -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
+    -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
+    -filter_complex "[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=2,aresample=${AUDIO_RATE}[a]" \
+    -map "[a]" \
+    -c:a flac -ar "$AUDIO_RATE" -ac 2 \
+    "${AUD_DIR}/audio_mixed_$(timestamp).flac"
+}
+
+# ---------------------------
+# Video
+# ---------------------------
 video_without_audio(){
   ensure_dir "$VID_DIR"
-  ffmpeg -y -vaapi_device "$VAAPI_DEVICE" "${X11_ARGS[@]}" -vf "$(vaapi_vf_cpu_upscale)" -c:v "$ENCODER" -qp "$QP" -b:v "$BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFFSIZE" -profile:v high "${VID_DIR}/video_noaudio_$(timestamp).mkv"
+  ffmpeg -y -loglevel error \
+    -vaapi_device "$VAAPI_DEVICE" \
+    "${X11_ARGS[@]}" \
+    -vf "$(vaapi_vf_cpu_upscale)" \
+    -c:v "$ENCODER" -qp "$QP" -b:v "$BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFFSIZE" -profile:v high \
+    "${VID_DIR}/video_noaudio_$(timestamp).mkv"
 }
 
 video_with_internal_audio(){
   ensure_dir "$VID_DIR"
-  ffmpeg -y -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" "${X11_ARGS[@]}" -filter_complex "[0]aresample=48000[a0]" -map 1:v -map "[a0]" -vaapi_device "$VAAPI_DEVICE" -vf "$(vaapi_vf_cpu_upscale)" -c:v "$ENCODER" -qp "$QP" -b:v "$BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFFSIZE" -profile:v high -c:a flac -ar "$AUDIO_RATE" -ac 2 "${VID_DIR}/video_internal_$(timestamp).mkv"
+  ffmpeg -y -loglevel error \
+    "${X11_ARGS[@]}" \
+    -vaapi_device "$VAAPI_DEVICE" \
+    -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
+    -map 0:v -map 1:a \
+    -vf "$(vaapi_vf_cpu_upscale)" \
+    -c:v "$ENCODER" -qp "$QP" -b:v "$BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFFSIZE" -profile:v high \
+    -c:a flac -ar "$AUDIO_RATE" -ac 2 \
+    "${VID_DIR}/video_internal_$(timestamp).mkv"
 }
 
 video_with_microphone(){
   ensure_dir "$VID_DIR"
-  ffmpeg -y -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" "${X11_ARGS[@]}" -filter_complex "[0]aformat=sample_rates=48000:channel_layouts=mono|stereo,pan=stereo|c0=c0|c1=c0[a0]" -map 1:v -map "[a0]" -vaapi_device "$VAAPI_DEVICE" -vf "$(vaapi_vf_cpu_upscale)" -c:v "$ENCODER" -qp "$QP" -b:v "$BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFFSIZE" -profile:v high -c:a flac -ar "$AUDIO_RATE" -ac 2 "${VID_DIR}/video_mic_$(timestamp).mkv"
+  ffmpeg -y -loglevel error \
+    "${X11_ARGS[@]}" \
+    -vaapi_device "$VAAPI_DEVICE" \
+    -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
+    -map 0:v -map 1:a \
+    -vf "$(vaapi_vf_cpu_upscale)" \
+    -c:v "$ENCODER" -qp "$QP" -b:v "$BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFFSIZE" -profile:v high \
+    -c:a flac -ar "$AUDIO_RATE" -ac 2 \
+    "${VID_DIR}/video_mic_$(timestamp).mkv"
 }
 
 video_with_both(){
   ensure_dir "$VID_DIR"
-  ffmpeg -y \
+  ffmpeg -y -loglevel error \
+    "${X11_ARGS[@]}" \
+    -vaapi_device "$VAAPI_DEVICE" \
     -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
     -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
-    "${X11_ARGS[@]}" \
-    -filter_complex "$(build_mix_filter)" \
-    -map 2:v -map "[a]" \
-    -vaapi_device "$VAAPI_DEVICE" \
+    -filter_complex "[1:a][2:a]amix=inputs=2:duration=longest:dropout_transition=2,aresample=${AUDIO_RATE}[a]" \
+    -map 0:v -map "[a]" \
     -vf "$(vaapi_vf_cpu_upscale)" \
     -c:v "$ENCODER" -qp "$QP" -b:v "$BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFFSIZE" -profile:v high \
     -c:a flac -ar "$AUDIO_RATE" -ac 2 \
@@ -168,25 +183,25 @@ video_with_both(){
 }
 
 # ---------------------------
-# Menu / CLI
+# CLI + Main
 # ---------------------------
 print_help(){
   cat <<EOF
 Usage: $0 [options]
-Options:
-  -m MODE  (audio_internal,audio_mic,audio_both,video_noaudio,video_internal,video_mic,video_both)
-  -o DIR   output dir
-  -s RES   upscale resolution
+  -m MODE   (audio_internal|audio_mic|audio_both|video_noaudio|video_internal|video_mic|video_both)
+  -o DIR    output directory (sets both video and audio dirs)
+  -s RES    output resolution (e.g., 3840x2160)
   -f FPS
   -q QP
   -b BITRATE
-  -a ARATE
-  -h       help
+  -a ARATE  audio sample rate (default: 96000)
+  -H DEV    VAAPI device (default: /dev/dri/renderD128)
+  -h        help
 EOF
 }
 
 MODE=""
-while getopts ":m:o:s:f:q:b:a:h" opt; do
+while getopts ":m:o:s:f:q:b:a:H:h" opt; do
   case "$opt" in
     m) MODE="$OPTARG" ;;
     o) VID_DIR="$OPTARG"; AUD_DIR="$OPTARG" ;;
@@ -195,33 +210,23 @@ while getopts ":m:o:s:f:q:b:a:h" opt; do
     q) QP="$OPTARG" ;;
     b) BITRATE="$OPTARG" ;;
     a) AUDIO_RATE="$OPTARG" ;;
+    H) VAAPI_DEVICE="$OPTARG" ;;
     h) print_help; exit 0 ;;
     \?) die "Invalid option: -$OPTARG" ;;
     :) die "Option -$OPTARG requires an argument." ;;
   esac
 done
 
-# ---------------------------
-# Main run
-# ---------------------------
 compute_capture_res
 build_x11_args
-choose_mic_source
+validate_sources
 
-printf 'Using monitor source: %s\nUsing mic source: %s\nCapture: %s -> upscaling to %s at %s fps\n' "$MONITOR_SOURCE" "$MIC_SOURCE" "$CAPTURE_RES" "$OUTPUT_RES" "$FPS" >&2
+printf 'Monitor: %s\nMic: %s\nCapture %s → %s @ %s fps\n' "$MONITOR_SOURCE" "$MIC_SOURCE" "$CAPTURE_RES" "$OUTPUT_RES" "$FPS" >&2
 
 if [ -z "${MODE:-}" ]; then
-  echo "Choose an option:"
-  echo "1) audio internal"
-  echo "2) microphone only"
-  echo "3) audio internal + microphone"
-  echo "4) video no audio"
-  echo "5) video internal (monitor audio)"
-  echo "6) video microphone (mic only)"
-  echo "7) video both (monitor + mic)"
-  echo "8) quit"
-  printf "Enter choice [1-8]: "
-  read -r CHOICE
+  echo "1) audio internal  2) mic only  3) audio both  4) video no audio"
+  echo "5) video internal  6) video mic 7) video both  8) quit"
+  printf "Choice [1-8]: "; read -r CHOICE
 else
   case "$MODE" in
     audio_internal) CHOICE=1 ;;
@@ -243,6 +248,6 @@ case "$CHOICE" in
   5) video_with_internal_audio ;;
   6) video_with_microphone ;;
   7) video_with_both ;;
-  8) printf 'Exiting\n'; exit 0 ;;
-  *) die "Invalid selection: $CHOICE" ;;
+  8) echo "Bye"; exit 0 ;;
+  *) die "Invalid choice" ;;
 esac
