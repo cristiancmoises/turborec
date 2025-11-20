@@ -8,6 +8,8 @@ screen size, captures with high fidelity, upscales to 4K using Lanczos,
 merges monitor + microphone audio, and encodes using VAAPI hardware
 acceleration for extremely low CPU usage.
 
+[Sample here](https://youtu.be/mlf531Da9Qo?si=RTaSB9dJ4NSbGsOm)
+
 ## Features
 
 -   Auto-detects X11 screen resolution
