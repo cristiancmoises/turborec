@@ -1,40 +1,42 @@
 #!/usr/bin/env bash
-# =============================================================================
-#  TURBO RECORDER — High Quality Video Recorder
-#  - Stable input ordering (X11 first, audio after)
-#  - Minimal filters: no pan/aformat; just resample + amix when needed
-#  - Works with Pulse/ PipeWire source names 
-# =============================================================================
-
+#  TURBO RECORDER
+# - If display capture >= 3840x2160: capture native 4K and encode with VAAPI (HEVC if available)
+# - If display < 4K: capture native source and encode with very high-quality settings (libx265 CRF or hevc_vaapi fallback)
+# - Reliable monitor + mic mixing, FLAC audio @ 96 kHz
+# - Outputs to ~/Videos and ~/Audio by default
 set -euo pipefail
 IFS=$'\n\t'
 
 # ---------------------------
-# Configurable defaults
+# User-configurable defaults
 # ---------------------------
 VID_DIR="${VID_DIR:-$HOME/Videos}"
 AUD_DIR="${AUD_DIR:-$HOME/Audio}"
 
-REQUEST_RECORDING_RES="${REQUEST_RECORDING_RES:-3840x2160}"
-OUTPUT_RES="${OUTPUT_RES:-3840x2160}"
+TARGET_4K_W=3840
+TARGET_4K_H=2160
+OUTPUT_RES="${OUTPUT_RES:-3840x2160}"   # used only for upscaling when explicitly needed (default 4K)
 FPS="${FPS:-23}"
-
 VAAPI_DEVICE="${VAAPI_DEVICE:-/dev/dri/renderD128}"
-ENCODER="${ENCODER:-h264_vaapi}"   # or hevc_vaapi
-QP="${QP:-14}"
-BITRATE="${BITRATE:-25000k}"
-MAXRATE="${MAXRATE:-40000k}"
-BUFFSIZE="${BUFFSIZE:-40000k}"
+
+# Encoder preferences
+PREFER_HEVC_VAAPI="${PREFER_HEVC_VAAPI:-1}"  # 1 = prefer hevc_vaapi when available, 0 = prefer h264_vaapi
+VAAPI_QP="${VAAPI_QP:-14}"                   # lower = higher quality for VAAPI
+VAAPI_BITRATE="${VAAPI_BITRATE:-40000k}"     # used when VAAPI mode selected
+VAAPI_MAXRATE="${VAAPI_MAXRATE:-60000k}"
+VAAPI_BUFSIZE="${VAAPI_BUFSIZE:-60000k}"
+
+# Software encoder fallback (very high visual quality)
+SW_CRF="${SW_CRF:-18}"       # x265 CRF for visually high-quality archive (lower = better)
+SW_PRESET="${SW_PRESET:-slow}"
 
 AUDIO_RATE="${AUDIO_RATE:-96000}"
 
-# ---------------------------
-# Sources
-# ---------------------------
-# Your monitor (speakers) loopback source (ends with .monitor)
+# Audio sources (set your exact monitor source if known)
+# Example monitor sink from user: alsa_output.pci-0000_0b_00.6.analog-stereo
+# Pulse monitor source usually ends with ".monitor"
 MONITOR_SOURCE="${MONITOR_SOURCE:-alsa_output.pci-0000_0b_00.6.analog-stereo.monitor}"
-# Your default microphone (exact Pulse source name)
-MIC_SOURCE="${MIC_SOURCE:-alsa_input.usb-Focusrite_Scarlett_Solo_4th_Gen_S1XA3TZ3C2C25C-00.analog-surround-40}"
+PREFERRED_MIC="${PREFERRED_MIC:-}"   # leave empty to auto-detect
 
 # ---------------------------
 # Helpers
@@ -43,211 +45,250 @@ die(){ printf '%s\n' "$*" >&2; exit 1; }
 ensure_dir(){ local d="$1"; [ -e "$d" ] && [ ! -d "$d" ] && die "Not a directory: $d"; mkdir -p "$d"; }
 timestamp(){ date +"%Y-%m-%d_%H-%M-%S"; }
 
+# Detect commands
+require_cmd(){ command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"; }
+require_cmd ffmpeg
+require_cmd pactl
+require_cmd awk
+
+# ---------------------------
+# Detect screen size
+# ---------------------------
 detect_screen_size(){
+  local s=""
   if command -v xdpyinfo >/dev/null 2>&1; then
-    xdpyinfo 2>/dev/null | awk '/dimensions:/ {print $2; exit}'
+    s="$(xdpyinfo 2>/dev/null | awk '/dimensions:/ {print $2; exit}')"
+  fi
+  if [ -z "$s" ] && command -v xrandr >/dev/null 2>&1; then
+    s="$(xrandr --query 2>/dev/null | awk '/ connected/ { split($3,a,/x/); if (a[1] ~ /^[0-9]+$/) { print a[1]"x"a[2]; exit } }')"
+  fi
+  printf '%s' "$s"
+}
+
+# ---------------------------
+# Pulse source selection
+# ---------------------------
+find_pulse_source_by_pattern(){
+  pactl list short sources 2>/dev/null | awk -v pat="$1" 'tolower($0) ~ tolower(pat) { print $1; exit }'
+}
+
+choose_mic_source(){
+  if [ -n "$PREFERRED_MIC" ]; then
+    MIC_SOURCE="$PREFERRED_MIC"
     return
   fi
-  if command -v xrandr >/dev/null 2>&1; then
-    xrandr --query 2>/dev/null | awk '/ connected/ { split($4,a,/[+x]/); if (a[1] ~ /^[0-9]+$/) { print a[1]"x"a[2]; exit } }'
-    return
-  fi
-  printf ''
-}
-
-min_of(){ [ "$1" -le "$2" ] && printf '%d' "$1" || printf '%d' "$2"; }
-
-compute_capture_res(){
-  local screen sw sh rw rh cw ch
-  screen="$(detect_screen_size || true)"
-  if [ -z "$screen" ]; then
-    CAPTURE_RES="$REQUEST_RECORDING_RES"; return
-  fi
-  sw="${screen%x*}"; sh="${screen#*x}"
-  rw="${REQUEST_RECORDING_RES%x*}"; rh="${REQUEST_RECORDING_RES#*x}"
-  cw="$(min_of "$rw" "$sw")"; ch="$(min_of "$rh" "$sh")"
-  CAPTURE_RES="${cw}x${ch}"
-}
-
-build_x11_args(){ X11_ARGS=( -f x11grab -r "$FPS" -s "$CAPTURE_RES" -i ":0.0+0,0" ); }
-
-# ---------------------------
-# Sanity checks for Pulse sources
-# ---------------------------
-check_pulse_source(){
-  local name="$1"
-  pactl list short sources | awk -v m="$name" '$2==m {found=1} END{exit !found}'
-}
-
-validate_sources(){
-  if ! check_pulse_source "$MIC_SOURCE"; then
-    die "Mic source not found in Pulse: $MIC_SOURCE"
-  fi
-  if ! check_pulse_source "$MONITOR_SOURCE"; then
-    die "Monitor source not found in Pulse: $MONITOR_SOURCE"
+  MIC_SOURCE="$(find_pulse_source_by_pattern "usb.*input" || true)"
+  [ -z "$MIC_SOURCE" ] && MIC_SOURCE="$(find_pulse_source_by_pattern "alsa_input" || true)"
+  [ -z "$MIC_SOURCE" ] && MIC_SOURCE="$(find_pulse_source_by_pattern "default" || true)"
+  if [ -z "${MIC_SOURCE:-}" ]; then
+    mapfile -t _srcs < <(pactl list short sources 2>/dev/null || true)
+    if [ "${#_srcs[@]}" -gt 0 ]; then
+      MIC_SOURCE="$(awk '{print $1}' <<<"${_srcs[0]}")"
+    else
+      MIC_SOURCE="default"
+    fi
   fi
 }
 
 # ---------------------------
-# Video filter
+# Utility: check if encoder is available in ffmpeg
 # ---------------------------
-vaapi_vf_cpu_upscale(){
-  local w="${OUTPUT_RES%x*}" h="${OUTPUT_RES#*x}"
-  printf 'scale=w=%s:h=%s:flags=lanczos,format=nv12,hwupload' "$w" "$h"
+ffmpeg_has_encoder(){
+  local enc="$1"
+  ffmpeg -hide_banner -encoders 2>/dev/null | awk '{print $1}' | grep -xq "$enc"
 }
 
 # ---------------------------
-# Audio-only
+# Audio mix filter builder
 # ---------------------------
-audio_internal_only(){
+build_mix_filter(){
+  # balance volumes here if needed
+  local mon_vol=1.0
+  local mic_vol=1.0
+  printf "[0]aresample=48000,volume=%s[mon];[1]aformat=sample_rates=48000:channel_layouts=mono|stereo,pan=stereo|c0=c0|c1=c0,volume=%s[mic];[mon][mic]amix=inputs=2:weights=%s %s:duration=longest:dropout_transition=2,aresample=%s[a]" \
+    "$mon_vol" "$mic_vol" "$mon_vol" "$mic_vol" "$AUDIO_RATE"
+}
+
+# ---------------------------
+# Build the ffmpeg command based on detection
+# ---------------------------
+run_record_native_4k_vaapi(){
+  ensure_dir "$VID_DIR"
   ensure_dir "$AUD_DIR"
-  ffmpeg -y -loglevel error \
-    -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
-    -af "aresample=${AUDIO_RATE}" \
-    -c:a flac -ar "$AUDIO_RATE" -ac 2 \
-    "${AUD_DIR}/audio_internal_$(timestamp).flac"
+  choose_mic_source
+
+  # prefer hevc_vaapi if available and allowed, else h264_vaapi, else fall back to software libx265
+  local enc
+  if [ "$PREFER_HEVC_VAAPI" -eq 1 ] && ffmpeg_has_encoder hevc_vaapi; then
+    enc="hevc_vaapi"
+  elif ffmpeg_has_encoder h264_vaapi; then
+    enc="h264_vaapi"
+  else
+    enc=""
+  fi
+
+  if [ -n "$enc" ]; then
+    printf 'Recording native 4K -> hardware encoder: %s\nMonitor: %s  Mic: %s\n' "$enc" "$MONITOR_SOURCE" "$MIC_SOURCE" >&2
+    ffmpeg -hide_banner -y \
+      -vaapi_device "$VAAPI_DEVICE" \
+      -f x11grab -r "$FPS" -s "${TARGET_4K_W}x${TARGET_4K_H}" -i ":0.0+0,0" \
+      -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
+      -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
+      -filter_complex "$(build_mix_filter)" \
+      -map 0:v -map "[a]" \
+      -vf format=nv12,hwupload \
+      -c:v "$enc" -qp "$VAAPI_QP" -b:v "$VAAPI_BITRATE" -maxrate "$VAAPI_MAXRATE" -bufsize "$VAAPI_BUFSIZE" -profile:v main \
+      -c:a flac -ar "$AUDIO_RATE" -ac 2 \
+      "${VID_DIR}/capture_4k_$(timestamp).mkv"
+  else
+    # fallback to software x265 with high quality CRF
+    printf 'Recording native 4K -> software x265 (fallback)\nMonitor: %s  Mic: %s\n' "$MONITOR_SOURCE" "$MIC_SOURCE" >&2
+    ffmpeg -hide_banner -y \
+      -f x11grab -r "$FPS" -s "${TARGET_4K_W}x${TARGET_4K_H}" -i ":0.0+0,0" \
+      -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
+      -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
+      -filter_complex "$(build_mix_filter)" \
+      -map 0:v -map "[a]" \
+      -c:v libx265 -preset "$SW_PRESET" -crf "$SW_CRF" \
+      -c:a flac -ar "$AUDIO_RATE" -ac 2 \
+      "${VID_DIR}/capture_4k_x265_$(timestamp).mkv"
+  fi
 }
 
-audio_microphone_only(){
+run_record_native_source_best(){
+  ensure_dir "$VID_DIR"
   ensure_dir "$AUD_DIR"
-  ffmpeg -y -loglevel error \
-    -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
-    -af "aresample=${AUDIO_RATE}" \
-    -c:a flac -ar "$AUDIO_RATE" -ac 2 \
-    "${AUD_DIR}/audio_mic_$(timestamp).flac"
-}
+  choose_mic_source
 
-audio_internal_and_mic(){
-  ensure_dir "$AUD_DIR"
-  ffmpeg -y -loglevel error \
-    -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
-    -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
-    -filter_complex "[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=2,aresample=${AUDIO_RATE}[a]" \
-    -map "[a]" \
-    -c:a flac -ar "$AUDIO_RATE" -ac 2 \
-    "${AUD_DIR}/audio_mixed_$(timestamp).flac"
-}
+  local W="$1" H="$2"
+  # choose best encoder: prefer hevc_vaapi/h264_vaapi (will hwupload), else libx265
+  local enc=""
+  if [ "$PREFER_HEVC_VAAPI" -eq 1 ] && ffmpeg_has_encoder hevc_vaapi; then
+    enc="hevc_vaapi"
+  elif ffmpeg_has_encoder h264_vaapi; then
+    enc="h264_vaapi"
+  fi
 
-# ---------------------------
-# Video
-# ---------------------------
-video_without_audio(){
-  ensure_dir "$VID_DIR"
-  ffmpeg -y -loglevel error \
-    -vaapi_device "$VAAPI_DEVICE" \
-    "${X11_ARGS[@]}" \
-    -vf "$(vaapi_vf_cpu_upscale)" \
-    -c:v "$ENCODER" -qp "$QP" -b:v "$BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFFSIZE" -profile:v high \
-    "${VID_DIR}/video_noaudio_$(timestamp).mkv"
-}
-
-video_with_internal_audio(){
-  ensure_dir "$VID_DIR"
-  ffmpeg -y -loglevel error \
-    "${X11_ARGS[@]}" \
-    -vaapi_device "$VAAPI_DEVICE" \
-    -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
-    -map 0:v -map 1:a \
-    -vf "$(vaapi_vf_cpu_upscale)" \
-    -c:v "$ENCODER" -qp "$QP" -b:v "$BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFFSIZE" -profile:v high \
-    -c:a flac -ar "$AUDIO_RATE" -ac 2 \
-    "${VID_DIR}/video_internal_$(timestamp).mkv"
-}
-
-video_with_microphone(){
-  ensure_dir "$VID_DIR"
-  ffmpeg -y -loglevel error \
-    "${X11_ARGS[@]}" \
-    -vaapi_device "$VAAPI_DEVICE" \
-    -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
-    -map 0:v -map 1:a \
-    -vf "$(vaapi_vf_cpu_upscale)" \
-    -c:v "$ENCODER" -qp "$QP" -b:v "$BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFFSIZE" -profile:v high \
-    -c:a flac -ar "$AUDIO_RATE" -ac 2 \
-    "${VID_DIR}/video_mic_$(timestamp).mkv"
-}
-
-video_with_both(){
-  ensure_dir "$VID_DIR"
-  ffmpeg -y -loglevel error \
-    "${X11_ARGS[@]}" \
-    -vaapi_device "$VAAPI_DEVICE" \
-    -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
-    -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
-    -filter_complex "[1:a][2:a]amix=inputs=2:duration=longest:dropout_transition=2,aresample=${AUDIO_RATE}[a]" \
-    -map 0:v -map "[a]" \
-    -vf "$(vaapi_vf_cpu_upscale)" \
-    -c:v "$ENCODER" -qp "$QP" -b:v "$BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFFSIZE" -profile:v high \
-    -c:a flac -ar "$AUDIO_RATE" -ac 2 \
-    "${VID_DIR}/video_both_$(timestamp).mkv"
+  if [ -n "$enc" ]; then
+    printf 'Recording native %sx%s -> hardware encoder: %s\nMonitor: %s  Mic: %s\n' "$W" "$H" "$enc" "$MONITOR_SOURCE" "$MIC_SOURCE" >&2
+    ffmpeg -hide_banner -y \
+      -vaapi_device "$VAAPI_DEVICE" \
+      -f x11grab -r "$FPS" -s "${W}x${H}" -i ":0.0+0,0" \
+      -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
+      -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
+      -filter_complex "$(build_mix_filter)" \
+      -map 0:v -map "[a]" \
+      -vf format=nv12,hwupload \
+      -c:v "$enc" -qp "$VAAPI_QP" -b:v "$VAAPI_BITRATE" -maxrate "$VAAPI_MAXRATE" -bufsize "$VAAPI_BUFSIZE" -profile:v main \
+      -c:a flac -ar "$AUDIO_RATE" -ac 2 \
+      "${VID_DIR}/capture_${W}x${H}_$(timestamp).mkv"
+  else
+    printf 'Recording native %sx%s -> software x265 (high-quality)\nMonitor: %s  Mic: %s\n' "$W" "$H" "$MONITOR_SOURCE" "$MIC_SOURCE" >&2
+    ffmpeg -hide_banner -y \
+      -f x11grab -r "$FPS" -s "${W}x${H}" -i ":0.0+0,0" \
+      -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
+      -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
+      -filter_complex "$(build_mix_filter)" \
+      -map 0:v -map "[a]" \
+      -c:v libx265 -preset "$SW_PRESET" -crf "$SW_CRF" \
+      -c:a flac -ar "$AUDIO_RATE" -ac 2 \
+      "${VID_DIR}/capture_${W}x${H}_x265_$(timestamp).mkv"
+  fi
 }
 
 # ---------------------------
-# CLI + Main
+# CLI / Menu
 # ---------------------------
 print_help(){
   cat <<EOF
 Usage: $0 [options]
-  -m MODE   (audio_internal|audio_mic|audio_both|video_noaudio|video_internal|video_mic|video_both)
-  -o DIR    output directory (sets both video and audio dirs)
-  -s RES    output resolution (e.g., 3840x2160)
-  -f FPS
-  -q QP
-  -b BITRATE
-  -a ARATE  audio sample rate (default: 96000)
-  -H DEV    VAAPI device (default: /dev/dri/renderD128)
-  -h        help
+Options:
+  -m MODE    mode (audio_internal,audio_mic,audio_both,video_auto)
+  -o DIR     output directory for both video/audio
+  -f FPS     frames per second
+  -q QP      VAAPI QP (lower = better)
+  -b BITRATE VAAPI bitrate (e.g., 40000k)
+  -h         show help
 EOF
 }
 
 MODE=""
-while getopts ":m:o:s:f:q:b:a:H:h" opt; do
+while getopts ":m:o:f:q:b:h" opt; do
   case "$opt" in
     m) MODE="$OPTARG" ;;
     o) VID_DIR="$OPTARG"; AUD_DIR="$OPTARG" ;;
-    s) OUTPUT_RES="$OPTARG" ;;
     f) FPS="$OPTARG" ;;
-    q) QP="$OPTARG" ;;
-    b) BITRATE="$OPTARG" ;;
-    a) AUDIO_RATE="$OPTARG" ;;
-    H) VAAPI_DEVICE="$OPTARG" ;;
+    q) VAAPI_QP="$OPTARG" ;;
+    b) VAAPI_BITRATE="$OPTARG" ;;
     h) print_help; exit 0 ;;
     \?) die "Invalid option: -$OPTARG" ;;
     :) die "Option -$OPTARG requires an argument." ;;
   esac
 done
 
-compute_capture_res
-build_x11_args
-validate_sources
+# ---------------------------
+# Main logic: detect and choose pipeline
+# ---------------------------
+SCREEN="$(detect_screen_size || true)"
+if [ -z "$SCREEN" ]; then
+  printf 'Warning: could not detect screen size. Defaulting to native capture with best encoder.\n' >&2
+  SW_W=1920; SW_H=1080
+else
+  SW_W="${SCREEN%x*}"; SW_H="${SCREEN#*x}"
+fi
 
-printf 'Monitor: %s\nMic: %s\nCapture %s → %s @ %s fps\n' "$MONITOR_SOURCE" "$MIC_SOURCE" "$CAPTURE_RES" "$OUTPUT_RES" "$FPS" >&2
+# Ensure mic selected
+choose_mic_source
 
+printf 'Detected screen: %s  (width=%s height=%s)\n' "${SCREEN:-unknown}" "$SW_W" "$SW_H" >&2
+printf 'Monitor source: %s\nMic source: %s\n' "$MONITOR_SOURCE" "$MIC_SOURCE" >&2
+
+# Modes
 if [ -z "${MODE:-}" ]; then
-  echo "1) audio internal  2) mic only  3) audio both  4) video no audio"
-  echo "5) video internal  6) video mic 7) video both  8) quit"
-  printf "Choice [1-8]: "; read -r CHOICE
+  echo "Choose an option:"
+  echo "1) audio internal"
+  echo "2) microphone only"
+  echo "3) audio internal + microphone (audio file)"
+  echo "4) video (auto: choose best pipeline for source; prefer native 4K if available)"
+  echo "5) quit"
+  printf "Enter choice [1-5]: "
+  read -r CHOICE
 else
   case "$MODE" in
     audio_internal) CHOICE=1 ;;
     audio_mic)      CHOICE=2 ;;
     audio_both)     CHOICE=3 ;;
-    video_noaudio)  CHOICE=4 ;;
-    video_internal) CHOICE=5 ;;
-    video_mic)      CHOICE=6 ;;
-    video_both)     CHOICE=7 ;;
-    *)              CHOICE=8 ;;
+    video_auto)     CHOICE=4 ;;
+    *) CHOICE=5 ;;
   esac
 fi
 
 case "$CHOICE" in
-  1) audio_internal_only ;;
-  2) audio_microphone_only ;;
-  3) audio_internal_and_mic ;;
-  4) video_without_audio ;;
-  5) video_with_internal_audio ;;
-  6) video_with_microphone ;;
-  7) video_with_both ;;
-  8) echo "Bye"; exit 0 ;;
-  *) die "Invalid choice" ;;
+  1)
+    ensure_dir "$AUD_DIR"
+    ffmpeg -hide_banner -y -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" -af "aresample=${AUDIO_RATE}" -c:a flac -ar "$AUDIO_RATE" -ac 2 "${AUD_DIR}/audio_internal_$(timestamp).flac"
+    ;;
+  2)
+    ensure_dir "$AUD_DIR"
+    ffmpeg -hide_banner -y -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" -af "aformat=channel_layouts=mono|stereo,pan=stereo|c0=c0|c1=c0,aresample=${AUDIO_RATE}" -c:a flac -ar "$AUDIO_RATE" -ac 2 "${AUD_DIR}/audio_mic_$(timestamp).flac"
+    ;;
+  3)
+    ensure_dir "$AUD_DIR"
+    ffmpeg -hide_banner -y -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" -filter_complex "$(build_mix_filter)" -map "[a]" -c:a flac -ar "$AUDIO_RATE" -ac 2 "${AUD_DIR}/audio_mixed_$(timestamp).flac"
+    ;;
+  4)
+    # If display is >= 4K, capture native 4K
+    if [ -n "$SW_W" ] && [ -n "$SW_H" ] && [ "$SW_W" -ge "$TARGET_4K_W" ] && [ "$SW_H" -ge "$TARGET_4K_H" ]; then
+      run_record_native_4k_vaapi
+    else
+      # Else capture native source resolution with best settings
+      run_record_native_source_best "$SW_W" "$SW_H"
+    fi
+    ;;
+  5)
+    printf 'Exiting\n'; exit 0
+    ;;
+  *)
+    die "Invalid selection: $CHOICE"
+    ;;
 esac
