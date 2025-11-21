@@ -33,7 +33,7 @@ SW_PRESET="${SW_PRESET:-slow}"
 
 AUDIO_RATE="${AUDIO_RATE:-96000}"
 
-# Monitor source (set to your Pulse monitor source). User provided sink:
+# Monitor source (set to your Pulse monitor source). Example sink:
 # alsa_output.pci-0000_0b_00.6.analog-stereo
 MONITOR_SOURCE="${MONITOR_SOURCE:-alsa_output.pci-0000_0b_00.6.analog-stereo.monitor}"
 PREFERRED_MIC="${PREFERRED_MIC:-}"   # leave empty to auto-detect
@@ -98,12 +98,14 @@ ffmpeg_has_encoder(){
 }
 
 # ---------------------------------------------------------------------------
-# Audio mix filter builder (inputs: 0=monitor,1=mic). Outputs label [a]
+# Audio mix filter builder (inputs: 1=monitor audio,2=mic audio). Outputs label [a]
+# NOTE: FFmpeg inputs in our commands are ordered: 0=video, 1=first audio, 2=second audio
 # ---------------------------------------------------------------------------
 build_mix_filter(){
   local mon_vol=1.0
   local mic_vol=1.0
-  printf "[0]aresample=48000,volume=%s[mon];[1]aformat=sample_rates=48000:channel_layouts=mono|stereo,pan=stereo|c0=c0|c1=c0,volume=%s[mic];[mon][mic]amix=inputs=2:weights=%s %s:duration=longest:dropout_transition=2,aresample=%s[a]" \
+  # Use [1] and [2] for the two audio inputs (not [0], which is the video input)
+  printf "[1]aresample=48000,volume=%s[mon];[2]aformat=sample_rates=48000:channel_layouts=mono|stereo,pan=stereo|c0=c0|c1=c0,volume=%s[mic];[mon][mic]amix=inputs=2:weights=%s %s:duration=longest:dropout_transition=2,aresample=%s[a]" \
     "$mon_vol" "$mic_vol" "$mon_vol" "$mic_vol" "$AUDIO_RATE"
 }
 
@@ -130,14 +132,12 @@ run_audio_internal_and_mic(){
 # Video - no audio (screen only)
 run_video_noaudio(){
   ensure_dir "$VID_DIR"
-  choose_mic_source
   detect_and_record_video "" "" noaudio
 }
 
 # Video - internal monitor audio only
 run_video_internal(){
   ensure_dir "$VID_DIR"
-  choose_mic_source
   detect_and_record_video "$MONITOR_SOURCE" "" video_internal
 }
 
@@ -187,13 +187,12 @@ detect_and_record_video(){
   if [ "$mode" = "noaudio" ]; then
     :
   elif [ -n "$src_monitor" ] && [ -n "$src_mic" ]; then
-    # monitor + mic
+    # monitor + mic: add two audio inputs in order: monitor first, mic second
     audio_inputs=( -f pulse -thread_queue_size 1024 -i "$src_monitor" -f pulse -thread_queue_size 1024 -i "$src_mic" )
     filter_complex="$(build_mix_filter)"
     map_audio="-map [a]"
   elif [ -n "$src_monitor" ]; then
     audio_inputs=( -f pulse -thread_queue_size 1024 -i "$src_monitor" )
-    # single audio input will be remapped below
   elif [ -n "$src_mic" ]; then
     audio_inputs=( -f pulse -thread_queue_size 1024 -i "$src_mic" )
   fi
@@ -219,9 +218,9 @@ detect_and_record_video(){
         "${VID_DIR}/video_noaudio_$(timestamp).mkv"
     else
       # with audio (single or mixed)
-      # When only one audio input is present (monitor OR mic) the mapping differs:
       if [ "${#audio_inputs[@]}" -eq 2 ]; then
-        # single audio input
+        # single audio input present (the array will have 2 elements only when single -i arg is used in implementation above)
+        # But we build audio_inputs as pairs (-f ... -i ...), so for a single audio source the array length is 2 and the audio index is 1
         ffmpeg -hide_banner -y \
           -vaapi_device "$VAAPI_DEVICE" \
           -f x11grab -r "$FPS" -s "${cap_w}x${cap_h}" -i ":0.0+0,0" \
@@ -232,7 +231,7 @@ detect_and_record_video(){
           -c:a flac -ar "$AUDIO_RATE" -ac 2 \
           "${VID_DIR}/video_$(timestamp).mkv"
       else
-        # two audio inputs -> mix
+        # two audio inputs -> mix. audio_inputs will have 4 items in that case (-f.. -i ... -f .. -i ...)
         ffmpeg -hide_banner -y \
           -vaapi_device "$VAAPI_DEVICE" \
           -f x11grab -r "$FPS" -s "${cap_w}x${cap_h}" -i ":0.0+0,0" \
