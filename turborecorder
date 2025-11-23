@@ -2,7 +2,7 @@
 # =============================================================================
 #  TURBO RECORDER — High Quality Video Recorder
 #  - Stable input ordering (X11 first, audio after)
-#  - Minimal filters: no pan/aformat; just resample + amix when needed
+#  - Minimal filters: resample + pan + amix when needed
 #  - Works with Pulse/ PipeWire source names
 #  - NO UPSCALING: output video keeps the captured screen resolution
 # =============================================================================
@@ -99,12 +99,15 @@ vaapi_vf_no_upscale(){
 
 # ---------------------------
 # Audio-only
+# Notes:
+# - We force stereo with pan to duplicate mono channels to both L and R.
+# - aresample ensures the requested sample rate.
 # ---------------------------
 audio_internal_only(){
   ensure_dir "$AUD_DIR"
   ffmpeg -y -loglevel error \
     -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
-    -af "aresample=${AUDIO_RATE}" \
+    -af "aresample=${AUDIO_RATE},pan=stereo|c0=c0|c1=c0" \
     -c:a flac -ar "$AUDIO_RATE" -ac 2 \
     "${AUD_DIR}/audio_internal_$(timestamp).flac"
 }
@@ -113,7 +116,7 @@ audio_microphone_only(){
   ensure_dir "$AUD_DIR"
   ffmpeg -y -loglevel error \
     -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
-    -af "aresample=${AUDIO_RATE}" \
+    -af "aresample=${AUDIO_RATE},pan=stereo|c0=c0|c1=c0" \
     -c:a flac -ar "$AUDIO_RATE" -ac 2 \
     "${AUD_DIR}/audio_mic_$(timestamp).flac"
 }
@@ -123,7 +126,10 @@ audio_internal_and_mic(){
   ffmpeg -y -loglevel error \
     -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
     -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
-    -filter_complex "[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=2,aresample=${AUDIO_RATE}[a]" \
+    -filter_complex \
+      "[0:a]aresample=${AUDIO_RATE},pan=stereo|c0=c0|c1=c0[a0]; \
+       [1:a]aresample=${AUDIO_RATE},pan=stereo|c0=c0|c1=c0[a1]; \
+       [a0][a1]amix=inputs=2:duration=longest:dropout_transition=2,aresample=${AUDIO_RATE}[a]" \
     -map "[a]" \
     -c:a flac -ar "$AUDIO_RATE" -ac 2 \
     "${AUD_DIR}/audio_mixed_$(timestamp).flac"
@@ -148,7 +154,9 @@ video_with_internal_audio(){
     "${X11_ARGS[@]}" \
     -vaapi_device "$VAAPI_DEVICE" \
     -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
-    -map 0:v -map 1:a \
+    -filter_complex \
+      "[1:a]aresample=${AUDIO_RATE},pan=stereo|c0=c0|c1=c0[a]" \
+    -map 0:v -map "[a]" \
     -vf "$(vaapi_vf_no_upscale)" \
     -c:v "$ENCODER" -qp "$QP" -b:v "$BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFFSIZE" -profile:v high \
     -c:a flac -ar "$AUDIO_RATE" -ac 2 \
@@ -161,7 +169,9 @@ video_with_microphone(){
     "${X11_ARGS[@]}" \
     -vaapi_device "$VAAPI_DEVICE" \
     -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
-    -map 0:v -map 1:a \
+    -filter_complex \
+      "[1:a]aresample=${AUDIO_RATE},pan=stereo|c0=c0|c1=c0[a]" \
+    -map 0:v -map "[a]" \
     -vf "$(vaapi_vf_no_upscale)" \
     -c:v "$ENCODER" -qp "$QP" -b:v "$BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFFSIZE" -profile:v high \
     -c:a flac -ar "$AUDIO_RATE" -ac 2 \
@@ -175,7 +185,10 @@ video_with_both(){
     -vaapi_device "$VAAPI_DEVICE" \
     -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
     -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
-    -filter_complex "[1:a][2:a]amix=inputs=2:duration=longest:dropout_transition=2,aresample=${AUDIO_RATE}[a]" \
+    -filter_complex \
+      "[1:a]aresample=${AUDIO_RATE},pan=stereo|c0=c0|c1=c0[a1]; \
+       [2:a]aresample=${AUDIO_RATE},pan=stereo|c0=c0|c1=c0[a2]; \
+       [a1][a2]amix=inputs=2:duration=longest:dropout_transition=2,aresample=${AUDIO_RATE}[a]" \
     -map 0:v -map "[a]" \
     -vf "$(vaapi_vf_no_upscale)" \
     -c:v "$ENCODER" -qp "$QP" -b:v "$BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFFSIZE" -profile:v high \
