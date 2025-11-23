@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  TURBO RECORDER — High Quality Video Recorder
+#  TURBO RECORDER — High Quality Video Recorder 
 #  - Stable input ordering (X11 first, audio after)
 #  - Minimal filters: resample + pan + amix when needed
-#  - Works with Pulse/ PipeWire source names
+#  - Works with Pulse/PipeWire source names (uses pactl)
 #  - NO UPSCALING: output video keeps the captured screen resolution
+#  - Auto-detect mic channel and choose pan mapping
 # =============================================================================
-
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -15,26 +15,21 @@ IFS=$'\n\t'
 # ---------------------------
 VID_DIR="${VID_DIR:-$HOME/Videos}"
 AUD_DIR="${AUD_DIR:-$HOME/Audio}"
-
 REQUEST_RECORDING_RES="${REQUEST_RECORDING_RES:-1920x1080}"
 OUTPUT_RES="${OUTPUT_RES:-1920x1080}"    # preserved but NOT used for upscaling
 FPS="${FPS:-23}"
-
 VAAPI_DEVICE="${VAAPI_DEVICE:-/dev/dri/renderD128}"
 ENCODER="${ENCODER:-h264_vaapi}"   # or hevc_vaapi
 QP="${QP:-14}"
 BITRATE="${BITRATE:-25000k}"
 MAXRATE="${MAXRATE:-40000k}"
 BUFFSIZE="${BUFFSIZE:-40000k}"
-
 AUDIO_RATE="${AUDIO_RATE:-96000}"
 
 # ---------------------------
-# Sources
+# Sources (override with environment if needed)
 # ---------------------------
-# Your monitor (speakers) loopback source (ends with .monitor)
 MONITOR_SOURCE="${MONITOR_SOURCE:-alsa_output.pci-0000_0b_00.6.analog-stereo.monitor}"
-# Your default microphone (exact Pulse source name)
 MIC_SOURCE="${MIC_SOURCE:-alsa_input.usb-Focusrite_Scarlett_Solo_4th_Gen_S1XA3TZ3C2C25C-00.analog-surround-40}"
 
 # ---------------------------
@@ -77,7 +72,7 @@ build_x11_args(){ X11_ARGS=( -f x11grab -r "$FPS" -s "$CAPTURE_RES" -i ":0.0+0,0
 # ---------------------------
 check_pulse_source(){
   local name="$1"
-  pactl list short sources | awk -v m="$name" '$2==m {found=1} END{exit !found}'
+  pactl list short sources 2>/dev/null | awk -v m="$name" '$2==m {found=1} END{exit !found}'
 }
 
 validate_sources(){
@@ -90,24 +85,78 @@ validate_sources(){
 }
 
 # ---------------------------
-# Video filter (NO UPSCALING)
-# - we only convert to nv12 and upload to VAAPI; keep input resolution
+# Auto-detect which mic channel has audio (left or right) and set PAN
+# Sets global PAN variable:
+#  - stereo|c0=c1|c1=c1   (duplicate RIGHT -> both)
+#  - stereo|c0=c0|c1=c0   (duplicate LEFT  -> both)
+# Default fallback: duplicate RIGHT
 # ---------------------------
-vaapi_vf_no_upscale(){
-  printf 'format=nv12,hwupload'
+detect_mic_channel(){
+  local sname="$1"
+  local in_section=0
+  local vol_line=""
+  # read pactl list sources and capture the first "Volume:" line in the section for this source
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^Name:[[:space:]]*${sname}$ ]]; then
+      in_section=1
+      continue
+    fi
+    if [ $in_section -eq 1 ]; then
+      if [[ "$line" =~ ^[[:space:]]*Volume: ]]; then
+        vol_line="$line"
+        break
+      fi
+      if [[ "$line" =~ ^Name: ]]; then
+        break
+      fi
+    fi
+  done < <(pactl list sources 2>/dev/null)
+
+  # default: duplicate RIGHT
+  PAN="stereo|c0=c1|c1=c1"
+
+  if [ -z "$vol_line" ]; then
+    # couldn't detect; leave default
+    return 0
+  fi
+
+  # Extract percentage numbers from the Volume: line
+  # Example:
+  # Volume: front-left: 65536 / 100% / 0.00 dB,   front-right: 0 / 0% / -inf dB
+  local pcts
+  pcts=$(printf '%s' "$vol_line" | sed 's/,/ /g' | grep -o '[0-9]\+%' | tr -d '%' ) || true
+
+  local left right
+  left="$(printf '%s' "$pcts" | awk '{print $1+0}' 2>/dev/null || printf '0')"
+  right="$(printf '%s' "$pcts" | awk '{print $2+0}' 2>/dev/null || printf '0')"
+
+  if [ "$left" -eq 0 ] && [ "$right" -gt 0 ]; then
+    PAN="stereo|c0=c1|c1=c1"   # mic on RIGHT -> duplicate RIGHT
+  elif [ "$right" -eq 0 ] && [ "$left" -gt 0 ]; then
+    PAN="stereo|c0=c0|c1=c0"   # mic on LEFT  -> duplicate LEFT
+  else
+    # both present or both zero -> keep default (RIGHT->both)
+    PAN="stereo|c0=c1|c1=c1"
+  fi
 }
 
 # ---------------------------
-# Audio-only
+# Video filter (NO UPSCALING)
+# - we only convert to nv12 and upload to VAAPI; keep input resolution
+# ---------------------------
+vaapi_vf_no_upscale(){ printf 'format=nv12,hwupload'; }
+
+# ---------------------------
+# Audio-only functions
 # Notes:
-# - We force stereo with pan to duplicate mono channels to both L and R.
+# - We force stereo with pan to duplicate the active channel to both L and R.
 # - aresample ensures the requested sample rate.
 # ---------------------------
 audio_internal_only(){
   ensure_dir "$AUD_DIR"
   ffmpeg -y -loglevel error \
     -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
-    -af "aresample=${AUDIO_RATE},pan=stereo|c0=c0|c1=c0" \
+    -af "aresample=${AUDIO_RATE},pan=${PAN}" \
     -c:a flac -ar "$AUDIO_RATE" -ac 2 \
     "${AUD_DIR}/audio_internal_$(timestamp).flac"
 }
@@ -116,7 +165,7 @@ audio_microphone_only(){
   ensure_dir "$AUD_DIR"
   ffmpeg -y -loglevel error \
     -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
-    -af "aresample=${AUDIO_RATE},pan=stereo|c0=c0|c1=c0" \
+    -af "aresample=${AUDIO_RATE},pan=${PAN}" \
     -c:a flac -ar "$AUDIO_RATE" -ac 2 \
     "${AUD_DIR}/audio_mic_$(timestamp).flac"
 }
@@ -127,8 +176,8 @@ audio_internal_and_mic(){
     -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
     -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
     -filter_complex \
-      "[0:a]aresample=${AUDIO_RATE},pan=stereo|c0=c0|c1=c0[a0]; \
-       [1:a]aresample=${AUDIO_RATE},pan=stereo|c0=c0|c1=c0[a1]; \
+      "[0:a]aresample=${AUDIO_RATE},pan=${PAN}[a0]; \
+       [1:a]aresample=${AUDIO_RATE},pan=${PAN}[a1]; \
        [a0][a1]amix=inputs=2:duration=longest:dropout_transition=2,aresample=${AUDIO_RATE}[a]" \
     -map "[a]" \
     -c:a flac -ar "$AUDIO_RATE" -ac 2 \
@@ -136,7 +185,7 @@ audio_internal_and_mic(){
 }
 
 # ---------------------------
-# Video
+# Video functions
 # ---------------------------
 video_without_audio(){
   ensure_dir "$VID_DIR"
@@ -155,7 +204,7 @@ video_with_internal_audio(){
     -vaapi_device "$VAAPI_DEVICE" \
     -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
     -filter_complex \
-      "[1:a]aresample=${AUDIO_RATE},pan=stereo|c0=c0|c1=c0[a]" \
+      "[1:a]aresample=${AUDIO_RATE},pan=${PAN}[a]" \
     -map 0:v -map "[a]" \
     -vf "$(vaapi_vf_no_upscale)" \
     -c:v "$ENCODER" -qp "$QP" -b:v "$BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFFSIZE" -profile:v high \
@@ -170,7 +219,7 @@ video_with_microphone(){
     -vaapi_device "$VAAPI_DEVICE" \
     -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
     -filter_complex \
-      "[1:a]aresample=${AUDIO_RATE},pan=stereo|c0=c0|c1=c0[a]" \
+      "[1:a]aresample=${AUDIO_RATE},pan=${PAN}[a]" \
     -map 0:v -map "[a]" \
     -vf "$(vaapi_vf_no_upscale)" \
     -c:v "$ENCODER" -qp "$QP" -b:v "$BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFFSIZE" -profile:v high \
@@ -186,8 +235,8 @@ video_with_both(){
     -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
     -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
     -filter_complex \
-      "[1:a]aresample=${AUDIO_RATE},pan=stereo|c0=c0|c1=c0[a1]; \
-       [2:a]aresample=${AUDIO_RATE},pan=stereo|c0=c0|c1=c0[a2]; \
+      "[1:a]aresample=${AUDIO_RATE},pan=${PAN}[a1]; \
+       [2:a]aresample=${AUDIO_RATE},pan=${PAN}[a2]; \
        [a1][a2]amix=inputs=2:duration=longest:dropout_transition=2,aresample=${AUDIO_RATE}[a]" \
     -map 0:v -map "[a]" \
     -vf "$(vaapi_vf_no_upscale)" \
@@ -202,15 +251,15 @@ video_with_both(){
 print_help(){
   cat <<EOF
 Usage: $0 [options]
-  -m MODE   (audio_internal|audio_mic|audio_both|video_noaudio|video_internal|video_mic|video_both)
-  -o DIR    output directory (sets both video and audio dirs)
-  -s RES    output resolution (kept for metadata; NO UPSCALING performed)
-  -f FPS
-  -q QP
-  -b BITRATE
-  -a ARATE  audio sample rate (default: 96000)
-  -H DEV    VAAPI device (default: /dev/dri/renderD128)
-  -h        help
+ -m MODE   (audio_internal|audio_mic|audio_both|video_noaudio|video_internal|video_mic|video_both)
+ -o DIR    output directory (sets both video and audio dirs)
+ -s RES    output resolution (kept for metadata; NO UPSCALING performed)
+ -f FPS
+ -q QP
+ -b BITRATE
+ -a ARATE  audio sample rate (default: 96000)
+ -H DEV    VAAPI device (default: /dev/dri/renderD128)
+ -h        help
 EOF
 }
 
@@ -235,7 +284,11 @@ compute_capture_res
 build_x11_args
 validate_sources
 
-printf 'Monitor: %s\nMic: %s\nCapture %s → (no upscale) %s @ %s fps\n' "$MONITOR_SOURCE" "$MIC_SOURCE" "$CAPTURE_RES" "$OUTPUT_RES" "$FPS" >&2
+# Detect mic channel and set PAN variable
+detect_mic_channel "$MIC_SOURCE"
+
+printf 'Monitor: %s\nMic: %s\nCapture %s → (no upscale) %s @ %s fps\nPAN mapping: %s\n' \
+  "$MONITOR_SOURCE" "$MIC_SOURCE" "$CAPTURE_RES" "$OUTPUT_RES" "$FPS" "$PAN" >&2
 
 if [ -z "${MODE:-}" ]; then
   echo "1) audio internal  2) mic only  3) audio both  4) video no audio"
