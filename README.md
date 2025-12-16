@@ -8,7 +8,7 @@ screen size, captures with high fidelity,
 merges monitor + microphone audio, and encodes using VAAPI hardware
 acceleration for extremely low CPU usage.
 
-
+# PROJECT MOVED TO MY OWN FORGEJO INSTANCE!!! [ CHECK HERE ](https://git.securityops.co/securityops/turborec)
 
 # [Sample here](https://youtu.be/mlf531Da9Qo?si=RTaSB9dJ4NSbGsOm)
 
