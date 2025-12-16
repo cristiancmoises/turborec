@@ -8,7 +8,11 @@ screen size, captures with high fidelity,
 merges monitor + microphone audio, and encodes using VAAPI hardware
 acceleration for extremely low CPU usage.
 
-[Sample here](https://youtu.be/mlf531Da9Qo?si=RTaSB9dJ4NSbGsOm)
+
+
+# [Sample here](https://youtu.be/mlf531Da9Qo?si=RTaSB9dJ4NSbGsOm)
+
+<img width="1223" height="262" alt="2025-12-16_20-47" src="https://github.com/user-attachments/assets/d3d35f33-1b65-4c59-85ce-f6d9a10caea5" />
 
 ## Features
 
@@ -39,4 +43,6 @@ Optional:
 ## Usage
 
     ./turborecorder
+
+    
 
