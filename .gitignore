@@ -5,6 +5,10 @@ __pycache__/
 .venv/
 venv/
 
+# Build artifacts
+/dist/
+*.deb
+
 # Recordings / scratch
 /Videos/
 /Audio/

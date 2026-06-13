@@ -1,0 +1,20 @@
+#!/bin/sh
+# postinst — refresh icon and desktop caches after install/upgrade.
+set -e
+
+case "$1" in
+    configure)
+        if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+            gtk-update-icon-cache --quiet --force /usr/share/icons/hicolor || true
+        fi
+        if command -v update-desktop-database >/dev/null 2>&1; then
+            update-desktop-database --quiet /usr/share/applications || true
+        fi
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+    *)
+        ;;
+esac
+
+exit 0
