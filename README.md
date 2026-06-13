@@ -21,6 +21,56 @@ Two front-ends, one engine:
 
 <img width="1223" height="262" alt="2025-12-16_20-47" src="https://github.com/user-attachments/assets/d3d35f33-1b65-4c59-85ce-f6d9a10caea5" />
 
+## Install
+
+**Packages** (built automatically on each `v*` tag via GitHub Actions — see the
+[Releases](https://github.com/cristiancmoises/turborec/releases) page):
+
+```bash
+# Debian / Ubuntu
+sudo apt install ./turborec_2.1.0_all.deb
+
+# Fedora / RHEL / openSUSE
+sudo dnf install ./turborec-2.1.0-1.noarch.rpm
+
+# Any Linux — portable, no install
+chmod +x Turbo_Recorder-2.1.0-x86_64.AppImage
+./Turbo_Recorder-2.1.0-x86_64.AppImage
+```
+
+Packages install `turborec` and `turborecorder` to `/usr/bin`, plus a desktop
+launcher and icon. Runtime needs: `ffmpeg`, `python3` (≥ 3.8), and `python3-tk`
+(`python3-tkinter` on Fedora) for the GUI.
+
+**From source** (no packaging needed):
+
+```bash
+git clone https://github.com/cristiancmoises/turborec
+cd turborec
+python3 turborec.py gui      # or: detect / record / devices
+```
+
+**Build the packages yourself** — scripts live in [`packaging/`](packaging/):
+
+```bash
+packaging/build-deb.sh        # → dist/turborec_2.1.0_all.deb  (works even without dpkg-deb)
+packaging/build-rpm.sh        # → dist/turborec-2.1.0-1.noarch.rpm
+packaging/build-appimage.sh   # → dist/Turbo_Recorder-2.1.0-x86_64.AppImage
+```
+
+## The GUI
+
+A focused dark interface (near-black background, cyan accents) that surfaces the
+auto-detected hardware up top and keeps every control one click away:
+
+- Segmented **capture mode** selector and a live **FFmpeg command preview**
+- Microphone / system-audio pickers with presence dots, and a re-probe button
+- A prominent **Start / Stop** with a live elapsed timer, pulsing REC indicator,
+  and running output-file size
+- Output folder picker with a live filename preview
+
+Launch it with `turborec gui` (or just `turborec` on a desktop session).
+
 ## Automatic detection
 
 Both front-ends auto-detect and configure:
@@ -69,16 +119,28 @@ python3 turborec.py record -m video_mic -q high -f 30 -c hevc
 # Lossless audio-only (mic + system mixed)
 python3 turborec.py record -m audio_both --audio-codec flac
 
+# Record for a fixed time, then open the file when done
+python3 turborec.py record -m video_both -t 60 --countdown 3 --open
+
+# List input devices / encoders; machine-readable detection
+python3 turborec.py devices
+python3 turborec.py encoders
+python3 turborec.py detect --json
+
 # Preview the FFmpeg command without recording
 python3 turborec.py record --dry-run
 ```
 
+Subcommands: `detect` (`--json`), `record`, `gui`, `devices`, `encoders`.
 Modes: `video_both`, `video_mic`, `video_system`, `video_only`,
 `audio_both`, `audio_mic`, `audio_system`.
 
-Stop a recording with **`q`** or **Ctrl-C** (the file is finalized cleanly).
-Run `python3 turborec.py record -h` for all options. Everything is overridable
-(`--mic-device`, `--system-device`, `--region`, `--software`, …).
+Stop a recording with **`q`** or **Ctrl-C** (the file is finalized cleanly), or
+use `-t/--duration` for a fixed length. Everything is overridable
+(`--mic-device`, `--system-device`, `--region`, `--software`, `--open`,
+`--countdown`, …) and defaults can be saved in a JSON config (`--config`, or
+`$TURBOREC_CONFIG` / `~/.config/turborec/config.json`). Run
+`python3 turborec.py record -h` for the full list.
 
 ---
 
