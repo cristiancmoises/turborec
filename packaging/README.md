@@ -1,6 +1,6 @@
 # Debian packaging for Turbo Recorder
 
-This directory builds `dist/turborec_2.1.0_all.deb`.
+This directory builds `dist/turborec_2.2.0_all.deb`.
 
 ## Layout
 
@@ -36,7 +36,7 @@ The script:
    - `README.md`               -> `/usr/share/doc/turborec/README.md`
 2. Builds the control tree (`control` with computed `Installed-Size`,
    `md5sums`, `postinst`, `postrm`).
-3. Emits `dist/turborec_2.1.0_all.deb`.
+3. Emits `dist/turborec_2.2.0_all.deb`.
 
 ### dpkg-deb vs. portable mode
 
@@ -61,8 +61,8 @@ On RPM distributions the equivalent is `python3-tkinter`.
 
 ```bash
 # inspect members and metadata without installing
-ar t dist/turborec_2.1.0_all.deb
-mkdir -p /tmp/deb && ar x dist/turborec_2.1.0_all.deb --output /tmp/deb
+ar t dist/turborec_2.2.0_all.deb
+mkdir -p /tmp/deb && ar x dist/turborec_2.2.0_all.deb --output /tmp/deb
 tar -tvf /tmp/deb/data.tar.xz
 tar -xOf /tmp/deb/control.tar.gz ./control
 ```
