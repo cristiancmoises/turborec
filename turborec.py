@@ -35,7 +35,7 @@ from datetime import datetime
 from typing import Optional
 
 APP_NAME = "Turbo Recorder"
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 
 # ---------------------------------------------------------------------------
 # Small terminal helpers
@@ -114,6 +114,14 @@ class AudioDevice:
     id: str          # backend identifier passed to ffmpeg
     label: str       # human readable
     is_monitor: bool = False  # True for system-audio / loopback / monitor
+
+
+@dataclass
+class CaptureTarget:
+    kind: str                  # screen | monitor | window | region
+    label: str                 # human readable
+    geometry: Optional[str] = None   # "WxH+X+Y" region of the desktop
+    win_title: Optional[str] = None  # native window title (Windows gdigrab)
 
 
 @dataclass
@@ -404,6 +412,64 @@ def detect_audio(os_name: str, ffmpeg: str):
 
 
 # ---------------------------------------------------------------------------
+# Capture targets — full screen, each monitor, and (OBS-style) windows
+# ---------------------------------------------------------------------------
+def _detect_monitors_x11() -> list[CaptureTarget]:
+    out = run_cmd(["xrandr", "--listmonitors"])
+    targets: list[CaptureTarget] = []
+    # e.g. " 0: +*eDP-1 2560/697x1440/392+0+0  eDP-1"
+    for line in out.splitlines():
+        m = re.search(r"\b(\d+)/\d+x(\d+)/\d+\+(\d+)\+(\d+)\s+(\S+)\s*$", line)
+        if m:
+            w, h, x, y, name = m.groups()
+            targets.append(CaptureTarget(
+                kind="monitor", label=f"{name}  ({w}x{h})",
+                geometry=f"{w}x{h}+{x}+{y}"))
+    return targets
+
+
+def _detect_windows_x11() -> list[CaptureTarget]:
+    if not shutil.which("wmctrl"):
+        return []
+    out = run_cmd(["wmctrl", "-lG"])
+    targets: list[CaptureTarget] = []
+    for line in out.splitlines():
+        # id desktop x y w h host title...
+        parts = line.split(None, 7)
+        if len(parts) < 8:
+            continue
+        _id, desk, x, y, w, h, _host, title = parts
+        if desk == "-1":      # sticky/utility windows (panels, docks)
+            continue
+        try:
+            iw, ih = int(w), int(h)
+        except ValueError:
+            continue
+        if iw < 64 or ih < 64:
+            continue
+        short = (title[:48] + "…") if len(title) > 49 else title
+        targets.append(CaptureTarget(
+            kind="window", label=f"{short}  ({w}x{h})",
+            geometry=f"{w}x{h}+{x}+{y}", win_title=title))
+    return targets
+
+
+def detect_capture_targets(si: SystemInfo) -> list[CaptureTarget]:
+    """Full screen first, then each monitor, then capturable windows."""
+    targets: list[CaptureTarget] = [
+        CaptureTarget(kind="screen",
+                      label=f"Full screen  ({si.screen})" if si.screen else "Full screen",
+                      geometry=(f"{si.screen}+0+0" if si.screen else None))
+    ]
+    if si.os == "linux" and si.display_server in ("x11", "wayland"):
+        mons = _detect_monitors_x11()
+        if len(mons) > 1:        # a single monitor == full screen; don't duplicate
+            targets += mons
+        targets += _detect_windows_x11()
+    return targets
+
+
+# ---------------------------------------------------------------------------
 # Full system probe
 # ---------------------------------------------------------------------------
 def probe_system(ffmpeg: Optional[str] = None) -> SystemInfo:
@@ -461,17 +527,30 @@ def _candidate_encoders(si: SystemInfo, codec: str) -> list[tuple[str, str]]:
     return table
 
 
-def choose_encoder(si: SystemInfo, codec: str = "h264", force_software: bool = False) -> EncoderChoice:
+def choose_encoder(si: SystemInfo, codec: str = "h264", force_software: bool = False,
+                   backend: str = "auto") -> EncoderChoice:
+    """Pick the video encoder. backend: auto | gpu | cpu (force_software == cpu)."""
     codec = codec.lower()
     if force_software:
-        sw = {"h264": "libx264", "hevc": "libx265", "av1": "libaom-av1"}.get(codec, "libx264")
-        if sw not in si.encoders:
-            die(f"Software encoder {sw} not available in this FFmpeg build.")
-        return EncoderChoice(sw, "software", codec, "forced software encoding")
+        backend = "cpu"
+    sw_name = {"h264": "libx264", "hevc": "libx265", "av1": "libaom-av1"}.get(codec, "libx264")
+
+    if backend == "cpu":
+        if sw_name not in si.encoders:
+            die(f"Software encoder {sw_name} not available in this FFmpeg build.")
+        return EncoderChoice(sw_name, "software", codec, "CPU / software encoding (user-selected)")
+
+    # gpu or auto: walk the hardware-first candidate list
     for enc, kind in _candidate_encoders(si, codec):
         if enc in si.encoders:
+            if backend == "gpu" and kind == "software":
+                break  # don't silently fall back to CPU when GPU was requested
             note = "hardware accelerated" if kind != "software" else "software (no HW encoder available)"
             return EncoderChoice(enc, kind, codec, note)
+    if backend == "gpu":
+        warn(f"No hardware {codec} encoder available — falling back to CPU ({sw_name}).")
+        if sw_name in si.encoders:
+            return EncoderChoice(sw_name, "software", codec, "software (no GPU encoder available)")
     die(f"No usable encoder for codec {codec} in this FFmpeg build.")
 
 
@@ -486,42 +565,59 @@ def _quality_index(q: str) -> int:
 
 
 def encoder_args(enc: EncoderChoice, quality: str) -> list[str]:
-    """State-of-the-art, quality-first parameters for the chosen encoder."""
+    """Real-time-capable, quality-first parameters for the chosen encoder.
+
+    Screen capture is a LIVE source: the encoder must keep up with wall-clock
+    or frames pile up and get dropped, producing choppy / slowed-down video.
+    These presets are tuned to sustain real-time at high resolution/fps while
+    staying visually excellent; combined with '-fps_mode cfr' on the output
+    (added in build_command) the playback speed is always correct.
+    """
     qi = _quality_index(quality)
     a: list[str] = ["-c:v", enc.name]
     if enc.kind == "nvenc":
-        # p7 = slowest/highest quality preset; constant-quality VBR
-        cq = [16, 19, 23, 28][qi]
-        a += ["-preset", "p7", "-tune", "hq", "-rc", "vbr",
-              "-cq", str(cq), "-b:v", "0", "-spatial-aq", "1", "-temporal-aq", "1",
-              "-rc-lookahead", "32", "-bf", "3"]
+        # p1(fastest)..p7(slowest). p7 cannot sustain real-time at high res;
+        # p4–p6 are real-time on modern GPUs and look great. No rc-lookahead
+        # (it buffers future frames -> latency/stalls on a live source).
+        preset = ["p6", "p5", "p5", "p4"][qi]
+        cq = [19, 21, 24, 28][qi]
+        a += ["-preset", preset, "-tune", "hq", "-rc", "vbr",
+              "-cq", str(cq), "-b:v", "0", "-spatial-aq", "1", "-bf", "2"]
         if enc.codec in ("h264", "hevc"):
             a += ["-profile:v", "high" if enc.codec == "h264" else "main"]
     elif enc.kind == "qsv":
-        gq = [18, 22, 26, 30][qi]
-        a += ["-preset", "veryslow", "-global_quality", str(gq), "-look_ahead", "1"]
+        # 'veryslow' defeats the hardware for live capture; medium/fast sustain it.
+        preset = ["medium", "fast", "faster", "veryfast"][qi]
+        gq = [20, 22, 26, 30][qi]
+        a += ["-preset", preset, "-global_quality", str(gq)]
     elif enc.kind == "vaapi":
-        qp = [18, 22, 26, 30][qi]
-        a += ["-qp", str(qp), "-compression_level", "1"]
+        qp = [20, 23, 26, 30][qi]
+        a += ["-qp", str(qp)]
         if enc.codec == "h264":
             a += ["-profile:v", "high"]
     elif enc.kind == "amf":
-        qp = [18, 22, 26, 30][qi]
-        a += ["-quality", "quality", "-rc", "cqp", "-qp_i", str(qp), "-qp_p", str(qp)]
+        # 'quality' is the slowest AMF preset; 'balanced'/'speed' sustain live.
+        usage = ["balanced", "balanced", "speed", "speed"][qi]
+        qp = [20, 23, 26, 30][qi]
+        a += ["-quality", usage, "-rc", "cqp", "-qp_i", str(qp), "-qp_p", str(qp)]
     elif enc.kind == "videotoolbox":
-        # videotoolbox quality is 0..100 (higher = better)
-        vq = [80, 65, 50, 38][qi]
-        a += ["-q:v", str(vq), "-realtime", "0"]
+        vq = [70, 60, 48, 36][qi]
+        # realtime=1 keeps the hardware encoder pacing with a live source.
+        a += ["-q:v", str(vq), "-realtime", "1"]
         if enc.codec == "hevc":
             a += ["-tag:v", "hvc1"]
     else:  # software libx264 / libx265 / libaom-av1
-        crf = [16, 20, 24, 28][qi]
+        # Software MUST use fast presets to keep real-time on a live capture at
+        # high resolution; 'slow'/'medium' fall far behind and slow the video.
         if enc.name == "libaom-av1":
-            a += ["-crf", str(crf), "-b:v", "0", "-cpu-used", "4", "-row-mt", "1"]
+            crf = [28, 30, 32, 35][qi]
+            a += ["-crf", str(crf), "-b:v", "0", "-cpu-used", "8", "-row-mt", "1"]
         else:
-            a += ["-preset", "slow", "-crf", str(crf)]
+            preset = ["veryfast", "veryfast", "faster", "ultrafast"][qi]
+            crf = [18, 20, 23, 26][qi]
+            a += ["-preset", preset, "-crf", str(crf)]
             if enc.name == "libx264":
-                a += ["-profile:v", "high", "-tune", "film"]
+                a += ["-profile:v", "high"]
     return a
 
 
@@ -542,8 +638,23 @@ def video_filter_for(enc: EncoderChoice) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Capture input arguments (screen) per platform
 # ---------------------------------------------------------------------------
-def screen_input_args(si: SystemInfo, fps: int, region: Optional[str], enc: EncoderChoice) -> tuple[list[str], list[str]]:
-    """Return (pre_input_args, input_args). pre_input may set vaapi device."""
+def _parse_geometry(geom: Optional[str]) -> tuple[Optional[str], int, int]:
+    """Parse 'WxH+X+Y' (or 'WxH') -> (size 'WxH' or None, x, y)."""
+    if not geom:
+        return None, 0, 0
+    m = re.match(r"(\d+x\d+)(?:\+(\d+)\+(\d+))?$", geom.strip())
+    if not m:
+        return None, 0, 0
+    return m.group(1), int(m.group(2) or 0), int(m.group(3) or 0)
+
+
+def screen_input_args(si: SystemInfo, fps: int, geometry: Optional[str], enc: EncoderChoice,
+                      win_title: Optional[str] = None) -> tuple[list[str], list[str]]:
+    """Return (pre_input_args, input_args).
+
+    geometry: 'WxH+X+Y' region of the desktop (a monitor, window rect, or custom
+    region). None => full screen. win_title: native window capture (Windows).
+    """
     pre: list[str] = []
     inp: list[str] = []
     if enc.kind == "vaapi" and si.vaapi_device:
@@ -555,19 +666,30 @@ def screen_input_args(si: SystemInfo, fps: int, region: Optional[str], enc: Enco
         if si.display_server == "wayland":
             warn("Wayland session detected: x11grab only sees XWayland windows. "
                  "For full-desktop Wayland capture install 'wf-recorder' or use a kmsgrab setup.")
-        size = region or si.screen
+        size, ox, oy = _parse_geometry(geometry)
+        if not size:
+            size = si.screen or None
         inp += ["-f", "x11grab", "-framerate", str(fps), "-thread_queue_size", "1024"]
         if size:
             inp += ["-video_size", size]
         display = os.environ.get("DISPLAY", ":0.0")
-        inp += ["-i", f"{display}+0,0"]
+        inp += ["-i", f"{display}+{ox},{oy}"]
     elif si.os == "macos":
-        # "Capture screen" device index is best-effort 1; allow override via region "screenIdx"
-        screen_idx = region or "1"
+        # avfoundation captures a whole display by index; geometry => screen index.
+        screen_idx = (geometry or "1").split("x")[0] if geometry and "x" not in geometry else (geometry or "1")
         inp += ["-f", "avfoundation", "-framerate", str(fps),
                 "-capture_cursor", "1", "-i", f"{screen_idx}:none"]
     elif si.os == "windows":
-        inp += ["-f", "gdigrab", "-framerate", str(fps), "-thread_queue_size", "1024", "-i", "desktop"]
+        inp += ["-f", "gdigrab", "-framerate", str(fps), "-thread_queue_size", "1024"]
+        if win_title:
+            inp += ["-i", f"title={win_title}"]           # native window capture
+        else:
+            size, ox, oy = _parse_geometry(geometry)
+            if size:
+                w, h = size.split("x")
+                inp += ["-offset_x", str(ox), "-offset_y", str(oy),
+                        "-video_size", size]
+            inp += ["-i", "desktop"]
     return pre, inp
 
 
@@ -613,8 +735,11 @@ class RecordSpec:
     mic: Optional[AudioDevice] = None
     monitor: Optional[AudioDevice] = None
     force_software: bool = False
+    backend: str = "auto"              # auto | gpu | cpu
     container: str = "mkv"
     duration: Optional[float] = None   # stop after N seconds (ffmpeg -t)
+    geometry: Optional[str] = None     # capture region "WxH+X+Y" (full screen if None)
+    win_title: Optional[str] = None    # Windows gdigrab window title (window capture)
 
 
 def _audio_encode_args(spec: RecordSpec) -> list[str]:
@@ -644,8 +769,9 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
     audio_inputs: list[AudioDevice] = []
 
     if is_video:
-        enc = choose_encoder(si, spec.codec, spec.force_software)
-        pre, vin = screen_input_args(si, spec.fps, spec.region, enc)
+        enc = choose_encoder(si, spec.codec, spec.force_software, spec.backend)
+        geometry = spec.geometry or spec.region
+        pre, vin = screen_input_args(si, spec.fps, geometry, enc, spec.win_title)
         cmd += pre + vin
 
     # On macOS the screen+audio can come from one avfoundation device, but we
@@ -696,6 +822,9 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
     # ---- encoders ----
     if is_video:
         cmd += encoder_args(enc, spec.quality)  # type: ignore[arg-type]
+        # Force constant frame rate so playback speed is always correct even if
+        # the encoder briefly falls behind the live source (no slow-motion).
+        cmd += ["-fps_mode", "cfr", "-r", str(spec.fps)]
         # color metadata for fidelity
         cmd += ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
     if audio_inputs:
@@ -989,11 +1118,42 @@ def _resolve_audio_devices(si: SystemInfo, args) -> tuple[Optional[AudioDevice],
     return mic, mon
 
 
+def _resolve_backend(args) -> str:
+    if getattr(args, "cpu", False) or getattr(args, "software", False):
+        return "cpu"
+    if getattr(args, "gpu", False):
+        return "gpu"
+    return getattr(args, "backend", None) or "auto"
+
+
+def _resolve_capture_target(si: SystemInfo, args) -> tuple[Optional[str], Optional[str]]:
+    """Return (geometry 'WxH+X+Y' or None, win_title or None) from CLI flags."""
+    if getattr(args, "region", None):
+        return args.region, None
+    targets = detect_capture_targets(si)
+    sel = getattr(args, "monitor", None)
+    if sel:
+        for t in targets:
+            if t.kind == "monitor" and (sel.lower() in t.label.lower()):
+                return t.geometry, None
+        die(f"Monitor '{sel}' not found. Try: turborec targets")
+    sel = getattr(args, "window", None)
+    if sel:
+        for t in targets:
+            if t.kind == "window" and (sel == (t.win_title or "") or sel.lower() in t.label.lower()):
+                return t.geometry, t.win_title
+        die(f"Window '{sel}' not found. Try: turborec targets")
+    return None, None
+
+
 def cmd_record(args) -> int:
     si = probe_system(args.ffmpeg)
+    backend = _resolve_backend(args)
+    geometry, win_title = _resolve_capture_target(si, args)
     if not args.quiet:
         info(f"{si.os}/{si.display_server} · CPU {si.cpu_vendor} · GPU {si.gpu_vendor}"
-             f"{' (HW)' if si.has_gpu else ' (SW)'} · screen {si.screen or '?'}")
+             f"{' (HW)' if si.has_gpu else ' (SW)'} · screen {si.screen or '?'} · encoder {backend}"
+             + (f" · region {geometry}" if geometry else ""))
     mic, mon = _resolve_audio_devices(si, args)
     spec = RecordSpec(
         mode=args.mode,
@@ -1001,18 +1161,37 @@ def cmd_record(args) -> int:
         codec=args.codec,
         fps=args.fps,
         region=args.region,
+        geometry=geometry,
+        win_title=win_title,
         out_dir=args.out or "",
         audio_rate=args.audio_rate,
         audio_codec=args.audio_codec,
         mic=mic,
         monitor=mon,
         force_software=args.software,
+        backend=backend,
         container=args.container,
         duration=args.duration,
     )
     cmd, out_path = build_command(si, spec)
     return record(cmd, out_path, dry_run=args.dry_run,
                   countdown_secs=args.countdown, open_when_done=args.open)
+
+
+def cmd_targets(args) -> int:
+    """List capture targets (full screen, monitors, windows) — OBS-style."""
+    si = probe_system(args.ffmpeg)
+    targets = detect_capture_targets(si)
+    if getattr(args, "json", False):
+        print(json.dumps([asdict(t) for t in targets], indent=2))
+        return 0
+    print(bold("\nCapture targets"))
+    for t in targets:
+        tag = {"screen": "screen", "monitor": "monitor", "window": "window"}.get(t.kind, t.kind)
+        print(f"  {cyan(f'[{tag}]'):<18} {t.label}  {dim(t.geometry or '')}")
+    print(f"\n{dim('Use with:')} turborec record --monitor <name> | "
+          f"--window <title> | --region WxH+X+Y")
+    return 0
 
 
 def cmd_detect(args) -> int:
@@ -1132,6 +1311,10 @@ def build_parser(rc: Optional[dict] = None) -> argparse.ArgumentParser:
     enc.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     enc.set_defaults(func=cmd_encoders)
 
+    tgt = sub.add_parser("targets", help="list capture targets (screen, monitors, windows)")
+    tgt.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    tgt.set_defaults(func=cmd_targets)
+
     sub.add_parser("gui", help="launch the graphical interface").set_defaults(func=cmd_gui)
 
     r = sub.add_parser("record", help="record screen and/or audio")
@@ -1152,7 +1335,11 @@ def build_parser(rc: Optional[dict] = None) -> argparse.ArgumentParser:
     r.add_argument("--open", action="store_true", default=bool(d("open", False)),
                    help="open the finished file with the default app")
     r.add_argument("--region", default=d("region", None),
-                   help="capture size WxH (default: full screen); on macOS the screen device index")
+                   help="explicit capture region WxH or WxH+X+Y (default: full screen)")
+    r.add_argument("--monitor", default=d("monitor", None), metavar="NAME",
+                   help="capture a specific monitor by name (see: turborec targets)")
+    r.add_argument("--window", default=d("window", None), metavar="TITLE",
+                   help="capture a specific window by title/id (see: turborec targets)")
     r.add_argument("--audio-rate", type=int, default=d("audio_rate", 48000),
                    help="audio sample rate (default: 48000)")
     r.add_argument("--audio-codec", choices=("flac", "aac", "opus"), default=d("audio_codec", "flac"),
@@ -1162,8 +1349,12 @@ def build_parser(rc: Optional[dict] = None) -> argparse.ArgumentParser:
                    help="microphone device id/name (default: auto)")
     r.add_argument("--system-device", default=d("system_device", None),
                    help="system-audio source id/name (default: auto)")
+    r.add_argument("--backend", choices=("auto", "gpu", "cpu"), default=d("backend", "auto"),
+                   help="encoder backend: auto (default), gpu (hardware), cpu (software)")
+    r.add_argument("--gpu", action="store_true", help="shorthand for --backend gpu")
+    r.add_argument("--cpu", action="store_true", help="shorthand for --backend cpu")
     r.add_argument("--software", action="store_true", default=bool(d("software", False)),
-                   help="force CPU/software encoding")
+                   help="alias for --cpu (force CPU/software encoding)")
     r.add_argument("--dry-run", action="store_true", help="print the ffmpeg command and exit")
     r.add_argument("--quiet", action="store_true", default=bool(d("quiet", False)),
                    help="suppress the detection summary line")
@@ -1480,7 +1671,9 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     mon_var = tk.StringVar()
     out_var = tk.StringVar(
         value=os.path.join(os.path.expanduser("~"), "Videos"))
-    sw_var = tk.BooleanVar(value=False)
+    backend_var = tk.StringVar(value="auto")   # auto | gpu | cpu
+    source_var = tk.StringVar()                # selected capture target label
+    cap_targets = {"list": [], "map": {}}      # refreshed by _refresh_sources()
     user_picked_dir = {"v": False}
 
     # =====================================================================
@@ -1544,7 +1737,30 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     enc_chip = label(inner, "", fg=C["muted"], font=F["chip"])
     enc_chip.pack(fill="x", pady=(6, 0))
 
-    # region row (video modes only)
+    # --- capture source picker (OBS-style: full screen / monitor / window) ---
+    src_row = tk.Frame(inner, bg=C["bg"])
+    src_row.pack(fill="x", pady=(8, 0))
+    label(src_row, "Source", fg=C["muted"], width=8).pack(side="left", padx=(0, 8))
+    source_cb = _combo(src_row, source_var, [])
+    source_cb.pack(side="left", fill="x", expand=True)
+    src_refresh = tk.Button(
+        src_row, text="⟳", font=(sans_fam, 11), bd=0, relief="flat",
+        highlightthickness=0, cursor="hand2", bg=C["bg"], fg=C["muted"],
+        activebackground=C["bg"], activeforeground=C["accent"], takefocus=0)
+    src_refresh.pack(side="left", padx=(6, 0))
+
+    def _refresh_sources(*_a):
+        targets = detect_capture_targets(si)
+        cap_targets["list"] = targets
+        cap_targets["map"] = {t.label: t for t in targets}
+        labels = [t.label for t in targets]
+        source_cb.configure(values=labels)
+        if source_var.get() not in cap_targets["map"]:
+            source_var.set(labels[0] if labels else "")
+    src_refresh.configure(command=_refresh_sources)
+    _refresh_sources()
+
+    # region row (video modes only) — advanced override of the Source above
     region_row = tk.Frame(inner, bg=C["bg"])
     region_row.pack(fill="x", pady=(6, 0))
     label(region_row, "Region", fg=C["muted"]).pack(side="left", padx=(0, 8))
@@ -1673,34 +1889,32 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     fname_preview = label(inner, "", fg=C["muted"], font=F["mono"])
     fname_preview.pack(fill="x", pady=(6, 0))
 
-    # force-software pill switch (canvas)
-    sw_row = tk.Frame(inner, bg=C["bg"])
-    sw_row.pack(fill="x", pady=(10, 0))
-    label(sw_row, "Force software encoding", fg=C["muted"]).pack(side="left")
-    sw_canvas = tk.Canvas(sw_row, width=42, height=22, bg=C["bg"],
-                          highlightthickness=0, bd=0, cursor="hand2")
-    sw_canvas.pack(side="left", padx=(10, 0))
+    # --- encoder backend segmented control: Auto / GPU / CPU ---
+    enc_row = tk.Frame(inner, bg=C["bg"])
+    enc_row.pack(fill="x", pady=(10, 0))
+    label(enc_row, "Encoder", fg=C["muted"], width=8).pack(side="left", padx=(0, 8))
+    backend_buttons = {}
+    _BACKEND_ITEMS = (("auto", "Auto"), ("gpu", "GPU"), ("cpu", "CPU"))
 
-    def _draw_switch():
-        sw_canvas.delete("all")
-        on = sw_var.get()
-        track = C["accent"] if on else C["surface3"]
-        # rounded track
-        sw_canvas.create_oval(1, 3, 17, 19, fill=track, outline="")
-        sw_canvas.create_oval(25, 3, 41, 19, fill=track, outline="")
-        sw_canvas.create_rectangle(9, 3, 33, 19, fill=track, outline="")
-        kx = 30 if on else 2
-        knob = C["bg"] if on else C["muted"]
-        sw_canvas.create_oval(kx, 2, kx + 18, 20, fill=knob, outline="")
+    def _restyle_backend(*_a):
+        cur = backend_var.get()
+        for value, btn in backend_buttons.items():
+            if value == cur:
+                btn.configure(bg=C["accent"], fg=C["bg"],
+                              activebackground=C["accent"], activeforeground=C["bg"])
+            else:
+                btn.configure(bg=C["surface2"], fg=C["muted"],
+                              activebackground=C["surface3"], activeforeground=C["text"])
 
-    def _toggle_switch(_e=None):
-        if state["recording"] or state["stopping"]:
-            return
-        sw_var.set(not sw_var.get())
-        _draw_switch()
-        _refresh_dependent()
-        schedule_preview()
-    sw_canvas.bind("<Button-1>", _toggle_switch)
+    for value, text in _BACKEND_ITEMS:
+        b = tk.Radiobutton(
+            enc_row, text=text, value=value, variable=backend_var,
+            indicatoron=0, bd=0, highlightthickness=0, relief="flat",
+            font=F["seg"], padx=14, pady=5, cursor="hand2",
+            selectcolor=C["surface2"], bg=C["surface2"], fg=C["muted"],
+            activebackground=C["surface3"], activeforeground=C["text"], takefocus=0)
+        b.pack(side="left", padx=(0, 4))
+        backend_buttons[value] = b
 
     # =====================================================================
     # SECTION: COMMAND PREVIEW (collapsible)
@@ -1820,7 +2034,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         # encoder transparency chip
         if is_video:
             try:
-                ec = choose_encoder(si, codec_var.get(), sw_var.get())
+                ec = choose_encoder(si, codec_var.get(), False, backend_var.get())
                 fg = C["warn"] if ec.kind == "software" else C["accent"]
                 enc_chip.configure(text=f"{ec.name}  ·  {ec.kind}  ·  {ec.note}", fg=fg)
             except SystemExit:
@@ -1839,6 +2053,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
 
         _refresh_dev_dots()
         _restyle_segments()
+        _restyle_backend()
 
     # ---- build a spec from the current widgets ----------------------------
     def find_dev(devs, lab, fallback_monitor=False):
@@ -1852,17 +2067,28 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             fps = int(fps_var.get())
         except ValueError:
             fps = 60
+        # capture geometry: explicit Region overrides the Source picker;
+        # otherwise a monitor/window target supplies the region; "screen" => full.
+        region_override = region_var.get().strip() or None
+        target = cap_targets["map"].get(source_var.get())
+        if region_override:
+            geometry, win_title = region_override, None
+        elif target and target.kind != "screen":
+            geometry, win_title = target.geometry, target.win_title
+        else:
+            geometry, win_title = None, None
         return RecordSpec(
             mode=mode_var.get(),
             quality=quality_var.get(),
             codec=codec_var.get(),
             fps=fps,
-            region=(region_var.get().strip() or None),
+            geometry=geometry,
+            win_title=win_title,
             out_dir=out_var.get(),
             audio_codec=acodec_var.get(),
             mic=find_dev(si.mics, mic_var.get()),
             monitor=find_dev(si.monitors, mon_var.get(), fallback_monitor=True),
-            force_software=sw_var.get(),
+            backend=backend_var.get(),
         )
 
     # ---- live command preview (debounced) ---------------------------------
@@ -2167,16 +2393,17 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
 
     # ---- wire traces (live preview + dependent state) ---------------------
     for v in (mode_var, quality_var, codec_var, fps_var, acodec_var,
-              region_var, mic_var, mon_var, out_var):
+              region_var, mic_var, mon_var, out_var, backend_var, source_var):
         v.trace_add("write", schedule_preview)
-    for v in (mode_var, codec_var, acodec_var):
+    for v in (mode_var, codec_var, acodec_var, backend_var):
         v.trace_add("write", _refresh_dependent)
     mode_var.trace_add("write", _restyle_segments)
+    backend_var.trace_add("write", _restyle_backend)
     out_var.trace_add("write", lambda *_: user_picked_dir.__setitem__("v", True)
                       if root.focus_get() is out_entry else None)
 
     # ---- initial paint ----------------------------------------------------
-    _draw_switch()
+    _restyle_backend()
     _restyle_segments()
     _refresh_dependent()
     _refresh_dev_dots()
