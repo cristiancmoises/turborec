@@ -1,0 +1,19 @@
+Package: turborec
+Version: 2.1.0
+Section: sound
+Priority: optional
+Architecture: all
+Maintainer: Cristian Cezar Moises <ethicalhacker@riseup.net>
+Depends: ffmpeg, python3 (>= 3.8), python3-tk
+Homepage: https://github.com/cristiancmoises/turborec
+Description: State-of-the-art hardware-accelerated screen and audio recorder
+ Turbo Recorder captures your screen and audio at the best quality your
+ hardware can deliver. It probes the machine and configures everything
+ automatically: operating system, display server, CPU vendor, GPU, the best
+ available hardware video encoder, the screen resolution, and the microphone
+ and system-audio sources. It then builds a quality-first FFmpeg pipeline and
+ records.
+ .
+ Two front-ends share one engine: a cross-platform Python CLI and GUI
+ (turborec) and a fast, dependency-light Bash CLI for Linux/X11
+ (turborecorder).

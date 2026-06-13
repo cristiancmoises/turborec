@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build packages and publish release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install packaging tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            dpkg-dev rpm fakeroot libfuse2 wget
+
+      - name: Build packages
+        env:
+          # build-appimage.sh self-downloads a pinned appimagetool and runs it
+          # with --appimage-extract-and-run, so no FUSE is required on the runner.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          chmod +x packaging/build-*.sh
+          packaging/build-deb.sh
+          packaging/build-rpm.sh
+          packaging/build-appimage.sh
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist
+          find . -path ./dist -prune -o \
+            \( -name '*.deb' -o -name '*.rpm' -o -iname '*.AppImage' \) \
+            -type f -print -exec cp -f {} dist/ \;
+          echo "Artifacts:"
+          ls -l dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
+          fail_on_unmatched_files: true
+          generate_release_notes: true

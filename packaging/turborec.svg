@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Turbo Recorder">
+  <title>Turbo Recorder</title>
+  <desc>Screen and audio recorder: a near-black rounded tile with a cyan screen frame, audio waveform, and a glowing cyan record dot.</desc>
+  <defs>
+    <!-- Near-black app tile (matches GUI surface #0b1014 -> bg #06090b) -->
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b1014"/>
+      <stop offset="1" stop-color="#06090b"/>
+    </linearGradient>
+    <!-- Cyan radial glow for the record dot (accent2 #5cf2e8 -> accent #19e3d6) -->
+    <radialGradient id="dotGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#5cf2e8"/>
+      <stop offset="0.55" stop-color="#19e3d6"/>
+      <stop offset="1" stop-color="#0e8f87"/>
+    </radialGradient>
+    <!-- Cyan stroke gradient for the screen frame -->
+    <linearGradient id="cyanEdge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5cf2e8"/>
+      <stop offset="1" stop-color="#19e3d6"/>
+    </linearGradient>
+    <!-- Glass top sheen -->
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.08"/>
+      <stop offset="0.55" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <!-- Soft outer glow -->
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="5.5" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- App tile -->
+  <rect x="8" y="8" width="240" height="240" rx="52" ry="52" fill="url(#tile)"/>
+  <!-- Cyan hairline border -->
+  <rect x="9" y="9" width="238" height="238" rx="51" ry="51" fill="none" stroke="#19e3d6" stroke-opacity="0.45" stroke-width="2"/>
+
+  <!-- Screen frame (the 'screen' being recorded) -->
+  <g filter="url(#glow)">
+    <rect x="48" y="60" width="160" height="112" rx="22" ry="22" fill="none" stroke="url(#cyanEdge)" stroke-width="6"/>
+    <!-- monitor stand -->
+    <rect x="112" y="178" width="32" height="14" rx="4" fill="#19e3d6"/>
+    <rect x="90" y="190" width="76" height="6" rx="3" fill="#19e3d6" fill-opacity="0.7"/>
+  </g>
+
+  <!-- Audio waveform inside the screen (the 'audio' being captured) -->
+  <g stroke="#19e3d6" stroke-width="6" stroke-linecap="round" fill="none" opacity="0.92">
+    <line x1="78"  y1="116" x2="78"  y2="116" />
+    <line x1="78"  y1="106" x2="78"  y2="126" />
+    <line x1="96"  y1="92"  x2="96"  y2="140" />
+    <line x1="114" y1="100" x2="114" y2="132" />
+    <line x1="132" y1="84"  x2="132" y2="148" />
+    <line x1="150" y1="104" x2="150" y2="128" />
+  </g>
+
+  <!-- Glowing cyan record dot, top-right corner of the screen -->
+  <g filter="url(#glow)">
+    <circle cx="180" cy="96" r="16" fill="url(#dotGlow)"/>
+    <circle cx="180" cy="96" r="16" fill="none" stroke="#bafff8" stroke-opacity="0.65" stroke-width="2"/>
+  </g>
+  <!-- specular highlight on the dot -->
+  <circle cx="174.5" cy="90.5" r="4.5" fill="#ffffff" fill-opacity="0.55"/>
+
+  <!-- Glass sheen overlay -->
+  <rect x="8" y="8" width="240" height="120" rx="52" ry="52" fill="url(#sheen)"/>
+</svg>
