@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Recordings / scratch
+/Videos/
+/Audio/
+*.mkv
+*.flac
+*.m4a
+*.opus
