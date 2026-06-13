@@ -1344,6 +1344,13 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         selectbackground=[("readonly", C["surface2"])],
         selectforeground=[("readonly", C["text"])],
     )
+    # A derived style for an orient'd widget needs its layout cloned from the
+    # base ("Vertical.TScrollbar"); otherwise ttk looks up the non-existent
+    # "Vertical.Vert.TScrollbar" layout and raises TclError at widget creation.
+    try:
+        style.layout("Vert.TScrollbar", style.layout("Vertical.TScrollbar"))
+    except tk.TclError:
+        pass
     style.configure("Vert.TScrollbar", background=C["surface2"],
                     troughcolor=C["surface"], bordercolor=C["surface"],
                     arrowcolor=C["muted"])
