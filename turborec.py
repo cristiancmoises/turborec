@@ -2185,13 +2185,22 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
                                   activebackground=C["danger"],
                                   activeforeground=C["bg"], state="normal")
             btn_border.configure(bg=C["danger"])
-            sw_canvas.configure(cursor="arrow")
         else:
             action_btn.configure(text="●  START", bg=C["bg"], fg=C["accent"],
                                   activebackground="#06222a",
                                   activeforeground=C["accent2"], state="normal")
             btn_border.configure(bg=C["accent"])
-            sw_canvas.configure(cursor="hand2")
+        # lock the encoder + source controls while recording is in progress
+        for b in backend_buttons.values():
+            try:
+                b.configure(state=("disabled" if on else "normal"))
+            except tk.TclError:
+                pass
+        try:
+            source_cb.configure(state=("disabled" if on else "readonly"))
+            src_refresh.configure(state=("disabled" if on else "normal"))
+        except tk.TclError:
+            pass
 
     def do_start():
         spec = _current_spec()
