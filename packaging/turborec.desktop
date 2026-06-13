@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Turbo Recorder
+GenericName=Screen Recorder
+Comment=Record your screen and audio at the best quality your hardware can deliver
+Exec=turborec gui
+TryExec=turborec
+Icon=turborec
+Terminal=false
+Categories=AudioVideo;Recorder;
+Keywords=screen;record;recorder;capture;screencast;audio;video;ffmpeg;
+StartupNotify=true

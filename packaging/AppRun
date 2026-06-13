@@ -1,0 +1,45 @@
+#!/bin/sh
+# =============================================================================
+#  Turbo Recorder — AppImage AppRun entry point
+#
+#  IMPORTANT: this AppImage bundles ONLY the Turbo Recorder scripts. It is a
+#  thin wrapper, NOT a self-contained runtime. It deliberately relies on the
+#  HOST system providing:
+#
+#      * python3  (>= 3.8)              — to run /usr/bin/turborec
+#      * tkinter  (python3-tk /         — required for the `gui` subcommand
+#                  python3-tkinter)
+#      * ffmpeg                         — the actual recording engine
+#
+#  These are NOT shipped inside the AppImage. If they are missing the program
+#  will tell you what to install. This keeps the image tiny and lets the
+#  recorder use the host's real, hardware-accelerated FFmpeg (NVENC / VAAPI /
+#  QSV), which would be impossible to bundle portably.
+# =============================================================================
+set -eu
+
+# $APPDIR is exported by the AppImage runtime; fall back to this script's dir
+# when AppRun is executed directly out of an extracted AppDir.
+if [ -z "${APPDIR:-}" ]; then
+    APPDIR="$(dirname "$(readlink -f "$0")")"
+fi
+export APPDIR
+
+# Make the bundled scripts discoverable on PATH for any self-referential calls.
+export PATH="${APPDIR}/usr/bin:${PATH}"
+
+# Locate a host python3.
+if command -v python3 >/dev/null 2>&1; then
+    PYTHON=python3
+elif command -v python >/dev/null 2>&1; then
+    PYTHON=python
+else
+    echo "turborec: error: python3 (>= 3.8) was not found on this system." >&2
+    echo "          Install it with your package manager, e.g.:" >&2
+    echo "            Debian/Ubuntu : sudo apt install python3 python3-tk ffmpeg" >&2
+    echo "            Fedora/RHEL   : sudo dnf install python3 python3-tkinter ffmpeg" >&2
+    echo "            Arch          : sudo pacman -S python tk ffmpeg" >&2
+    exit 127
+fi
+
+exec "${PYTHON}" "${APPDIR}/usr/bin/turborec" "$@"
