@@ -54,8 +54,13 @@ tar -czf "${TARBALL}" -C "${BUILD_DIR}" "${PKG}"
 # --- Build. ------------------------------------------------------------------
 cp -p "${SPEC}" "${RPMBUILD_DIR}/SPECS/"
 
+# --nodeps: skip the build-time BuildRequires check. The actual tools
+# (rsvg-convert, desktop-file-validate) are installed via the host's package
+# manager, but on a non-RPM build host the RPM database doesn't know that.
+# Runtime "Requires:" in the package metadata are unaffected.
 rpmbuild \
     --define "_topdir ${RPMBUILD_DIR}" \
+    --nodeps \
     -ba "${RPMBUILD_DIR}/SPECS/$(basename "${SPEC}")"
 
 # --- Collect the artifacts. --------------------------------------------------
