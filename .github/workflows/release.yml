@@ -38,9 +38,10 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p dist
+          # Exclude the downloaded appimagetool itself (it is an *.AppImage too).
           find . -path ./dist -prune -o \
             \( -name '*.deb' -o -name '*.rpm' -o -iname '*.AppImage' \) \
-            -type f -print -exec cp -f {} dist/ \;
+            ! -iname 'appimagetool*' -type f -print -exec cp -f {} dist/ \;
           echo "Artifacts:"
           ls -l dist
 
