@@ -21,6 +21,15 @@ Two front-ends, one engine:
 
 <img width="1223" height="262" alt="2025-12-16_20-47" src="https://github.com/user-attachments/assets/d3d35f33-1b65-4c59-85ce-f6d9a10caea5" />
 
+## Documentation
+
+- 📖 **[Complete User Guide / Tutorial](docs/TUTORIAL.md)** — install, GUI & CLI
+  walkthroughs, capture modes, monitor/window capture, CPU vs GPU, audio, timed
+  recording, a recipe cookbook, quality tips, troubleshooting and FAQ.
+- 📝 **[Changelog](CHANGELOG.md)** — what changed in each release.
+
+New here? Start with the [60-second quick start](docs/TUTORIAL.md#2-60-second-quick-start).
+
 ## Install
 
 **Packages** (built automatically on each `v*` tag via GitHub Actions — see the
