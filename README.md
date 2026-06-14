@@ -1,25 +1,41 @@
-# Turbo Recorder
+<div align="center">
 
-### State-of-the-art screen + audio recorder — Linux · macOS · Windows
+# 🎬 Turbo Recorder
 
-Turbo Recorder captures your screen and audio at the **best quality your
-hardware can deliver**. It probes the machine and configures everything for
-you: operating system, display server, CPU vendor, GPU, the best hardware
-video encoder, your screen resolution, and your microphone / system-audio
-sources. Then it builds a quality-first FFmpeg pipeline and records.
+#### State-of-the-art screen &amp; audio recorder — Linux · macOS · Windows
+
+[![Latest release](https://img.shields.io/github/v/release/cristiancmoises/turborec?label=release&color=19e3d6&labelColor=0b1014)](https://github.com/cristiancmoises/turborec/releases/latest)
+[![License](https://img.shields.io/badge/license-GPL--3.0-19e3d6?labelColor=0b1014)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-19e3d6?labelColor=0b1014)](#)
+[![Made with FFmpeg](https://img.shields.io/badge/engine-FFmpeg-19e3d6?labelColor=0b1014)](https://ffmpeg.org)
+
+<img src="docs/turborec-gui.png" alt="Turbo Recorder — dark, hardware-accelerated screen recorder GUI" width="860">
+
+📺 **[Watch a sample recording](https://youtu.be/mlf531Da9Qo?si=RTaSB9dJ4NSbGsOm)** &nbsp;·&nbsp; 🪞 also mirrored on [Forgejo](https://git.securityops.co/securityops/turborec)
+
+</div>
+
+Turbo Recorder captures your screen and audio at the **best quality your hardware
+can deliver**. It probes your machine and configures everything automatically —
+operating system, display server, CPU vendor, GPU, the best hardware video
+encoder, screen resolution, and your microphone + system-audio sources — then
+builds a **real-time, correct-speed** FFmpeg pipeline and records.
+
+### ✨ Highlights
+
+- 🎯 **Zero config** — auto-detects OS, CPU, GPU, encoder, screen, mic & system audio
+- ⚡ **Hardware accelerated** — NVENC · Quick Sync · VAAPI · AMF · VideoToolbox, with automatic CPU fallback
+- 🎞️ **Real-time, correct-speed capture** — constant frame rate, so recordings never play back in slow motion
+- 🖥️ **OBS-style capture** — full screen, a specific monitor, a window, or an exact region
+- 🎚️ **You choose** — CPU or GPU encoding · H.264 / H.265 / AV1 · lossless FLAC (or AAC/Opus) audio
+- 🖤 **Beautiful dark GUI _and_ a powerful CLI** — packaged as `.deb` / `.rpm` / AppImage
 
 Two front-ends, one engine:
 
 | Tool | Platforms | Interface |
 |------|-----------|-----------|
-| **`turborec.py`** | Linux · macOS · Windows | Cross-platform **CLI + GUI** (Python, no extra deps) |
+| **`turborec`** | Linux · macOS · Windows | Cross-platform **CLI + GUI** (Python, no extra deps) |
 | **`turborecorder`** | Linux (X11) | Fast, dependency-light **Bash CLI** |
-
-# PROJECT MOVED TO MY OWN FORGEJO INSTANCE!!! [ CHECK HERE ](https://git.securityops.co/securityops/turborec)
-
-# [Sample here](https://youtu.be/mlf531Da9Qo?si=RTaSB9dJ4NSbGsOm)
-
-<img width="1223" height="262" alt="2025-12-16_20-47" src="https://github.com/user-attachments/assets/d3d35f33-1b65-4c59-85ce-f6d9a10caea5" />
 
 ## Documentation
 
@@ -112,6 +128,8 @@ Both front-ends auto-detect and configure:
 ---
 
 ## Cross-platform CLI + GUI — `turborec.py`
+
+<img width="1223" alt="Turbo Recorder CLI" src="https://github.com/user-attachments/assets/d3d35f33-1b65-4c59-85ce-f6d9a10caea5" />
 
 **Requirements:** Python 3.8+ and FFmpeg on `PATH`. (GUI also needs Tk — bundled
 with the python.org installers on macOS/Windows; `sudo apt install python3-tk`
