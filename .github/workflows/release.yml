@@ -21,7 +21,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            dpkg-dev rpm fakeroot libfuse2 wget
+            dpkg-dev rpm fakeroot libfuse2 wget \
+            librsvg2-bin desktop-file-utils imagemagick
 
       - name: Build packages
         env:
