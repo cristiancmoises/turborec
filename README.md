@@ -26,6 +26,7 @@ builds a **real-time, correct-speed** FFmpeg pipeline and records.
 - 🎯 **Zero config** — auto-detects OS, CPU, GPU, encoder, screen, mic & system audio
 - ⚡ **Hardware accelerated** — NVENC · Quick Sync · VAAPI · AMF · VideoToolbox, with automatic CPU fallback
 - 🎞️ **Real-time, correct-speed capture** — constant frame rate, so recordings never play back in slow motion
+- 🌊 **Wayland _and_ X11** — wlroots (sway/Hyprland/river) capture via `wf-recorder`, with perfectly A/V-synced mic+system audio
 - 🖥️ **OBS-style capture** — full screen, a specific monitor, a window, or an exact region
 - 🎚️ **You choose** — CPU or GPU encoding · H.264 / H.265 / AV1 · lossless FLAC (or AAC/Opus) audio
 - 🖤 **Beautiful dark GUI _and_ a powerful CLI** — packaged as `.deb` / `.rpm` / AppImage
@@ -53,19 +54,22 @@ New here? Start with the [60-second quick start](docs/TUTORIAL.md#2-60-second-qu
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_2.2.0_all.deb
+sudo apt install ./turborec_3.0.0_all.deb
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-2.2.0-1.noarch.rpm
+sudo dnf install ./turborec-3.0.0-1.noarch.rpm
 
 # Any Linux — portable, no install
-chmod +x Turbo_Recorder-2.2.0-x86_64.AppImage
-./Turbo_Recorder-2.2.0-x86_64.AppImage
+chmod +x Turbo_Recorder-3.0.0-x86_64.AppImage
+./Turbo_Recorder-3.0.0-x86_64.AppImage
 ```
 
 Packages install `turborec` and `turborecorder` to `/usr/bin`, plus a desktop
-launcher and icon. Runtime needs: `ffmpeg`, `python3` (≥ 3.8), and `python3-tk`
-(`python3-tkinter` on Fedora) for the GUI.
+launcher and icon. Runtime needs: `ffmpeg`, `python3` (≥ 3.8), `python3-tk`
+(`python3-tkinter` on Fedora) for the GUI, and — **on a Wayland session** —
+[`wf-recorder`](https://github.com/ammen99/wf-recorder) for screen capture
+(`sudo apt install wf-recorder` · `sudo dnf install wf-recorder` ·
+`guix install wf-recorder`).
 
 **From source** (no packaging needed):
 
@@ -78,9 +82,9 @@ python3 turborec.py gui      # or: detect / record / devices
 **Build the packages yourself** — scripts live in [`packaging/`](packaging/):
 
 ```bash
-packaging/build-deb.sh        # → dist/turborec_2.2.0_all.deb  (works even without dpkg-deb)
-packaging/build-rpm.sh        # → dist/turborec-2.2.0-1.noarch.rpm
-packaging/build-appimage.sh   # → dist/Turbo_Recorder-2.2.0-x86_64.AppImage
+packaging/build-deb.sh        # → dist/turborec_3.0.0_all.deb  (works even without dpkg-deb)
+packaging/build-rpm.sh        # → dist/turborec-3.0.0-1.noarch.rpm
+packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.0.0-x86_64.AppImage
 ```
 
 ## The GUI
@@ -102,7 +106,8 @@ Launch it with `turborec gui` (or just `turborec` on a desktop session).
 
 Both front-ends auto-detect and configure:
 
-- **Operating system & display server** — X11, Wayland, macOS Quartz, Windows GDI
+- **Operating system & display server** — X11 (`x11grab`), **Wayland/wlroots**
+  (`wf-recorder`: sway, Hyprland, river), macOS Quartz, Windows GDI
 - **CPU vendor** — Intel / AMD / Apple Silicon
 - **GPU & best hardware encoder**, in priority order:
   - **NVIDIA** → NVENC (`h264_nvenc` / `hevc_nvenc` / `av1_nvenc`)
@@ -131,9 +136,11 @@ Both front-ends auto-detect and configure:
 
 <img width="1223" alt="Turbo Recorder CLI" src="https://github.com/user-attachments/assets/d3d35f33-1b65-4c59-85ce-f6d9a10caea5" />
 
-**Requirements:** Python 3.8+ and FFmpeg on `PATH`. (GUI also needs Tk — bundled
-with the python.org installers on macOS/Windows; `sudo apt install python3-tk`
-on Debian/Ubuntu.)
+**Requirements:** Python 3.8+ and FFmpeg on `PATH`. The GUI also needs Tk —
+bundled with the python.org installers on macOS/Windows; `sudo apt install
+python3-tk` on Debian/Ubuntu. On a **Wayland** session, screen capture uses
+[`wf-recorder`](https://github.com/ammen99/wf-recorder) (install it from your
+package manager).
 
 ```bash
 # See exactly what was auto-detected on this machine
