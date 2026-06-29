@@ -1,10 +1,11 @@
 Package: turborec
-Version: 2.2.0
+Version: 3.0.0
 Section: sound
 Priority: optional
 Architecture: all
 Maintainer: Cristian Cezar Moises <ethicalhacker@riseup.net>
 Depends: ffmpeg, python3 (>= 3.8), python3-tk
+Recommends: wf-recorder
 Homepage: https://github.com/cristiancmoises/turborec
 Description: State-of-the-art hardware-accelerated screen and audio recorder
  Turbo Recorder captures your screen and audio at the best quality your

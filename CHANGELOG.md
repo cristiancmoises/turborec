@@ -5,6 +5,43 @@ All notable changes to Turbo Recorder are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] — 2026-06-28
+
+### Added
+- **Wayland (wlroots) screen capture** via `wf-recorder` — sway, Hyprland, river,
+  etc. `x11grab` only ever saw XWayland, so on a Wayland session video was
+  black/empty; turborec now auto-detects Wayland and records the real desktop.
+  Per-output (`--monitor`), region (`--region`, mapped to the right output), and
+  sway **window** capture are supported; outputs/windows are read from
+  `swaymsg`/`wlr-randr`.
+- **Perfectly A/V-synced mic+system on Wayland.** For `video_both`, turborec
+  creates a temporary PipeWire combined source (null sink + two loopbacks) so a
+  single `wf-recorder` process captures video and mixed audio under one clock —
+  no lip-sync drift — then tears the modules down. Falls back to a two-process
+  capture + mux if the combined source can't be created. The chosen audio codec
+  (FLAC/AAC/Opus) is honored via `wf-recorder -C`.
+
+### Fixed (from an adversarial security + performance review)
+- **AV1 software no longer uses the non-real-time `libaom-av1`** for live capture:
+  prefers `libsvtav1` (real-time presets), else falls back to `libx264` — matching
+  behavior across the ffmpeg and Wayland paths.
+- **No orphaned processes / leaked temp files** when the capture crashes: the GUI
+  and CLI now tear down every process, unload PipeWire modules, and clean up.
+- Processes are reaped after kill/terminate (no zombies); a `None` exit code is
+  treated as failure, not success.
+- wf-recorder is always given a valid `-o <output>` (no interactive prompt hang);
+  duration timing uses a monotonic deadline; region is clamped to the output;
+  `--region WxH` (offset-less) is accepted on Wayland; the `wlr-randr` fallback
+  reads each output's `Position:`.
+- Window/output titles from `swaymsg` are sanitized before display (no terminal
+  escape-sequence injection). Preview no longer emits encoder warnings to stderr.
+
+### Notes
+- On NVIDIA + Wayland, `wf-recorder` encodes in software (`libx264`/`libx265`);
+  NVENC is not reachable through it. At 1080p/1200p this is comfortably real-time.
+- Requires **`wf-recorder`** on Wayland (`guix install wf-recorder` ·
+  `sudo apt install wf-recorder` · `sudo dnf install wf-recorder`).
+
 ## [2.2.0] — 2026-06-13
 
 ### Fixed
@@ -65,6 +102,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   audio (no more hardcoded device names), full-screen capture by default, and adds
   HEVC / codec / quality / audio-codec options.
 
+[3.0.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.0.0
 [2.2.0]: https://github.com/cristiancmoises/turborec/releases/tag/v2.2.0
 [2.1.0]: https://github.com/cristiancmoises/turborec/releases/tag/v2.1.0
 [2.0.0]: https://github.com/cristiancmoises/turborec/releases/tag/v2.0.0
