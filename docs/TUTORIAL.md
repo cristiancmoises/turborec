@@ -32,7 +32,11 @@
 
 **Requirements:** [FFmpeg](https://ffmpeg.org/download.html) on your `PATH`,
 Python 3.8+, and (for the GUI) Tk — bundled with the python.org installers on
-macOS/Windows; a separate package on Linux.
+macOS/Windows; a separate package on Linux. On a **Wayland** session (sway,
+Hyprland, river, …) screen capture additionally needs
+[`wf-recorder`](https://github.com/ammen99/wf-recorder)
+(`sudo apt install wf-recorder` · `sudo dnf install wf-recorder` ·
+`guix install wf-recorder`).
 
 ### Linux — packages
 
@@ -265,8 +269,12 @@ windows). Notes:
 - On **X11**, window capture grabs that window's *screen region* (like OBS
   "Display Capture" cropped to the window) — if another window overlaps it, the
   overlap is captured too.
-- On **Wayland**, `x11grab` only sees XWayland windows; for full-desktop Wayland
-  capture install `wf-recorder` or use a `kmsgrab` setup.
+- On **Wayland** (sway/Hyprland/river), capture uses `wf-recorder` automatically.
+  Pick an output with `--monitor <name>` (or the Source dropdown); a region with
+  `--region`; a sway window with `--window`. NVENC isn't available through
+  `wf-recorder`, so encoding is software `libx264`/`libx265` (real-time at 1080p).
+  `video_both` records perfectly A/V-synced via a temporary PipeWire combined
+  source. (Install `wf-recorder` if it's missing.)
 
 ---
 
@@ -437,8 +445,11 @@ see [Install → GNU Guix](#1-install). The CLI works without Tk.
 **Microphone requested but none found.** Select one explicitly:
 `turborec record --mic-device "<name from turborec devices>"`.
 
-**Wayland: only some windows are captured.** `x11grab` sees only XWayland windows.
-Install `wf-recorder` for full-desktop Wayland capture, or run an X11 session.
+**Wayland: "wf-recorder is not installed".** Install it
+(`sudo apt install wf-recorder` / `sudo dnf install wf-recorder` /
+`guix install wf-recorder`). turborec uses it to capture wlroots compositors
+(sway/Hyprland/river); a black/empty recording usually means an old version
+falling back to `x11grab` — upgrade to 3.0.0+.
 
 **Window capture also shows overlapping windows.** Expected on X11 — it captures
 the window's screen region. Keep the target window unobstructed, or capture a
