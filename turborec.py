@@ -35,7 +35,7 @@ from datetime import datetime
 from typing import Optional
 
 APP_NAME = "Turbo Recorder"
-VERSION = "2.2.0"
+VERSION = "3.0.0"
 
 # ---------------------------------------------------------------------------
 # Small terminal helpers
@@ -106,6 +106,12 @@ def run_cmd(cmd: list[str], timeout: float = 8.0) -> str:
         return ""
 
 
+def _san(s: str) -> str:
+    """Strip control / escape characters from externally-sourced text (window
+    titles, device labels) so they can't inject terminal escape sequences."""
+    return re.sub(r"[\x00-\x1f\x7f-\x9f]", "", s or "")
+
+
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
@@ -122,6 +128,8 @@ class CaptureTarget:
     label: str                 # human readable
     geometry: Optional[str] = None   # "WxH+X+Y" region of the desktop
     win_title: Optional[str] = None  # native window title (Windows gdigrab)
+    output: Optional[str] = None     # Wayland output name (wf-recorder -o)
+    wl_geometry: Optional[str] = None  # wf-recorder region "X,Y WxH" within output
 
 
 @dataclass
@@ -141,6 +149,10 @@ class SystemInfo:
     monitors: list[AudioDevice] = field(default_factory=list)
     default_mic: Optional[AudioDevice] = None
     default_monitor: Optional[AudioDevice] = None
+    # Wayland / wlroots capture (sway, Hyprland, river, …)
+    wayland_recorder: str = ""   # path to wf-recorder, or "" if unavailable
+    wl_outputs: list = field(default_factory=list)  # CaptureTarget per output
+    wl_default_output: str = ""  # focused/primary output name
 
 
 # ---------------------------------------------------------------------------
@@ -447,6 +459,7 @@ def _detect_windows_x11() -> list[CaptureTarget]:
             continue
         if iw < 64 or ih < 64:
             continue
+        title = _san(title)
         short = (title[:48] + "…") if len(title) > 49 else title
         targets.append(CaptureTarget(
             kind="window", label=f"{short}  ({w}x{h})",
@@ -454,14 +467,115 @@ def _detect_windows_x11() -> list[CaptureTarget]:
     return targets
 
 
+def _detect_outputs_wayland() -> tuple[list[CaptureTarget], str]:
+    """Wayland (wlroots) outputs via swaymsg, falling back to wlr-randr.
+
+    Returns (monitor targets, focused output name). Geometry is global layout
+    coords 'WxH+X+Y'; wf-recorder selects an output with -o.
+    """
+    targets: list[CaptureTarget] = []
+    focused = ""
+    if shutil.which("swaymsg"):
+        out = run_cmd(["swaymsg", "-t", "get_outputs"])
+        try:
+            for o in json.loads(out):
+                if not o.get("active"):
+                    continue
+                r = o.get("rect", {})
+                name = o.get("name", "")
+                w, h, x, y = r.get("width"), r.get("height"), r.get("x", 0), r.get("y", 0)
+                if not (name and w and h):
+                    continue
+                targets.append(CaptureTarget(
+                    kind="monitor", label=f"{name}  ({w}x{h})",
+                    geometry=f"{w}x{h}+{x}+{y}", output=name))
+                if o.get("focused"):
+                    focused = name
+        except (ValueError, TypeError):
+            pass
+    if not targets and shutil.which("wlr-randr"):
+        out = run_cmd(["wlr-randr"])
+        name = None
+        size = None
+        pos = "0,0"
+        for line in out.splitlines():
+            m = re.match(r"^(\S+)\s+\"", line)
+            if m:
+                # flush the previous output before starting a new one
+                if name and size:
+                    px, py = pos.split(",")
+                    targets.append(CaptureTarget(
+                        kind="monitor", label=f"{_san(name)}  ({size})",
+                        geometry=f"{size}+{px}+{py}", output=name))
+                name, size, pos = m.group(1), None, "0,0"
+            mm = re.search(r"(\d+)x(\d+)\s+px.*current", line)
+            if mm:
+                size = f"{mm.group(1)}x{mm.group(2)}"
+            mp = re.search(r"Position:\s*(\d+),(\d+)", line)
+            if mp:
+                pos = f"{mp.group(1)},{mp.group(2)}"
+        if name and size:        # flush the last output
+            px, py = pos.split(",")
+            targets.append(CaptureTarget(
+                kind="monitor", label=f"{_san(name)}  ({size})",
+                geometry=f"{size}+{px}+{py}", output=name))
+    if not focused and targets:
+        focused = targets[0].output or ""
+    return targets, focused
+
+
+def _detect_windows_wayland() -> list[CaptureTarget]:
+    """Capturable windows on sway via the i3/sway tree (best-effort)."""
+    if not shutil.which("swaymsg"):
+        return []
+    out = run_cmd(["swaymsg", "-t", "get_tree"])
+    targets: list[CaptureTarget] = []
+    try:
+        tree = json.loads(out)
+    except ValueError:
+        return targets
+
+    def walk(node, output_name):
+        on = node.get("name") if node.get("type") == "output" else output_name
+        is_win = node.get("pid") and node.get("type") in ("con", "floating_con")
+        if is_win:
+            r = node.get("rect", {})
+            w, h, x, y = r.get("width", 0), r.get("height", 0), r.get("x", 0), r.get("y", 0)
+            title = _san(node.get("name") or node.get("app_id") or "window")
+            if w >= 64 and h >= 64 and node.get("visible", True):
+                short = (title[:46] + "…") if len(title) > 47 else title
+                targets.append(CaptureTarget(
+                    kind="window", label=f"{short}  ({w}x{h})",
+                    geometry=f"{w}x{h}+{x}+{y}", output=on))
+        for key in ("nodes", "floating_nodes"):
+            for child in node.get(key, []):
+                walk(child, on)
+
+    walk(tree, "")
+    return targets
+
+
 def detect_capture_targets(si: SystemInfo) -> list[CaptureTarget]:
     """Full screen first, then each monitor, then capturable windows."""
+    if si.os == "linux" and si.display_server == "wayland":
+        outs, focused = _detect_outputs_wayland()
+        foc = next((o for o in outs if o.output == focused), (outs[0] if outs else None))
+        screen = CaptureTarget(
+            kind="screen", label=f"Full screen  ({foc.output})" if foc else "Full screen",
+            geometry=foc.geometry if foc else (f"{si.screen}+0+0" if si.screen else None),
+            output=foc.output if foc else None)
+        targets = [screen]
+        if len(outs) > 1:        # multiple monitors: list each; one == full screen
+            targets += outs
+        targets += _detect_windows_wayland()
+        return targets
+
     targets: list[CaptureTarget] = [
         CaptureTarget(kind="screen",
                       label=f"Full screen  ({si.screen})" if si.screen else "Full screen",
                       geometry=(f"{si.screen}+0+0" if si.screen else None))
     ]
-    if si.os == "linux" and si.display_server in ("x11", "wayland"):
+    if si.os == "linux" and si.display_server == "x11":
         mons = _detect_monitors_x11()
         if len(mons) > 1:        # a single monitor == full screen; don't duplicate
             targets += mons
@@ -484,6 +598,20 @@ def probe_system(ffmpeg: Optional[str] = None) -> SystemInfo:
     si.screen = detect_screen(si.os, si.display_server)
     si.encoders = list_encoders(ff)
     si.mics, si.monitors, si.default_mic, si.default_monitor = detect_audio(si.os, ff)
+    # Wayland (wlroots) capture backend
+    if si.os == "linux" and si.display_server == "wayland":
+        si.wayland_recorder = shutil.which("wf-recorder") or ""
+        si.wl_outputs, si.wl_default_output = _detect_outputs_wayland()
+        if not si.screen and si.wl_outputs:
+            # global desktop bounding box from output rects
+            mx = my = 0
+            for t in si.wl_outputs:
+                m = re.match(r"(\d+)x(\d+)\+(\d+)\+(\d+)", t.geometry or "")
+                if m:
+                    mx = max(mx, int(m.group(3)) + int(m.group(1)))
+                    my = max(my, int(m.group(4)) + int(m.group(2)))
+            if mx and my:
+                si.screen = f"{mx}x{my}"
     return si
 
 
@@ -499,6 +627,19 @@ class EncoderChoice:
 
 
 # preference order per (gpu_vendor, codec) -> list of (encoder, kind)
+def _sw_encoder(si: SystemInfo, codec: str) -> str:
+    """Real-time-capable software encoder for live capture.
+
+    For AV1 prefer SVT-AV1 (real-time at low presets); never libaom-av1 (far below
+    real-time for a live source) — fall back to libx264 if SVT-AV1 is unavailable.
+    """
+    if codec == "av1":
+        if "libsvtav1" in si.encoders:
+            return "libsvtav1"
+        return "libx264"
+    return {"h264": "libx264", "hevc": "libx265"}.get(codec, "libx264")
+
+
 def _candidate_encoders(si: SystemInfo, codec: str) -> list[tuple[str, str]]:
     v = si.gpu_vendor
     c = codec
@@ -522,8 +663,7 @@ def _candidate_encoders(si: SystemInfo, codec: str) -> list[tuple[str, str]]:
         table.append((f"{c}_videotoolbox", "videotoolbox"))
     elif si.os == "linux":
         table.append((f"{c}_vaapi", "vaapi"))
-    sw = {"h264": "libx264", "hevc": "libx265", "av1": "libaom-av1"}.get(c, "libx264")
-    table.append((sw, "software"))
+    table.append((_sw_encoder(si, c), "software"))
     return table
 
 
@@ -533,12 +673,15 @@ def choose_encoder(si: SystemInfo, codec: str = "h264", force_software: bool = F
     codec = codec.lower()
     if force_software:
         backend = "cpu"
-    sw_name = {"h264": "libx264", "hevc": "libx265", "av1": "libaom-av1"}.get(codec, "libx264")
+    sw_name = _sw_encoder(si, codec)
 
     if backend == "cpu":
         if sw_name not in si.encoders:
             die(f"Software encoder {sw_name} not available in this FFmpeg build.")
-        return EncoderChoice(sw_name, "software", codec, "CPU / software encoding (user-selected)")
+        note = "CPU / software encoding (user-selected)"
+        if codec == "av1" and sw_name == "libx264":
+            note = "AV1 software is not real-time; using libx264 (CPU)"
+        return EncoderChoice(sw_name, "software", codec, note)
 
     # gpu or auto: walk the hardware-first candidate list
     for enc, kind in _candidate_encoders(si, codec):
@@ -606,12 +749,16 @@ def encoder_args(enc: EncoderChoice, quality: str) -> list[str]:
         a += ["-q:v", str(vq), "-realtime", "1"]
         if enc.codec == "hevc":
             a += ["-tag:v", "hvc1"]
-    else:  # software libx264 / libx265 / libaom-av1
+    else:  # software libx264 / libx265 / libsvtav1
         # Software MUST use fast presets to keep real-time on a live capture at
         # high resolution; 'slow'/'medium' fall far behind and slow the video.
-        if enc.name == "libaom-av1":
+        if enc.name == "libsvtav1":
+            # SVT-AV1 presets 0(slow)..13(fastest); high presets are real-time.
+            a += ["-preset", str([8, 9, 10, 11][qi]), "-crf", str([28, 30, 32, 35][qi])]
+        elif enc.name == "libaom-av1":
             crf = [28, 30, 32, 35][qi]
-            a += ["-crf", str(crf), "-b:v", "0", "-cpu-used", "8", "-row-mt", "1"]
+            a += ["-crf", str(crf), "-b:v", "0", "-cpu-used", "8", "-row-mt", "1",
+                  "-usage", "realtime"]
         else:
             preset = ["veryfast", "veryfast", "faster", "ultrafast"][qi]
             crf = [18, 20, 23, 26][qi]
@@ -740,6 +887,8 @@ class RecordSpec:
     duration: Optional[float] = None   # stop after N seconds (ffmpeg -t)
     geometry: Optional[str] = None     # capture region "WxH+X+Y" (full screen if None)
     win_title: Optional[str] = None    # Windows gdigrab window title (window capture)
+    wl_output: Optional[str] = None    # Wayland output name (wf-recorder -o)
+    wl_geometry: Optional[str] = None  # Wayland output-local region "X,Y WxH"
 
 
 def _audio_encode_args(spec: RecordSpec) -> list[str]:
@@ -841,37 +990,371 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
 
 
 # ---------------------------------------------------------------------------
+# Record plan — a backend-agnostic description of how to record
+#   procs:    [(label, argv, stop_method)]   stop_method: "q" (ffmpeg) | "int" (wf-recorder)
+#   finalize: optional command run after procs stop (e.g. mux video+audio)
+#   cleanup:  temp files to delete when done
+#   self_timed: True if a proc self-stops on duration (ffmpeg -t); else the
+#               runner enforces duration by stopping the procs.
+# ---------------------------------------------------------------------------
+@dataclass
+class RecordPlan:
+    out_path: str
+    procs: list = field(default_factory=list)
+    finalize: Optional[list] = None
+    cleanup: list = field(default_factory=list)
+    is_video: bool = True
+    self_timed: bool = True
+    backend: str = "ffmpeg"      # ffmpeg | wf-recorder | wf-recorder+ffmpeg
+    # Wayland mic+system: load a PipeWire combined source before recording so a
+    # single wf-recorder process owns both clocks (perfect A/V sync). Tuple is
+    # (sink_name, mic_id, monitor_id); module ids are captured at activation.
+    pulse_setup: Optional[tuple] = None
+    fallback: Optional["RecordPlan"] = None   # used if pulse_setup fails
+
+
+# ---- Wayland (wlroots) encoder selection for wf-recorder --------------------
+def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False) -> tuple[str, list[str], str, str]:
+    """Return (codec, [codec params], kind, drm_device) for wf-recorder.
+
+    wf-recorder cannot use NVENC; on NVIDIA it uses software (libx264/x265).
+    VAAPI is used only on Intel/AMD when available. All presets are real-time.
+    """
+    qi = _quality_index(spec.quality)
+    codec = spec.codec
+    if spec.backend != "cpu" and si.gpu_vendor in ("intel", "amd") and si.vaapi_device:
+        venc = {"h264": "h264_vaapi", "hevc": "hevc_vaapi"}.get(codec)
+        if venc and venc in si.encoders:
+            qp = [20, 23, 26, 30][qi]
+            return venc, [f"qp={qp}"], "vaapi", si.vaapi_device
+    if spec.backend == "gpu" and si.gpu_vendor == "nvidia" and not quiet:
+        warn("wf-recorder cannot use NVENC on Wayland; recording with software x264.")
+    if codec == "hevc":
+        preset = ["veryfast", "veryfast", "faster", "ultrafast"][qi]
+        return "libx265", [f"preset={preset}", f"crf={[20,22,25,28][qi]}"], "software", ""
+    if codec == "av1" and not quiet:
+        warn("AV1 software encoding is not real-time for live capture; using H.264.")
+    preset = ["veryfast", "veryfast", "faster", "ultrafast"][qi]
+    return "libx264", [f"preset={preset}", f"crf={[18,20,23,26][qi]}"], "software", ""
+
+
+def _parse_wxhxy(geom: Optional[str]) -> Optional[tuple[int, int, int, int]]:
+    """Parse 'WxH+X+Y' or 'WxH' (offset defaults to 0,0) -> (w,h,x,y)."""
+    if not geom:
+        return None
+    m = re.match(r"(\d+)x(\d+)(?:\+(\d+)\+(\d+))?$", geom.strip())
+    if not m:
+        return None
+    w, h, x, y = m.group(1), m.group(2), m.group(3) or 0, m.group(4) or 0
+    return int(w), int(h), int(x), int(y)
+
+
+def _global_to_output_region(si: SystemInfo, geom: str,
+                             prefer: Optional[str] = None) -> tuple[str, Optional[str]]:
+    """Map a global 'WxH+X+Y' rect to (output_name, 'X,Y WxH' local to that output)."""
+    g = _parse_wxhxy(geom)
+    if not g:
+        return prefer or si.wl_default_output, None
+    w, h, x, y = g
+    chosen = None
+    for t in si.wl_outputs:
+        og = _parse_wxhxy(t.geometry or "")
+        if not og:
+            continue
+        ow, oh, ox, oy = og
+        if (prefer and t.output == prefer) or (ox <= x < ox + ow and oy <= y < oy + oh):
+            chosen = t
+            if not prefer or t.output == prefer:
+                break
+    if not chosen:
+        chosen = next((t for t in si.wl_outputs if t.output == (prefer or si.wl_default_output)),
+                      si.wl_outputs[0] if si.wl_outputs else None)
+    if not chosen:
+        return prefer or si.wl_default_output, f"{x},{y} {w}x{h}"
+    cw, ch, ox, oy = _parse_wxhxy(chosen.geometry or "") or (0, 0, 0, 0)
+    lx, ly = max(0, x - ox), max(0, y - oy)
+    # clamp the region so it never exceeds the output bounds
+    rw = min(w, cw - lx) if cw else w
+    rh = min(h, ch - ly) if ch else h
+    return chosen.output or "", f"{lx},{ly} {max(1, rw)}x{max(1, rh)}"
+
+
+def _pulse_mix_load(sink_name: str, mic_id: str, monitor_id: str) -> Optional[list[str]]:
+    """Create a PipeWire/Pulse combined source mixing mic + system audio.
+
+    Loads a null sink and loops the mic and the system monitor into it, so its
+    .monitor is one source carrying both — letting a single wf-recorder process
+    capture perfectly A/V-synced video + mixed audio. Returns the loaded module
+    ids (to unload later), or None if the modules could not be created.
+    """
+    if not shutil.which("pactl"):
+        return None
+
+    def load(args: list[str]) -> Optional[str]:
+        out = run_cmd(["pactl", "load-module"] + args).strip()
+        last = out.splitlines()[-1].strip() if out else ""
+        return last if last.isdigit() else None
+
+    ids: list[str] = []
+    sink = load(["module-null-sink", f"sink_name={sink_name}",
+                 f"sink_properties=device.description={sink_name}"])
+    if not sink:
+        return None
+    ids.append(sink)
+    for src in (mic_id, monitor_id):
+        m = load(["module-loopback", f"source={src}", f"sink={sink_name}", "latency_msec=30"])
+        if not m:
+            _pulse_mix_unload(ids)
+            return None
+        ids.append(m)
+    return ids
+
+
+def _pulse_mix_unload(ids: list[str]) -> None:
+    for m in reversed(ids or []):
+        run_cmd(["pactl", "unload-module", m])
+
+
+def _activate_plan(plan: "RecordPlan") -> tuple["RecordPlan", list[str]]:
+    """Perform a plan's pre-record setup (PipeWire mix). Returns (plan to run, module ids)."""
+    if plan.pulse_setup:
+        sink, mic_id, mon_id = plan.pulse_setup
+        ids = _pulse_mix_load(sink, mic_id, mon_id)
+        if ids:
+            return plan, ids
+        warn("Could not create a combined mic+system source; "
+             "falling back to a separate audio recorder (A/V sync may drift slightly).")
+        if plan.fallback:
+            return plan.fallback, []
+    return plan, []
+
+
+def _ffmpeg_audio_mix_cmd(si: SystemInfo, spec: RecordSpec, out_path: str) -> list[str]:
+    """ffmpeg command capturing mic + system audio, mixed, to out_path."""
+    cmd = [si.ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-stats"]
+    for dev in (spec.monitor, spec.mic):
+        cmd += audio_input_args(si, dev)  # type: ignore[arg-type]
+    fg = (f"[0:a]aresample={spec.audio_rate}:resampler=soxr,aformat=channel_layouts=stereo[a0];"
+          f"[1:a]aresample={spec.audio_rate}:resampler=soxr,aformat=channel_layouts=stereo[a1];"
+          f"[a0][a1]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0[aout]")
+    cmd += ["-filter_complex", fg, "-map", "[aout]"]
+    cmd += _audio_encode_args(spec)
+    cmd.append(out_path)
+    return cmd
+
+
+def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
+                        out_dir: str, wants_mic: bool, wants_sys: bool) -> RecordPlan:
+    if not si.wayland_recorder:
+        die("Wayland session detected but 'wf-recorder' is not installed — it is "
+            "required to capture a wlroots (sway/Hyprland/river) desktop.\n"
+            "  Install:  guix install wf-recorder  ·  sudo apt install wf-recorder  ·  "
+            "sudo dnf install wf-recorder")
+    wf = si.wayland_recorder
+    # resolve output + output-local geometry
+    output = spec.wl_output or si.wl_default_output
+    wl_geom = spec.wl_geometry
+    if not output and si.wl_outputs:
+        output = si.wl_outputs[0].output or ""
+    if not output:
+        die("No Wayland output detected to record. Run 'turborec targets' to list "
+            "outputs, then pass --monitor <name> (or check that swaymsg/wlr-randr works).")
+    codec, cparams, kind, drm = wf_codec(si, spec, quiet=preview)
+    container = spec.container or "mkv"
+    ts = timestamp()
+    out_path = os.path.join(out_dir, f"{spec.mode}_{ts}.{container}")
+
+    acodec = {"flac": "flac", "aac": "aac", "opus": "libopus"}.get(spec.audio_codec, "flac")
+
+    def wf_cmd(target_file: str, audio_dev: Optional[str] = "__none__") -> list[str]:
+        c = [wf, "-o", output, "-c", codec, "-r", str(spec.fps), "-x", "yuv420p"]
+        for p in cparams:
+            c += ["-p", p]
+        if kind == "vaapi" and drm:
+            c += ["-d", drm]
+        if wl_geom:
+            c += ["-g", wl_geom]
+        if audio_dev != "__none__":
+            c += [f"--audio={audio_dev}"] if audio_dev else ["--audio"]
+            c += ["-C", acodec]      # honor the chosen audio codec (flac/aac/opus)
+        c += ["-f", target_file]
+        return c
+
+    if not (wants_mic or wants_sys):
+        return RecordPlan(out_path, [("wf-recorder", wf_cmd(out_path), "int")],
+                          self_timed=False, backend="wf-recorder")
+    if wants_mic and wants_sys:
+        # PRIMARY: one PipeWire combined source -> a single wf-recorder process
+        # captures perfectly A/V-synced video + mixed (mic+system) audio.
+        sink = f"turborec_mix_{ts}".replace("-", "_").replace(":", "_")
+        primary = RecordPlan(
+            out_path, [("wf-recorder (video+mixed audio)", wf_cmd(out_path, f"{sink}.monitor"), "int")],
+            self_timed=False, backend="wf-recorder",
+            pulse_setup=(sink, spec.mic.id, spec.monitor.id))  # type: ignore[union-attr]
+        # FALLBACK (if the combined source can't be created): wf-recorder video +
+        # a parallel ffmpeg audio mixer, muxed (stream copy) at the end.
+        atmp = os.path.join(out_dir, f".{spec.mode}_{ts}.audio.{_audio_ext(spec)}")
+        vtmp = os.path.join(out_dir, f".{spec.mode}_{ts}.video.mkv")
+        mux = [si.ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+               "-i", vtmp, "-i", atmp, "-map", "0:v:0", "-map", "1:a:0",
+               "-c", "copy", out_path]
+        primary.fallback = RecordPlan(
+            out_path,
+            [("wf-recorder (video)", wf_cmd(vtmp), "int"),
+             ("ffmpeg (mic+system)", _ffmpeg_audio_mix_cmd(si, spec, atmp), "q")],
+            finalize=mux, cleanup=[vtmp, atmp], self_timed=False,
+            backend="wf-recorder+ffmpeg")
+        return primary
+    dev = spec.monitor.id if wants_sys else spec.mic.id  # type: ignore[union-attr]
+    return RecordPlan(out_path, [("wf-recorder", wf_cmd(out_path, dev), "int")],
+                      self_timed=False, backend="wf-recorder")
+
+
+def _audio_ext(spec: RecordSpec) -> str:
+    return {"flac": "flac", "opus": "opus", "aac": "m4a"}.get(spec.audio_codec, "flac")
+
+
+def build_plan(si: SystemInfo, spec: RecordSpec, preview: bool = False) -> RecordPlan:
+    """Backend-agnostic recording plan. Wayland video -> wf-recorder; else ffmpeg."""
+    is_video = spec.mode.startswith("video")
+    wants_mic = spec.mode in ("video_both", "video_mic", "audio_mic", "audio_both")
+    wants_sys = spec.mode in ("video_both", "video_system", "audio_system", "audio_both")
+    if wants_mic and not spec.mic:
+        die("Microphone requested but no microphone device detected/selected.")
+    if wants_sys and not spec.monitor:
+        die("System audio requested but no monitor/loopback source detected/selected.")
+    out_dir = spec.out_dir or (os.path.join(os.path.expanduser("~"),
+                                            "Videos" if is_video else "Audio"))
+    if not preview:
+        ensure_dir(out_dir)
+    if is_video and si.os == "linux" and si.display_server == "wayland":
+        return _build_wayland_plan(si, spec, preview, out_dir, wants_mic, wants_sys)
+    cmd, out_path = build_command(si, spec)
+    return RecordPlan(out_path, [("ffmpeg", cmd, "q")], is_video=is_video,
+                      self_timed=True, backend="ffmpeg")
+
+
+# ---------------------------------------------------------------------------
 # Recording runner (graceful stop)
 # ---------------------------------------------------------------------------
-def record(cmd: list[str], out_path: str, dry_run: bool = False,
-           countdown_secs: int = 0, open_when_done: bool = False) -> int:
-    info(f"Output → {bold(out_path)}")
-    info("FFmpeg command:")
-    print(dim(" ".join(_shquote(c) for c in cmd)), file=sys.stderr)
+def record_plan(plan: "RecordPlan", dry_run: bool = False, countdown_secs: int = 0,
+                open_when_done: bool = False, duration: Optional[float] = None) -> int:
+    """Run a RecordPlan: start its process(es), stop them gracefully, finalize."""
+    info(f"Output → {bold(plan.out_path)}")
+    for label, argv, _m in plan.procs:
+        info(f"{label}:")
+        print(dim(" ".join(_shquote(c) for c in argv)), file=sys.stderr)
+    if plan.finalize:
+        print(dim("  (then mux) " + " ".join(_shquote(c) for c in plan.finalize)), file=sys.stderr)
     if dry_run:
         return 0
     if countdown_secs > 0:
         countdown(countdown_secs)
-    has_duration = "-t" in cmd
-    stop_hint = "stop early" if has_duration else "stop and finalize"
+
+    # pre-record setup (PipeWire combined source); may switch to a fallback plan
+    plan, pulse_ids = _activate_plan(plan)
+    stop_hint = "stop early" if duration else "stop and finalize"
     info(f"Recording… press {bold('q')} or {bold('Ctrl-C')} to {stop_hint}.")
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+
+    running: list[tuple[subprocess.Popen, str]] = []
     try:
-        proc.wait()
+        for _label, argv, method in plan.procs:
+            stdin = subprocess.PIPE if method == "q" else subprocess.DEVNULL
+            running.append((subprocess.Popen(argv, stdin=stdin), method))
+    except OSError as e:
+        for p, m in running:           # don't leak already-started processes
+            _stop_proc(p, m)
+        _pulse_mix_unload(pulse_ids)
+        die(f"Failed to launch recorder: {e}")
+
+    primary = running[0][0]
+    try:
+        if duration and duration > 0 and not plan.self_timed:
+            _wait_with_timeout(primary, duration)
+        else:
+            primary.wait()
     except KeyboardInterrupt:
-        _graceful_stop(proc)
-    rc = proc.returncode or 0
-    if rc == 0 and os.path.exists(out_path):
+        pass
+    for proc, method in running:
+        _stop_proc(proc, method)
+    _pulse_mix_unload(pulse_ids)
+
+    # a None returncode (un-reaped / killed) is a failure, not success
+    rc = max(((p.returncode if p.returncode is not None else 1) for p, _ in running), default=0)
+    inputs_ok = all(os.path.exists(t) and os.path.getsize(t) > 0 for t in plan.cleanup)
+    if plan.finalize:
+        if not inputs_ok:
+            warn("recording produced no usable video/audio to mux.")
+            rc = rc or 1
+        else:
+            info("Muxing audio + video…")
+            try:
+                mux = subprocess.run(plan.finalize, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                if mux.returncode != 0:
+                    rc = mux.returncode
+                    warn("mux failed:\n" + mux.stderr.decode("utf-8", "replace")[-400:])
+            except OSError as e:
+                rc = 1
+                warn(f"mux failed: {e}")
+    for tmp in plan.cleanup:
         try:
-            size = _gui_fmt_size(os.path.getsize(out_path))
+            os.path.exists(tmp) and os.remove(tmp)
+        except OSError:
+            pass
+
+    if rc == 0 and os.path.exists(plan.out_path):
+        try:
+            size = _gui_fmt_size(os.path.getsize(plan.out_path))
         except OSError:
             size = "?"
-        info(f"{green('Saved ✓')}  {bold(os.path.basename(out_path))}  ({size})")
+        info(f"{green('Saved ✓')}  {bold(os.path.basename(plan.out_path))}  ({size})")
         if open_when_done:
-            open_file(out_path)
+            open_file(plan.out_path)
     elif rc != 0:
-        warn(f"ffmpeg exited with code {rc}")
+        warn(f"recording exited with code {rc}")
     return rc
+
+
+def _wait_with_timeout(proc: subprocess.Popen, seconds: float) -> None:
+    """Wait up to `seconds` of wall-clock, returning early if the process exits."""
+    deadline = time.monotonic() + seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        try:
+            proc.wait(timeout=min(0.25, remaining))
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def _reap(proc: subprocess.Popen) -> None:
+    """Final wait() so a killed/terminated child is reaped (no zombie)."""
+    try:
+        proc.wait(timeout=5)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+
+def _stop_proc(proc: subprocess.Popen, method: str) -> None:
+    """Stop one recording process and let it finalize its file (then reap it)."""
+    if proc.poll() is not None:
+        return
+    if method != "int":
+        _graceful_stop(proc)
+        return
+    if hasattr(signal, "SIGINT"):
+        proc.send_signal(signal.SIGINT)
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            _reap(proc)
 
 
 def _graceful_stop(proc: subprocess.Popen) -> None:
@@ -890,6 +1373,11 @@ def _graceful_stop(proc: subprocess.Popen) -> None:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                _reap(proc)
 
 
 def _shquote(s: str) -> str:
@@ -1126,56 +1614,67 @@ def _resolve_backend(args) -> str:
     return getattr(args, "backend", None) or "auto"
 
 
-def _resolve_capture_target(si: SystemInfo, args) -> tuple[Optional[str], Optional[str]]:
-    """Return (geometry 'WxH+X+Y' or None, win_title or None) from CLI flags."""
+def _resolve_capture_target(si: SystemInfo, args) -> Optional[CaptureTarget]:
+    """Return the selected CaptureTarget from CLI flags, or None for full screen."""
     if getattr(args, "region", None):
-        return args.region, None
+        return CaptureTarget(kind="region", label="region", geometry=args.region)
     targets = detect_capture_targets(si)
     sel = getattr(args, "monitor", None)
     if sel:
         for t in targets:
-            if t.kind == "monitor" and (sel.lower() in t.label.lower()):
-                return t.geometry, None
+            if t.kind == "monitor" and (sel.lower() in t.label.lower()
+                                        or sel == (t.output or "")):
+                return t
         die(f"Monitor '{sel}' not found. Try: turborec targets")
     sel = getattr(args, "window", None)
     if sel:
         for t in targets:
             if t.kind == "window" and (sel == (t.win_title or "") or sel.lower() in t.label.lower()):
-                return t.geometry, t.win_title
+                return t
         die(f"Window '{sel}' not found. Try: turborec targets")
-    return None, None
+    return None
+
+
+def _target_to_wayland(si: SystemInfo, target: CaptureTarget) -> tuple[str, Optional[str]]:
+    """Map a CaptureTarget to (wayland output, output-local 'X,Y WxH' or None)."""
+    out = target.output or si.wl_default_output
+    if target.kind in ("screen", "monitor"):
+        return out, None
+    if target.geometry:    # window / region -> output-local region
+        return _global_to_output_region(si, target.geometry, prefer=target.output)
+    return out, None
+
+
+def _apply_target_to_spec(si: SystemInfo, target: Optional[CaptureTarget], spec: RecordSpec) -> None:
+    if target is None:
+        return
+    if si.display_server == "wayland":
+        spec.wl_output, spec.wl_geometry = _target_to_wayland(si, target)
+    else:
+        spec.geometry = target.geometry
+        spec.win_title = target.win_title
 
 
 def cmd_record(args) -> int:
     si = probe_system(args.ffmpeg)
     backend = _resolve_backend(args)
-    geometry, win_title = _resolve_capture_target(si, args)
-    if not args.quiet:
-        info(f"{si.os}/{si.display_server} · CPU {si.cpu_vendor} · GPU {si.gpu_vendor}"
-             f"{' (HW)' if si.has_gpu else ' (SW)'} · screen {si.screen or '?'} · encoder {backend}"
-             + (f" · region {geometry}" if geometry else ""))
+    target = _resolve_capture_target(si, args)
     mic, mon = _resolve_audio_devices(si, args)
     spec = RecordSpec(
-        mode=args.mode,
-        quality=args.quality,
-        codec=args.codec,
-        fps=args.fps,
-        region=args.region,
-        geometry=geometry,
-        win_title=win_title,
-        out_dir=args.out or "",
-        audio_rate=args.audio_rate,
-        audio_codec=args.audio_codec,
-        mic=mic,
-        monitor=mon,
-        force_software=args.software,
-        backend=backend,
-        container=args.container,
+        mode=args.mode, quality=args.quality, codec=args.codec, fps=args.fps,
+        region=args.region, out_dir=args.out or "", audio_rate=args.audio_rate,
+        audio_codec=args.audio_codec, mic=mic, monitor=mon,
+        force_software=args.software, backend=backend, container=args.container,
         duration=args.duration,
     )
-    cmd, out_path = build_command(si, spec)
-    return record(cmd, out_path, dry_run=args.dry_run,
-                  countdown_secs=args.countdown, open_when_done=args.open)
+    _apply_target_to_spec(si, target, spec)
+    if not args.quiet:
+        loc = spec.wl_output or spec.geometry or "full screen"
+        info(f"{si.os}/{si.display_server} · CPU {si.cpu_vendor} · GPU {si.gpu_vendor}"
+             f"{' (HW)' if si.has_gpu else ' (SW)'} · {si.screen or '?'} · encoder {backend} · {loc}")
+    plan = build_plan(si, spec)
+    return record_plan(plan, dry_run=args.dry_run, countdown_secs=args.countdown,
+                       open_when_done=args.open, duration=args.duration)
 
 
 def cmd_targets(args) -> int:
@@ -1429,25 +1928,20 @@ _GUI_MODE_LABELS = (
 
 
 def _gui_build_preview(si, spec):
-    """build_command() for the *preview* path — never mutates the filesystem.
+    """build_plan() for the *preview* path — never mutates the filesystem.
 
-    build_command() calls ensure_dir(out_dir) -> os.makedirs(...), which both
-    (a) creates directories on disk merely by opening the GUI / editing the
-    Folder field, and (b) can raise OSError for an unwritable/invalid path.
-    The live preview must be a pure read of the configuration, so we neutralise
-    ensure_dir for the duration of this single call (restored in finally) and
-    let build_command otherwise run unchanged. Any directory creation happens
-    only later, on the real do_start path.
-
-    Raises whatever build_command raises (SystemExit for invalid config); the
-    caller is responsible for catching it. Does NOT raise OSError from makedirs,
-    because makedirs is never invoked here.
+    build_plan()/build_command() call ensure_dir(out_dir) -> os.makedirs(), which
+    would (a) create directories merely by opening the GUI / editing the Folder
+    field and (b) raise OSError for an unwritable path. The live preview must be a
+    pure read of the configuration, so build_plan is invoked with preview=True and
+    we additionally neutralise ensure_dir (build_command, used on the non-Wayland
+    path, calls it unconditionally). Returns a RecordPlan.
     """
     g = globals()
     real_ensure_dir = g.get("ensure_dir")
     g["ensure_dir"] = lambda _path: None
     try:
-        return build_command(si, spec)
+        return build_plan(si, spec, preview=True)
     finally:
         if real_ensure_dir is not None:
             g["ensure_dir"] = real_ensure_dir
@@ -1640,7 +2134,9 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     # Every pending root.after() handle is tracked here so that on_close()/
     # _finish_recording() can cancel it before the interpreter is torn down,
     # preventing post-destroy TclError ("application has been destroyed").
-    state = {"proc": None, "out_path": None, "elapsed": 0,
+    state = {"procs": None, "plan": None, "pulse_ids": None,
+             "out_path": None, "size_path": None,
+             "elapsed": 0,
              "recording": False, "stopping": False, "closing": False,
              "destroyed": False, "pulse": 0,
              "after_tick": None, "after_pulse": None, "after_preview": None,
@@ -2033,12 +2529,22 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
 
         # encoder transparency chip
         if is_video:
-            try:
-                ec = choose_encoder(si, codec_var.get(), False, backend_var.get())
-                fg = C["warn"] if ec.kind == "software" else C["accent"]
-                enc_chip.configure(text=f"{ec.name}  ·  {ec.kind}  ·  {ec.note}", fg=fg)
-            except SystemExit:
-                enc_chip.configure(text="no usable encoder for this codec", fg=C["warn"])
+            if si.os == "linux" and si.display_server == "wayland":
+                try:
+                    spec = _current_spec()
+                except Exception:  # noqa: BLE001
+                    spec = RecordSpec(mode=mode_var.get(), codec=codec_var.get(),
+                                      backend=backend_var.get())
+                name, _p, kind, _d = wf_codec(si, spec)
+                fg = C["warn"] if kind == "software" else C["accent"]
+                enc_chip.configure(text=f"{name}  ·  {kind}  ·  wf-recorder (Wayland)", fg=fg)
+            else:
+                try:
+                    ec = choose_encoder(si, codec_var.get(), False, backend_var.get())
+                    fg = C["warn"] if ec.kind == "software" else C["accent"]
+                    enc_chip.configure(text=f"{ec.name}  ·  {ec.kind}  ·  {ec.note}", fg=fg)
+                except SystemExit:
+                    enc_chip.configure(text="no usable encoder for this codec", fg=C["warn"])
         else:
             enc_chip.configure(text="audio-only — no video encoder", fg=C["faint"])
 
@@ -2067,29 +2573,28 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             fps = int(fps_var.get())
         except ValueError:
             fps = 60
-        # capture geometry: explicit Region overrides the Source picker;
-        # otherwise a monitor/window target supplies the region; "screen" => full.
+        # Capture target: explicit Region overrides the Source picker; otherwise a
+        # monitor/window target; "screen" => full. _apply_target_to_spec fills the
+        # right fields for X11 (geometry/win_title) or Wayland (wl_output/wl_geometry).
         region_override = region_var.get().strip() or None
-        target = cap_targets["map"].get(source_var.get())
         if region_override:
-            geometry, win_title = region_override, None
-        elif target and target.kind != "screen":
-            geometry, win_title = target.geometry, target.win_title
+            target = CaptureTarget(kind="region", label="region", geometry=region_override)
         else:
-            geometry, win_title = None, None
-        return RecordSpec(
+            t = cap_targets["map"].get(source_var.get())
+            target = t if (t and t.kind != "screen") else None
+        spec = RecordSpec(
             mode=mode_var.get(),
             quality=quality_var.get(),
             codec=codec_var.get(),
             fps=fps,
-            geometry=geometry,
-            win_title=win_title,
             out_dir=out_var.get(),
             audio_codec=acodec_var.get(),
             mic=find_dev(si.mics, mic_var.get()),
             monitor=find_dev(si.monitors, mon_var.get(), fallback_monitor=True),
             backend=backend_var.get(),
         )
+        _apply_target_to_spec(si, target, spec)
+        return spec
 
     # ---- live command preview (debounced) ---------------------------------
     def _do_preview():
@@ -2103,7 +2608,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             # directories on disk, and so an unwritable/invalid path cannot raise
             # OSError out of this Tk callback. We still defensively catch OSError
             # (and any other Exception) in case build_command grows other I/O.
-            cmd, out_path = _gui_build_preview(si, spec)
+            plan = _gui_build_preview(si, spec)
         except SystemExit as e:
             msg = str(e) or "invalid configuration"
             fname_preview.configure(text="—", fg=C["faint"])
@@ -2129,8 +2634,15 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         if not (state["recording"] or state["stopping"]):
             state_line.configure(text="idle", fg=C["muted"])
             action_btn.configure(state="normal")
-        fname_preview.configure(text="↳ " + os.path.basename(out_path), fg=C["muted"])
-        _set_preview_text(" ".join(_shquote(c) for c in cmd))
+        fname_preview.configure(text="↳ " + os.path.basename(plan.out_path), fg=C["muted"])
+        lines = []
+        for label, argv, _m in plan.procs:
+            lines.append(f"# {label}")
+            lines.append(" ".join(_shquote(c) for c in argv))
+        if plan.finalize:
+            lines.append("# mux")
+            lines.append(" ".join(_shquote(c) for c in plan.finalize))
+        _set_preview_text("\n".join(lines))
 
     def schedule_preview(*_a):
         if state["destroyed"] or state["closing"]:
@@ -2145,17 +2657,19 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             return
         state["elapsed"] += 1
         timer_lbl.configure(text=_gui_fmt_elapsed(state["elapsed"]))
-        # poll output size
+        # poll the live output size (the temp video file during a composite mux)
         try:
-            p = state.get("out_path")
+            p = state.get("size_path")
             if p and os.path.exists(p):
                 size_line.configure(text=_gui_fmt_size(os.path.getsize(p)))
         except OSError:
             pass
-        # poll for ffmpeg dying on its own
-        proc = state.get("proc")
-        if proc is not None and proc.poll() is not None and not state["stopping"]:
-            _finish_recording(crashed=True, code=proc.returncode)
+        # poll for the capture process dying on its own → tear everything down
+        # (stop the other process(es), unload the PipeWire mix, mux/cleanup)
+        procs = state.get("procs") or []
+        primary = procs[0][0] if procs else None
+        if primary is not None and primary.poll() is not None and not state["stopping"]:
+            do_stop(crashed=True, code=primary.returncode or 0)
             return
         state["after_tick"] = root.after(1000, _tick)
 
@@ -2205,22 +2719,34 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     def do_start():
         spec = _current_spec()
         # The real start path is the ONLY place allowed to create directories,
-        # so we use build_command() directly (which calls ensure_dir()).
+        # so we use build_plan() directly (which calls ensure_dir()).
         try:
-            cmd, out_path = build_command(si, spec)
+            plan = build_plan(si, spec)
         except SystemExit as e:
             messagebox.showerror(APP_NAME, f"Cannot start: {e}")
             return
         except OSError as e:
             messagebox.showerror(APP_NAME, f"Cannot create output folder: {e}")
             return
+        # PipeWire mix setup for synced mic+system (may switch to a fallback plan)
+        plan, pulse_ids = _activate_plan(plan)
+        procs = []
         try:
-            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+            for _label, argv, method in plan.procs:
+                stdin = subprocess.PIPE if method == "q" else subprocess.DEVNULL
+                procs.append((subprocess.Popen(argv, stdin=stdin), method))
         except OSError as e:
-            messagebox.showerror(APP_NAME, f"Failed to launch ffmpeg: {e}")
+            for p, _m in procs:
+                try:
+                    p.kill()
+                except OSError:
+                    pass
+            _pulse_mix_unload(pulse_ids)
+            messagebox.showerror(APP_NAME, f"Failed to launch recorder: {e}")
             return
-        state.update(proc=proc, out_path=out_path, elapsed=0,
-                     recording=True, stopping=False, pulse=0)
+        state.update(procs=procs, plan=plan, pulse_ids=pulse_ids, out_path=plan.out_path,
+                     size_path=(plan.cleanup[0] if plan.finalize else plan.out_path),
+                     elapsed=0, recording=True, stopping=False, pulse=0)
         timer_lbl.configure(text="00:00:00")
         size_line.configure(text="0.0 MB")
         state_line.configure(text="● REC", fg=C["danger"])
@@ -2229,7 +2755,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         _pulse()
 
     def _finish_recording(crashed=False, code=0):
-        # called on the Tk thread once ffmpeg has exited
+        # called on the Tk thread once the recorder process(es) have exited
         _cancel_after("after_tick")
         _cancel_after("after_pulse")
         _cancel_after("after_stop")
@@ -2243,37 +2769,65 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             pass
         _set_recording_ui(False)
         out_path = state.get("out_path")
-        if crashed and code:
-            state_line.configure(text=f"ffmpeg exited (code {code})", fg=C["warn"])
+        saved = bool(out_path and os.path.exists(out_path) and os.path.getsize(out_path) > 0)
+        if crashed and not saved:
+            state_line.configure(text=f"recorder exited (code {code})", fg=C["warn"])
         else:
             base = os.path.basename(out_path) if out_path else ""
-            state_line.configure(text=f"Saved ✓  {base}", fg=C["success"])
+            prefix = "Saved ✓" if not crashed else f"Saved (recorder stopped, code {code})"
+            state_line.configure(text=f"{prefix}  {base}",
+                                 fg=(C["success"] if not crashed else C["warn"]))
             try:
-                if out_path and os.path.exists(out_path):
+                if saved:
                     size_line.configure(text=_gui_fmt_size(os.path.getsize(out_path)))
             except OSError:
                 pass
-        state["proc"] = None
+        state["procs"] = None
+        state["plan"] = None
+        state["pulse_ids"] = None
         # if a close was deferred until finalize completed, finish it now
         if state["closing"]:
             _destroy_now()
 
-    def do_stop():
-        proc = state.get("proc")
-        if not proc:
+    def do_stop(crashed=False, code=0):
+        procs = state.get("procs")
+        if not procs:
             return
         # Guard against double-stop: pressing STOP/Escape repeatedly during the
-        # finalize window must not spawn multiple _graceful_stop threads /
-        # _await_stop pollers (each of which would call _finish_recording).
+        # finalize window must not spawn multiple stop threads / pollers.
         if state["stopping"]:
             return
         state["stopping"] = True
-        state_line.configure(text="finalizing…", fg=C["warn"])
+        plan = state.get("plan")
+        pulse_ids = state.get("pulse_ids") or []
+        state_line.configure(
+            text=("recovering…" if crashed
+                  else ("finalizing + muxing…" if (plan and plan.finalize) else "finalizing…")),
+            fg=C["warn"])
         action_btn.configure(state="disabled")
-        # run the (blocking, up to ~15s) graceful stop on a worker thread so
-        # the UI keeps pulsing/animating; poll for completion via root.after.
+
+        # Stop every capture process, unload the PipeWire mix, then mux + clean up,
+        # on a worker thread so the UI keeps animating; poll completion via after().
+        def _worker():
+            for proc, method in procs:
+                _stop_proc(proc, method)
+            _pulse_mix_unload(pulse_ids)
+            if plan and plan.finalize:
+                ok = all(os.path.exists(t) and os.path.getsize(t) > 0 for t in plan.cleanup)
+                if ok:
+                    try:
+                        subprocess.run(plan.finalize, stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL)
+                    except OSError:
+                        pass
+                for t in plan.cleanup:
+                    try:
+                        os.path.exists(t) and os.remove(t)
+                    except OSError:
+                        pass
+
         import threading  # noqa: PLC0415
-        t = threading.Thread(target=_graceful_stop, args=(proc,), daemon=True)
+        t = threading.Thread(target=_worker, daemon=True)
         t.start()
 
         def _await_stop():
@@ -2283,7 +2837,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             if t.is_alive():
                 state["after_stop"] = root.after(120, _await_stop)
                 return
-            _finish_recording(crashed=False)
+            _finish_recording(crashed=crashed, code=code)
         state["after_stop"] = root.after(120, _await_stop)
 
     def toggle_record(_e=None):
@@ -2347,7 +2901,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         state["after_close"] = None
         if state["destroyed"]:
             return
-        if state.get("proc") is None and not state["stopping"]:
+        if state.get("procs") is None and not state["stopping"]:
             _destroy_now()
             return
         state["after_close"] = root.after(120, _wait_for_finalize)
@@ -2355,11 +2909,11 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     def on_close():
         if state["destroyed"] or state["closing"]:
             return
-        proc = state.get("proc")
+        procs = state.get("procs")
         # A stop may already be finalizing (stopping=True, possibly recording
         # cleared). In every "work in flight" case we must NOT destroy the UI
         # out from under the worker thread / pending pollers — defer destroy.
-        if proc is not None and (state["recording"] or state["stopping"]):
+        if procs is not None and (state["recording"] or state["stopping"]):
             if state["stopping"]:
                 # finalize already underway (e.g. user hit STOP then closed):
                 # just mark closing and let _finish_recording tear down.
