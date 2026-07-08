@@ -5,6 +5,21 @@ All notable changes to Turbo Recorder are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] — 2026-07-08
+
+### Added
+- **Audio channel handling (`--audio-channels`)** — fixes recordings that only
+  play on one side. `left`/`right` clone that channel to **both** outputs at full
+  level (ideal for a mono mic wired to one input, e.g. a Focusrite where only one
+  channel is live); `mono` averages both channels (clip-safe); `stereo` (default)
+  keeps the source. Applies to every audio path — the ffmpeg backend (X11/macOS/
+  Windows, audio-only modes) and Wayland (a non-`stereo` choice routes audio
+  through ffmpeg + mux so the channel remap always applies). Available in the CLI
+  and as a **Channels** dropdown in the GUI.
+- **23 fps** added to the GUI frame-rate presets — a great quality/CPU sweet spot
+  (~2.6× less encoding work than 60 fps), which meaningfully lowers CPU load
+  during software (Wayland/CPU) capture. Any FPS is still settable via `-f`.
+
 ## [3.0.0] — 2026-06-28
 
 ### Added
@@ -102,6 +117,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   audio (no more hardcoded device names), full-screen capture by default, and adds
   HEVC / codec / quality / audio-codec options.
 
+[3.1.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.1.0
 [3.0.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.0.0
 [2.2.0]: https://github.com/cristiancmoises/turborec/releases/tag/v2.2.0
 [2.1.0]: https://github.com/cristiancmoises/turborec/releases/tag/v2.1.0

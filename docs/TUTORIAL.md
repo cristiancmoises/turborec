@@ -312,14 +312,23 @@ turborec encoders          # shows the best h264/hevc/av1 encoder for your machi
 
 - **Lossless by default:** `--audio-codec flac`. Use `aac` (320k) or `opus` (256k)
   for smaller files.
-- Mic + system audio are **mixed cleanly** with a high-quality **soxr** resampler;
-  the active mic channel is auto-detected and centered.
+- Mic + system audio are **mixed cleanly** with a high-quality **soxr** resampler.
+- **Sound only on one side? `--audio-channels`.** Some inputs (a mono mic wired to
+  one channel of a stereo interface — e.g. a Focusrite input 2) put audio on just
+  one channel, so recordings play only left or right. Fix it:
+  - `--audio-channels right` (or `left`) — clone that channel to **both** sides at
+    full level.
+  - `--audio-channels mono` — average both channels onto both sides (clip-safe).
+  - `--audio-channels stereo` — leave the source untouched (default).
+
+  In the GUI, use the **Channels** dropdown next to the audio codec.
 - Pick specific devices:
 
 ```bash
 turborec devices                                  # list mics + system-audio sources
 turborec record -m audio_mic --mic-device "USB Microphone"
 turborec record -m video_system --system-device "...monitor"
+turborec record -m video_mic --audio-channels right   # fix right-only audio
 ```
 
 > **Recording desktop/system audio** needs a loopback/monitor source: PulseAudio/

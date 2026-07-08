@@ -35,7 +35,7 @@ from datetime import datetime
 from typing import Optional
 
 APP_NAME = "Turbo Recorder"
-VERSION = "3.0.0"
+VERSION = "3.1.0"
 
 # ---------------------------------------------------------------------------
 # Small terminal helpers
@@ -879,6 +879,7 @@ class RecordSpec:
     out_dir: str = ""
     audio_rate: int = 48000
     audio_codec: str = "flac"   # flac (lossless) | aac | opus
+    audio_channels: str = "stereo"  # stereo | mono | left | right (clone a channel to both)
     mic: Optional[AudioDevice] = None
     monitor: Optional[AudioDevice] = None
     force_software: bool = False
@@ -897,6 +898,29 @@ def _audio_encode_args(spec: RecordSpec) -> list[str]:
     if spec.audio_codec == "opus":
         return ["-c:a", "libopus", "-b:a", "256k", "-ar", "48000", "-ac", "2"]
     return ["-c:a", "aac", "-b:a", "320k", "-ar", str(spec.audio_rate), "-ac", "2"]
+
+
+def _audio_pan(channels: str) -> Optional[str]:
+    """ffmpeg pan for channel handling — fixes 'sound only on one side'.
+
+    left / right clone that channel to BOTH outputs (full level — ideal for a mono
+    mic wired to one input, e.g. a Focusrite). mono averages both channels onto
+    both outputs (clip-safe). stereo keeps the source as-is.
+    """
+    if channels == "left":
+        return "pan=stereo|c0=c0|c1=c0"
+    if channels == "right":
+        return "pan=stereo|c0=c1|c1=c1"
+    if channels == "mono":
+        return "pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1"
+    return None
+
+
+def _audio_src_filter(spec: RecordSpec) -> str:
+    """Per-source audio filter chain: resample (soxr) + channel handling → stereo."""
+    pan = _audio_pan(spec.audio_channels)
+    chain = f"aresample={spec.audio_rate}:resampler=soxr"
+    return chain + (f",{pan}" if pan else ",aformat=channel_layouts=stereo")
 
 
 def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
@@ -952,9 +976,7 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
         for i, _dev in enumerate(audio_inputs):
             ai = audio_start + i
             lbl = f"a{i}"
-            filtergraph_parts.append(
-                f"[{ai}:a]aresample={spec.audio_rate}:resampler=soxr,aformat=channel_layouts=stereo[{lbl}]"
-            )
+            filtergraph_parts.append(f"[{ai}:a]{_audio_src_filter(spec)}[{lbl}]")
             labels.append(f"[{lbl}]")
         if len(labels) == 1:
             maps += ["-map", labels[0]]
@@ -1129,15 +1151,23 @@ def _activate_plan(plan: "RecordPlan") -> tuple["RecordPlan", list[str]]:
     return plan, []
 
 
-def _ffmpeg_audio_mix_cmd(si: SystemInfo, spec: RecordSpec, out_path: str) -> list[str]:
-    """ffmpeg command capturing mic + system audio, mixed, to out_path."""
+def _ffmpeg_audio_cmd(si: SystemInfo, spec: RecordSpec, devices: list, out_path: str) -> list[str]:
+    """ffmpeg command capturing one or more audio sources (mixed) to out_path,
+    applying the channel handling (--audio-channels) via _audio_src_filter."""
     cmd = [si.ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-stats"]
-    for dev in (spec.monitor, spec.mic):
-        cmd += audio_input_args(si, dev)  # type: ignore[arg-type]
-    fg = (f"[0:a]aresample={spec.audio_rate}:resampler=soxr,aformat=channel_layouts=stereo[a0];"
-          f"[1:a]aresample={spec.audio_rate}:resampler=soxr,aformat=channel_layouts=stereo[a1];"
-          f"[a0][a1]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0[aout]")
-    cmd += ["-filter_complex", fg, "-map", "[aout]"]
+    for dev in devices:
+        cmd += audio_input_args(si, dev)
+    parts, labels = [], []
+    for i in range(len(devices)):
+        parts.append(f"[{i}:a]{_audio_src_filter(spec)}[a{i}]")
+        labels.append(f"[a{i}]")
+    if len(labels) == 1:
+        out_label = labels[0]
+    else:
+        parts.append("".join(labels)
+                     + f"amix=inputs={len(labels)}:duration=longest:dropout_transition=2:normalize=0[aout]")
+        out_label = "[aout]"
+    cmd += ["-filter_complex", ";".join(parts), "-map", out_label]
     cmd += _audio_encode_args(spec)
     cmd.append(out_path)
     return cmd
@@ -1183,6 +1213,27 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
     if not (wants_mic or wants_sys):
         return RecordPlan(out_path, [("wf-recorder", wf_cmd(out_path), "int")],
                           self_timed=False, backend="wf-recorder")
+
+    # wf-recorder captures audio verbatim and can't remap channels, so when the
+    # user asks for channel handling (mono/left/right clone), route audio through
+    # ffmpeg (which applies the pan) and mux it with the wf-recorder video.
+    def ffmpeg_audio_plan(devices: list) -> RecordPlan:
+        atmp = os.path.join(out_dir, f".{spec.mode}_{ts}.audio.{_audio_ext(spec)}")
+        vtmp = os.path.join(out_dir, f".{spec.mode}_{ts}.video.mkv")
+        mux = [si.ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+               "-i", vtmp, "-i", atmp, "-map", "0:v:0", "-map", "1:a:0",
+               "-c", "copy", out_path]
+        return RecordPlan(
+            out_path,
+            [("wf-recorder (video)", wf_cmd(vtmp), "int"),
+             ("ffmpeg (audio)", _ffmpeg_audio_cmd(si, spec, devices, atmp), "q")],
+            finalize=mux, cleanup=[vtmp, atmp], self_timed=False,
+            backend="wf-recorder+ffmpeg")
+
+    devices = ([spec.monitor] if wants_sys else []) + ([spec.mic] if wants_mic else [])
+    if _audio_pan(spec.audio_channels):
+        return ffmpeg_audio_plan(devices)
+
     if wants_mic and wants_sys:
         # PRIMARY: one PipeWire combined source -> a single wf-recorder process
         # captures perfectly A/V-synced video + mixed (mic+system) audio.
@@ -1191,19 +1242,7 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
             out_path, [("wf-recorder (video+mixed audio)", wf_cmd(out_path, f"{sink}.monitor"), "int")],
             self_timed=False, backend="wf-recorder",
             pulse_setup=(sink, spec.mic.id, spec.monitor.id))  # type: ignore[union-attr]
-        # FALLBACK (if the combined source can't be created): wf-recorder video +
-        # a parallel ffmpeg audio mixer, muxed (stream copy) at the end.
-        atmp = os.path.join(out_dir, f".{spec.mode}_{ts}.audio.{_audio_ext(spec)}")
-        vtmp = os.path.join(out_dir, f".{spec.mode}_{ts}.video.mkv")
-        mux = [si.ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-               "-i", vtmp, "-i", atmp, "-map", "0:v:0", "-map", "1:a:0",
-               "-c", "copy", out_path]
-        primary.fallback = RecordPlan(
-            out_path,
-            [("wf-recorder (video)", wf_cmd(vtmp), "int"),
-             ("ffmpeg (mic+system)", _ffmpeg_audio_mix_cmd(si, spec, atmp), "q")],
-            finalize=mux, cleanup=[vtmp, atmp], self_timed=False,
-            backend="wf-recorder+ffmpeg")
+        primary.fallback = ffmpeg_audio_plan(devices)   # if the combined source fails
         return primary
     dev = spec.monitor.id if wants_sys else spec.mic.id  # type: ignore[union-attr]
     return RecordPlan(out_path, [("wf-recorder", wf_cmd(out_path, dev), "int")],
@@ -1522,7 +1561,7 @@ MODES = (
 # explicit CLI flag always wins.
 _RC_KEYS = (
     "mode", "quality", "codec", "fps", "out", "region", "audio_rate",
-    "audio_codec", "container", "mic_device", "system_device", "software",
+    "audio_codec", "audio_channels", "container", "mic_device", "system_device", "software",
     "duration", "countdown", "open", "quiet", "ffmpeg",
 )
 
@@ -1663,7 +1702,7 @@ def cmd_record(args) -> int:
     spec = RecordSpec(
         mode=args.mode, quality=args.quality, codec=args.codec, fps=args.fps,
         region=args.region, out_dir=args.out or "", audio_rate=args.audio_rate,
-        audio_codec=args.audio_codec, mic=mic, monitor=mon,
+        audio_codec=args.audio_codec, audio_channels=args.audio_channels, mic=mic, monitor=mon,
         force_software=args.software, backend=backend, container=args.container,
         duration=args.duration,
     )
@@ -1843,6 +1882,10 @@ def build_parser(rc: Optional[dict] = None) -> argparse.ArgumentParser:
                    help="audio sample rate (default: 48000)")
     r.add_argument("--audio-codec", choices=("flac", "aac", "opus"), default=d("audio_codec", "flac"),
                    help="audio codec (default: flac, lossless)")
+    r.add_argument("--audio-channels", choices=("stereo", "mono", "left", "right"),
+                   default=d("audio_channels", "stereo"),
+                   help="channel handling: stereo (default), mono (average), or "
+                        "left/right (clone that channel to both — fixes one-sided audio)")
     r.add_argument("--container", default=d("container", "mkv"), help="video container (default: mkv)")
     r.add_argument("--mic-device", default=d("mic_device", None),
                    help="microphone device id/name (default: auto)")
@@ -2162,6 +2205,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     codec_var = tk.StringVar(value="h264")
     fps_var = tk.StringVar(value="60")
     acodec_var = tk.StringVar(value="flac")
+    achan_var = tk.StringVar(value="stereo")
     region_var = tk.StringVar(value="")
     mic_var = tk.StringVar()
     mon_var = tk.StringVar()
@@ -2226,7 +2270,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     codec_cb = _combo(grid, codec_var, ("h264", "hevc", "av1"))
     codec_cb.grid(row=0, column=3, sticky="ew", padx=(0, 14), pady=4)
     label(grid, "FPS", fg=C["muted"]).grid(row=0, column=4, sticky="w", padx=(0, 8), pady=4)
-    fps_cb = _combo(grid, fps_var, ("24", "30", "48", "60", "120"))
+    fps_cb = _combo(grid, fps_var, ("23", "24", "30", "48", "60", "120"))
     fps_cb.grid(row=0, column=5, sticky="ew", pady=4)
 
     # encoder transparency chip
@@ -2326,10 +2370,15 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     acodec_row.pack(fill="x", pady=(6, 0))
     label(acodec_row, "Audio codec", fg=C["muted"], width=12).pack(side="left", padx=(20, 8))
     acodec_cb = _combo(acodec_row, acodec_var, ("flac", "aac", "opus"))
-    acodec_cb.configure(width=10)
+    acodec_cb.configure(width=8)
     acodec_cb.pack(side="left")
     acodec_hint = label(acodec_row, "lossless", fg=C["faint"], font=F["hint"])
     acodec_hint.pack(side="left", padx=(10, 0))
+    # channel handling — fixes one-sided audio (mono mic on one input, etc.)
+    label(acodec_row, "Channels", fg=C["muted"]).pack(side="left", padx=(16, 8))
+    achan_cb = _combo(acodec_row, achan_var, ("stereo", "mono", "left", "right"))
+    achan_cb.configure(width=8)
+    achan_cb.pack(side="left")
 
     def _has_dev(value):
         # A device combobox holds a real selection iff it is neither the
@@ -2589,6 +2638,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             fps=fps,
             out_dir=out_var.get(),
             audio_codec=acodec_var.get(),
+            audio_channels=achan_var.get(),
             mic=find_dev(si.mics, mic_var.get()),
             monitor=find_dev(si.monitors, mon_var.get(), fallback_monitor=True),
             backend=backend_var.get(),
@@ -2955,7 +3005,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     root.bind("<Escape>", _on_escape)
 
     # ---- wire traces (live preview + dependent state) ---------------------
-    for v in (mode_var, quality_var, codec_var, fps_var, acodec_var,
+    for v in (mode_var, quality_var, codec_var, fps_var, acodec_var, achan_var,
               region_var, mic_var, mon_var, out_var, backend_var, source_var):
         v.trace_add("write", schedule_preview)
     for v in (mode_var, codec_var, acodec_var, backend_var):

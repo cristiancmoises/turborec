@@ -29,6 +29,7 @@ builds a **real-time, correct-speed** FFmpeg pipeline and records.
 - 🌊 **Wayland _and_ X11** — wlroots (sway/Hyprland/river) capture via `wf-recorder`, with perfectly A/V-synced mic+system audio
 - 🖥️ **OBS-style capture** — full screen, a specific monitor, a window, or an exact region
 - 🎚️ **You choose** — CPU or GPU encoding · H.264 / H.265 / AV1 · lossless FLAC (or AAC/Opus) audio
+- 🔊 **Fix one-sided audio** — clone a live channel to both sides (`--audio-channels left/right/mono`)
 - 🖤 **Beautiful dark GUI _and_ a powerful CLI** — packaged as `.deb` / `.rpm` / AppImage
 
 Two front-ends, one engine:
@@ -157,6 +158,9 @@ python3 turborec.py record -m video_mic -q high -f 30 -c hevc
 
 # Lossless audio-only (mic + system mixed)
 python3 turborec.py record -m audio_both --audio-codec flac
+
+# Fix sound only on one side (clone that channel to both), e.g. a mono mic on input 2
+python3 turborec.py record -m video_mic --audio-channels right   # or left / mono
 
 # Record for a fixed time, then open the file when done
 python3 turborec.py record -m video_both -t 60 --countdown 3 --open
