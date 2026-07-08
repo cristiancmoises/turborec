@@ -55,14 +55,14 @@ New here? Start with the [60-second quick start](docs/TUTORIAL.md#2-60-second-qu
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.0.0_all.deb
+sudo apt install ./turborec_3.1.0_all.deb
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.0.0-1.noarch.rpm
+sudo dnf install ./turborec-3.1.0-1.noarch.rpm
 
 # Any Linux — portable, no install
-chmod +x Turbo_Recorder-3.0.0-x86_64.AppImage
-./Turbo_Recorder-3.0.0-x86_64.AppImage
+chmod +x Turbo_Recorder-3.1.0-x86_64.AppImage
+./Turbo_Recorder-3.1.0-x86_64.AppImage
 ```
 
 Packages install `turborec` and `turborecorder` to `/usr/bin`, plus a desktop
@@ -83,9 +83,9 @@ python3 turborec.py gui      # or: detect / record / devices
 **Build the packages yourself** — scripts live in [`packaging/`](packaging/):
 
 ```bash
-packaging/build-deb.sh        # → dist/turborec_3.0.0_all.deb  (works even without dpkg-deb)
-packaging/build-rpm.sh        # → dist/turborec-3.0.0-1.noarch.rpm
-packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.0.0-x86_64.AppImage
+packaging/build-deb.sh        # → dist/turborec_3.1.0_all.deb  (works even without dpkg-deb)
+packaging/build-rpm.sh        # → dist/turborec-3.1.0-1.noarch.rpm
+packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.1.0-x86_64.AppImage
 ```
 
 ## The GUI
