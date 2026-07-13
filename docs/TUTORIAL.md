@@ -88,8 +88,26 @@ Install Tk for the GUI: `sudo apt install python3-tk` (Debian/Ubuntu),
 
 ### GNU Guix
 
-Guix ships Tk in a **separate `python:tk` output**, and the guix-home `python3`
-has no `_tkinter`. The clean approach is a Tk-capable Python plus a tiny launcher:
+**Easiest — the package definition or the relocatable pack.** The repo ships a
+`guix.scm`, and every release ships a relocatable pack tarball. Both give you a
+working `turborec` **CLI** with `ffmpeg`, `wf-recorder` and `pactl` already
+wired onto its PATH:
+
+```bash
+# From the repo — build and/or install the package
+guix build   -f guix.scm          # build it (prints the /gnu/store path)
+guix package -f guix.scm          # install it into your profile
+guix shell   -f guix.scm -- turborec detect   # run it ad-hoc
+
+# Or the prebuilt relocatable pack from the Releases page (no Guix daemon needed
+# to run it; unpacks the /gnu/store closure + a /bin/turborec launcher)
+tar xf turborec-3.3.0-guix-x86_64.tar.gz -C /
+/bin/turborec record -m video_both
+```
+
+**For the Tk GUI on Guix.** Guix's default `python` has no `_tkinter`, so the
+package above is CLI-only. For the GUI, use a Tk-capable Python plus a tiny
+launcher: `guix install python python:tk` then a wrapper —
 
 ```bash
 guix install python python:tk                    # provides a Tk-capable python3
@@ -116,10 +134,27 @@ chmod +x ~/.local/bin/turborec
 
 Then `turborec gui` works (make sure `~/.local/bin` is on your `PATH`).
 
-### macOS / Windows
+### macOS
 
 Install [Python from python.org](https://www.python.org/downloads/) (it bundles
 Tk) and [FFmpeg](https://ffmpeg.org/download.html), then run `python3 turborec.py gui`.
+For system-audio capture, add a loopback device such as
+[BlackHole](https://github.com/ExistentialAudio/BlackHole).
+
+### Windows
+
+Grab the single-file **`Turbo_Recorder-<version>-windows-x64.exe`** from the
+[Releases](https://github.com/cristiancmoises/turborec/releases) page — Python
+and Tk are bundled, so nothing else to install except **FFmpeg** on your `PATH`
+([download](https://ffmpeg.org/download.html), or `winget install Gyan.FFmpeg`):
+
+```powershell
+Turbo_Recorder-3.3.0-windows-x64.exe gui        # or: detect / record / --help
+```
+
+Prefer running from source? Install [Python](https://www.python.org/downloads/)
+(it bundles Tk) + FFmpeg and run `python turborec.py gui`. For system audio, use
+a loopback such as "Stereo Mix" or [VB-CABLE](https://vb-audio.com/Cable/).
 
 ---
 

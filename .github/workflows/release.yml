@@ -88,3 +88,72 @@ jobs:
           files: |
             dist/*.pkg
           fail_on_unmatched_files: true
+
+  windows:
+    name: Build Windows executable
+    runs-on: windows-latest
+    needs: linux
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build a single-file .exe with PyInstaller
+        shell: bash
+        run: |
+          set -eu
+          python -m pip install --upgrade pip pyinstaller
+          # tkinter is imported lazily inside the GUI, so collect it explicitly.
+          pyinstaller --onefile --name turborec \
+            --collect-submodules tkinter --hidden-import tkinter \
+            turborec.py
+          VER=$(python -c "import re,sys;print(re.search(r'VERSION = \"(.*)\"',open('turborec.py').read()).group(1))")
+          mkdir -p out
+          cp dist/turborec.exe "out/Turbo_Recorder-${VER}-windows-x64.exe"
+          ls -l out
+
+      - name: Smoke-test the executable
+        shell: bash
+        run: ./dist/turborec.exe --version
+
+      - name: Publish Windows artifact to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/*.exe
+          fail_on_unmatched_files: true
+
+  guix:
+    name: Build GNU Guix relocatable pack
+    runs-on: ubuntu-latest
+    needs: linux
+    # Best-effort: Guix bootstrap in CI is heavy; never let it block the release.
+    # The canonical Guix artifact is guix.scm in the repo (`guix build -f guix.scm`).
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install GNU Guix
+        uses: PromyLOPh/guix-install-action@v1
+
+      - name: Build a relocatable (-RR) binary tarball
+        run: |
+          set -eux
+          guix pack -RR -S /bin=bin -e "(primitive-load \"$PWD/guix.scm\")" > pack.txt
+          PACK="$(tail -1 pack.txt)"
+          VER="$(sed -n 's/^VERSION = "\(.*\)"/\1/p' turborec.py | head -1)"
+          mkdir -p out
+          cp "$PACK" "out/turborec-${VER}-guix-x86_64.tar.gz"
+          ls -l out
+
+      - name: Publish Guix artifact to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/*.tar.gz
+          fail_on_unmatched_files: true

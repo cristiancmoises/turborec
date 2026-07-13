@@ -2,11 +2,11 @@
 
 # 🎬 Turbo Recorder
 
-#### State-of-the-art screen &amp; audio recorder — Linux · macOS · Windows
+#### State-of-the-art screen &amp; audio recorder — Linux · macOS · Windows · BSD · Guix
 
 [![Latest release](https://img.shields.io/github/v/release/cristiancmoises/turborec?label=release&color=19e3d6&labelColor=0b1014)](https://github.com/cristiancmoises/turborec/releases/latest)
 [![License](https://img.shields.io/badge/license-GPL--3.0-19e3d6?labelColor=0b1014)](LICENSE)
-[![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-19e3d6?labelColor=0b1014)](#)
+[![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20BSD%20%7C%20Guix-19e3d6?labelColor=0b1014)](#)
 [![Made with FFmpeg](https://img.shields.io/badge/engine-FFmpeg-19e3d6?labelColor=0b1014)](https://ffmpeg.org)
 
 <img src="docs/turborec-gui.png" alt="Turbo Recorder — dark, hardware-accelerated screen recorder GUI" width="860">
@@ -73,6 +73,13 @@ pkg add ./turborec-3.3.0.pkg
 # Any Unix (BSD / illumos / Linux / macOS) — portable tarball
 tar xzf turborec-3.3.0.tar.gz && cd turborec-3.3.0
 sudo ./install.sh            # installs to /usr/local (PREFIX=… to change)
+
+# GNU Guix — relocatable pack (any distro, unprivileged) or the package file
+tar xf turborec-3.3.0-guix-x86_64.tar.gz -C /   # unpacks /gnu/store + /bin
+guix package -f guix.scm                        # or install from the repo
+
+# Windows — single-file executable (needs ffmpeg on PATH)
+Turbo_Recorder-3.3.0-windows-x64.exe gui
 ```
 
 Packages install `turborec` and `turborecorder` to `/usr/bin` (`/usr/local/bin`
@@ -100,7 +107,14 @@ packaging/build-rpm.sh        # → dist/turborec-3.3.0-1.noarch.rpm
 packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.3.0-x86_64.AppImage
 packaging/build-tarball.sh    # → dist/turborec-3.3.0.tar.gz   (portable; any Unix incl. the BSDs)
 packaging/build-freebsd-pkg.sh # → dist/turborec-3.3.0.pkg      (run on FreeBSD; pkg add)
+guix build -f guix.scm        # GNU Guix package (guix pack -RR … for a tarball)
 ```
+
+> Every release ships **`.deb`, `.rpm`, AppImage, a portable tarball, a FreeBSD
+> `.pkg`, a GNU Guix relocatable pack, and a Windows `.exe`** — built by GitHub
+> Actions on each `v*` tag. On **Windows**, install
+> [Python](https://www.python.org/downloads/) is *not* required (it's bundled in
+> the `.exe`), but [FFmpeg](https://ffmpeg.org/download.html) must be on `PATH`.
 
 ## The GUI
 
