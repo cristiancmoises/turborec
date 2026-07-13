@@ -31,6 +31,26 @@ literal. The GitHub Actions release workflow builds the Linux artifacts on
   declared as hard deps, so the file installs cleanly on any FreeBSD release
   (`pkg install python3 ffmpeg`).
 
+## Publishing release binaries to Forgejo + Codeberg
+
+Forgejo (`git.securityops.co`) is the primary repo; GitHub and Codeberg are
+push-mirrors. Push-mirrors replicate git refs (branches/tags) but **not** release
+objects or their binaries. GitHub builds its binaries via `release.yml`; to attach
+that same set to the Forgejo and Codeberg releases, run:
+
+```sh
+# downloads the tag's assets from the GitHub release, then attaches them to the
+# matching Forgejo + Codeberg releases (creating the release if needed)
+FJTOKEN=<forgejo-token> CBTOKEN=<codeberg-token> \
+    packaging/publish-release.sh v3.4.0
+
+# or attach files from a local directory instead of downloading
+FJTOKEN=… CBTOKEN=… packaging/publish-release.sh v3.4.0 dist/
+```
+
+Tokens are read only from the environment; the script is idempotent (it reuses an
+existing release and skips assets already attached), so it is safe to re-run.
+
 ## Debian `.deb` layout
 
 ```
