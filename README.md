@@ -32,6 +32,8 @@ builds a **real-time, correct-speed** FFmpeg pipeline and records.
 - 🔊 **Fix one-sided audio** — clone a live channel to both sides (`--audio-channels left/right/mono`)
 - 📐 **Record in 720p / 1080p / 1440p / 4K** — `-R 4k` upscales any screen to true 4K, so YouTube serves its high-bitrate 4K tier
 - 📡 **Go live to YouTube (OBS-style)** — paste your stream key (`--stream KEY` or the GUI field) and stream; keys are always redacted from output
+- 🎥 **Webcam overlay (picture-in-picture)** — overlay your camera on the recording *or* stream, with your choice of device, size and corner (`--camera`)
+- 🔇 **Built-in noise suppression** — NoiseTorch-style mic denoise (`--denoise light/medium/strong`), no extra app or virtual device needed
 - 🧠 **Adaptive quality** — presets scale with the pixel rate: best-quality at 1080p, fast enough to stay real-time at 4K
 - 🪟 **Zero-install Windows app** — a single `.exe` with Python, Tk **and FFmpeg bundled in**: download, double-click, record
 - 🖤 **Beautiful dark GUI _and_ a powerful CLI** — packaged as `.deb` / `.rpm` / AppImage / FreeBSD `.pkg` / Guix pack / Windows `.exe` / portable tarball
@@ -52,6 +54,88 @@ Two front-ends, one engine:
 
 New here? Start with the [60-second quick start](docs/TUTORIAL.md#2-60-second-quick-start).
 
+## How Turbo Recorder compares
+
+How it stacks up against the usual screen-capture / streaming tools. Turbo
+Recorder's goal is to be the **all-in-one recorder + streamer** that just works
+with zero setup — not a video editor (use Kdenlive for that) and not a
+scene-compositing studio you configure by hand (OBS).
+
+| Capability | **Turbo Recorder** | OBS Studio | Kdenlive | SimpleScreenRecorder | Kazam / vokoscreen |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Zero-config (auto-detect encoder + devices) | ✅ | ⚠️ manual scenes | ➖ | ⚠️ | ⚠️ |
+| Hardware encoding (NVENC/QSV/VAAPI/AMF/VT) | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| Screen / monitor / window / region capture | ✅ | ✅ | ➖ import | ✅ | ⚠️ |
+| **Webcam overlay (picture-in-picture)** | ✅ | ✅ | ✅ (edit) | ❌ | ❌ |
+| **Live streaming (RTMP / YouTube)** | ✅ | ✅ | ❌ | ❌ | ❌ |
+| **Built-in mic noise suppression** | ✅ | ⚠️ plugin | ⚠️ effect | ❌ | ❌ |
+| Native **Wayland** (wlroots) capture | ✅ | ⚠️ portal | ⚠️ | ❌ X11 | ⚠️ |
+| **Scriptable CLI** (automation / cron) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Modern GUI | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Cross-platform (Linux · macOS · Windows · **BSD**) | ✅ | ⚠️ no BSD | ✅ | ⚠️ Linux | ❌ Linux |
+| Lossless audio (FLAC) | ✅ | ⚠️ | ✅ | ⚠️ | ❌ |
+| Install footprint | **1 file + ffmpeg** | large | very large | small | small |
+| Self-contained Windows `.exe` (ffmpeg bundled) | ✅ | ⚠️ installer | ⚠️ installer | ⚠️ | ❌ |
+| Video editing / timeline | ❌ *(records only)* | ❌ | ✅ | ❌ | ❌ |
+
+<sub>✅ built-in · ⚠️ partial / manual / plugin · ➖ not applicable · ❌ not available. Comparison reflects typical out-of-the-box use.</sub>
+
+### Why Turbo Recorder is the best choice for recording & streaming
+
+- **It just works — zero configuration.** OBS makes you build scenes, add
+  sources, and pick encoders; SimpleScreenRecorder and Kazam still ask you to
+  wire up audio. Turbo Recorder **probes your machine** (OS, display server,
+  CPU/GPU, the best hardware encoder per codec, screen resolution, mic and
+  system-audio devices) and configures a quality-first pipeline automatically.
+  One command records; one field goes live.
+- **All-in-one, but focused.** Screen + webcam overlay + mic/system audio +
+  noise suppression + YouTube streaming — the things you actually need for
+  tutorials, gameplay, demos and meetings — in a **single ~1-file tool**, not a
+  100 MB studio or a video-editing suite.
+- **True Wayland support.** OBS relies on the desktop portal and Simple­Screen­Recorder
+  is X11-only; Turbo Recorder captures wlroots compositors (sway/Hyprland/river)
+  natively via `wf-recorder`, with perfectly A/V-synced audio.
+- **Scriptable.** A real CLI means you can record from a keybind, a cron job, or
+  CI — impossible with the GUI-only tools.
+- **Runs everywhere, installs anywhere.** Linux (`.deb`/`.rpm`/AppImage/Guix),
+  the BSDs (`.pkg`/tarball), macOS, and a **self-contained Windows `.exe`** with
+  Python + Tk + FFmpeg bundled in — download and run, nothing else to install.
+- **Best-quality by default & security-minded.** Adaptive encoder tuning per
+  resolution, lossless FLAC audio, BT.709 color — and stream keys are always
+  redacted, with every release adversarially security-audited.
+
+When you need a **timeline editor**, reach for Kdenlive; when you need a
+**broadcast studio** with dozens of composited sources and transitions, OBS is
+purpose-built for that. For **fast, high-quality screen/webcam recording and
+one-click streaming with nothing to configure**, Turbo Recorder is the best fit.
+
+### Under the hood — what powers it
+
+Turbo Recorder is a thin, quality-first orchestration layer over battle-tested,
+free/open-source building blocks — no reinventing the wheel:
+
+- **[FFmpeg](https://ffmpeg.org)** — the encoding/streaming engine (H.264/H.265/AV1, AAC/FLAC/Opus, the `overlay`/`afftdn` filters, RTMP/FLV).
+- **[wf-recorder](https://github.com/ammen99/wf-recorder)** — native wlroots/Wayland screen capture; **x11grab / gdigrab / AVFoundation** on X11 / Windows / macOS.
+- **Hardware encoders** — NVIDIA **NVENC**, Intel **Quick Sync**, **VAAPI**, AMD **AMF**, Apple **VideoToolbox**, with automatic `libx264`/`libx265` fallback.
+- **PipeWire / PulseAudio** — mic + system-audio capture and the synced combined source; **v4l2 / AVFoundation / DirectShow** for the webcam.
+- **RNNoise-style denoise** via FFmpeg **`afftdn`** — the same problem NoiseTorch solves, without the extra daemon.
+- **Python standard library + Tk** only — no pip dependencies. Two front-ends over one engine: the cross-platform `turborec` (CLI + GUI) and the lightweight `turborecorder` (Bash/X11).
+
+### How it boosts your productivity
+
+- **From idea to recording in seconds** — no scene setup, no device wiring, no
+  encoder guessing. `turborec` (or one GUI click) and you're capturing.
+- **One tool, one workflow, everywhere** — the same commands and muscle memory on
+  Linux, macOS, Windows and BSD; onboard a teammate with a single download.
+- **Automate it** — bind recording to a hotkey, script demo captures in CI, or
+  schedule a stream; the CLI + JSON config (`~/.config/turborec/config.json`)
+  make your defaults reproducible across machines.
+- **Ship better content faster** — webcam overlay + built-in noise suppression +
+  hardware-encoded best-quality output mean fewer retakes and no post-processing
+  just to make a tutorial or demo look and sound professional.
+- **Go live without a studio** — paste a stream key and broadcast to YouTube
+  (camera and clean audio included) straight from the same tool you record with.
+
 ## Install
 
 **Packages** (built automatically on each `v*` tag via GitHub Actions — see the
@@ -59,28 +143,28 @@ New here? Start with the [60-second quick start](docs/TUTORIAL.md#2-60-second-qu
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.4.0_all.deb
+sudo apt install ./turborec_3.5.0_all.deb
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.4.0-1.noarch.rpm
+sudo dnf install ./turborec-3.5.0-1.noarch.rpm
 
 # Any Linux — portable, no install
-chmod +x Turbo_Recorder-3.4.0-x86_64.AppImage
-./Turbo_Recorder-3.4.0-x86_64.AppImage
+chmod +x Turbo_Recorder-3.5.0-x86_64.AppImage
+./Turbo_Recorder-3.5.0-x86_64.AppImage
 
 # FreeBSD — native package
-pkg add ./turborec-3.4.0.pkg
+pkg add ./turborec-3.5.0.pkg
 
 # Any Unix (BSD / illumos / Linux / macOS) — portable tarball
-tar xzf turborec-3.4.0.tar.gz && cd turborec-3.4.0
+tar xzf turborec-3.5.0.tar.gz && cd turborec-3.5.0
 sudo ./install.sh            # installs to /usr/local (PREFIX=… to change)
 
 # GNU Guix — relocatable pack (any distro, unprivileged) or the package file
-tar xf turborec-3.4.0-guix-x86_64.tar.gz -C /   # unpacks /gnu/store + /bin
+tar xf turborec-3.5.0-guix-x86_64.tar.gz -C /   # unpacks /gnu/store + /bin
 guix package -f guix.scm                        # or install from the repo
 
 # Windows — self-contained app: Python, Tk AND ffmpeg bundled, nothing to install
-Turbo_Recorder-3.4.0-windows-x64.exe gui
+Turbo_Recorder-3.5.0-windows-x64.exe gui
 ```
 
 Packages install `turborec` and `turborecorder` to `/usr/bin` (`/usr/local/bin`
@@ -103,11 +187,11 @@ python3 turborec.py gui      # or: detect / record / devices
 **Build the packages yourself** — scripts live in [`packaging/`](packaging/):
 
 ```bash
-packaging/build-deb.sh        # → dist/turborec_3.4.0_all.deb  (works even without dpkg-deb)
-packaging/build-rpm.sh        # → dist/turborec-3.4.0-1.noarch.rpm
-packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.4.0-x86_64.AppImage
-packaging/build-tarball.sh    # → dist/turborec-3.4.0.tar.gz   (portable; any Unix incl. the BSDs)
-packaging/build-freebsd-pkg.sh # → dist/turborec-3.4.0.pkg      (run on FreeBSD; pkg add)
+packaging/build-deb.sh        # → dist/turborec_3.5.0_all.deb  (works even without dpkg-deb)
+packaging/build-rpm.sh        # → dist/turborec-3.5.0-1.noarch.rpm
+packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.5.0-x86_64.AppImage
+packaging/build-tarball.sh    # → dist/turborec-3.5.0.tar.gz   (portable; any Unix incl. the BSDs)
+packaging/build-freebsd-pkg.sh # → dist/turborec-3.5.0.pkg      (run on FreeBSD; pkg add)
 guix build -f guix.scm        # GNU Guix package (guix pack -RR … for a tarball)
 ```
 
@@ -198,6 +282,14 @@ python3 turborec.py record -R 4k -c hevc -f 23                   # also: 720p / 
 python3 turborec.py record -m video_both --stream YOUR_YT_STREAM_KEY
 python3 turborec.py record --stream KEY --stream-url rtmps://host/app   # custom RTMP/RTMPS ingest
 
+# Webcam overlay (picture-in-picture) — pick device, size and corner. Works for recording AND streaming
+python3 turborec.py cameras                                            # list webcams
+python3 turborec.py record -m video_both --camera /dev/video0 --camera-size medium --camera-position bottom-right
+python3 turborec.py record --stream KEY --camera /dev/video0 --camera-position top-right   # go live with your cam
+
+# Built-in mic noise suppression (NoiseTorch-style) — applied to the mic only
+python3 turborec.py record -m video_mic --denoise medium               # off / light / medium / strong
+
 # Record for a fixed time, then open the file when done
 python3 turborec.py record -m video_both -t 60 --countdown 3 --open
 
@@ -253,6 +345,40 @@ to stop.
 > preview, dry-run and status line**. As with any ffmpeg RTMP push, the key is
 > visible to other local users via the process list while live — only a concern
 > on shared multi-user machines.
+
+### 🎥 Webcam overlay (picture-in-picture)
+
+Overlay your camera on the recording **or** the live stream, OBS-style. List your
+cameras, then choose the device, size and corner:
+
+```bash
+turborec cameras                                     # list webcams
+turborec record -m video_both --camera /dev/video0 --camera-size medium --camera-position bottom-right
+turborec record --stream KEY --camera /dev/video0 --camera-position top-right   # go live with your cam
+```
+
+- **Device** — `--camera` takes `/dev/videoN` (Linux), an AVFoundation index (macOS)
+  or a DirectShow device name (Windows). In the GUI, pick it from the **Webcam** dropdown.
+- **Size** — `--camera-size` accepts `small` / `medium` / `large` (a fraction of the
+  output width), an explicit `WxH`, or `N%`.
+- **Position** — `--camera-position` is any corner (`top-left`, `top-right`,
+  `bottom-left`, `bottom-right`) or `center`.
+
+The camera is composited and hardware-encoded into the output with the rest of the
+frame, on every backend (X11/macOS/Windows and Wayland).
+
+### 🔇 Built-in noise suppression (NoiseTorch-style)
+
+Clean up your microphone with one switch — no NoiseTorch daemon, model file, or
+virtual audio device required. It's applied to the **microphone only** (never to
+your clean system audio) and works in recordings and streams:
+
+```bash
+turborec record -m video_mic --denoise medium       # off | light | medium | strong
+```
+
+In the GUI it's the **Denoise** dropdown next to the audio codec. Under the hood
+it uses FFmpeg's adaptive `afftdn` denoiser plus a high-pass to remove low rumble.
 
 ---
 

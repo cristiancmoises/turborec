@@ -37,7 +37,7 @@ from datetime import datetime
 from typing import Optional
 
 APP_NAME = "Turbo Recorder"
-VERSION = "3.4.0"
+VERSION = "3.5.0"
 
 # ---------------------------------------------------------------------------
 # Small terminal helpers
@@ -1018,6 +1018,121 @@ def audio_input_args(si: SystemInfo, dev: AudioDevice) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Webcam overlay (picture-in-picture) — OBS-style camera on the recording/stream
+# ---------------------------------------------------------------------------
+def camera_input_args(si: SystemInfo, spec: RecordSpec) -> list[str]:
+    """ffmpeg input args for the webcam device, per platform. A framerate hint
+    nudges v4l2/avfoundation/dshow toward a smooth-rate capture mode (webcams
+    top out ~30fps; the output CFR fills any shortfall)."""
+    cam = (spec.camera or "").strip()
+    if si.os == "linux":
+        # v4l2 treats -framerate as a hint (nudges the cam to a higher-fps mode)
+        # and degrades gracefully if the exact rate is unavailable.
+        return ["-f", "v4l2", "-framerate", "30", "-thread_queue_size", "1024", "-i", cam]
+    if si.os == "macos":
+        # avfoundation video index (":none" = video only, no audio from the cam).
+        return ["-f", "avfoundation", "-framerate", "30", "-thread_queue_size", "1024", "-i", f"{cam}:none"]
+    if si.os == "windows":
+        # DirectShow is strict: a hardcoded -framerate the device lacks aborts the
+        # capture, so we let it negotiate its native rate (the CFR output fills any
+        # shortfall). thread_queue_size keeps the overlay smooth under load.
+        return ["-f", "dshow", "-thread_queue_size", "1024", "-i", f"video={cam}"]
+    return []
+
+
+def _camera_overlay_size(si: SystemInfo, spec: RecordSpec) -> str:
+    """Return a scale= filter for the webcam overlay. Accepts a preset
+    (small/medium/large → fraction of the output width), an explicit 'WxH', or
+    'N%'. Height is auto (-2) to preserve the camera aspect ratio (even value)."""
+    size = (spec.camera_size or "medium").strip().lower()
+    m = re.match(r"(\d+)x(\d+)$", size)
+    if m:
+        return f"scale={m.group(1)}:{m.group(2)}"
+    frac = {"small": 0.20, "medium": 0.28, "large": 0.36}.get(size)
+    pm = re.match(r"(\d+)%$", size)
+    if pm:
+        frac = max(5, min(100, int(pm.group(1)))) / 100.0
+    if frac is None:
+        frac = 0.28
+    dims = _output_dims(si, spec)
+    if dims and dims[0]:
+        w = max(160, int(dims[0] * frac))
+        w -= w % 2                       # even width for yuv420p
+        return f"scale={w}:-2"
+    # output size unknown → sensible fixed widths
+    return f"scale={ {'small': 320, 'medium': 480, 'large': 640}.get(size, 480) }:-2"
+
+
+def _overlay_position_expr(position: Optional[str], margin: int = 24) -> str:
+    """overlay filter 'x:y' for a corner/center placement (W/H = main video,
+    w/h = overlay), inset by `margin` pixels from the edges."""
+    pos = (position or "bottom-right").strip().lower()
+    return {
+        "top-left":     f"{margin}:{margin}",
+        "top-right":    f"W-w-{margin}:{margin}",
+        "bottom-left":  f"{margin}:H-h-{margin}",
+        "bottom-right": f"W-w-{margin}:H-h-{margin}",
+        "center":       "(W-w)/2:(H-h)/2",
+    }.get(pos, f"W-w-{margin}:H-h-{margin}")
+
+
+CAMERA_POSITIONS = ("top-left", "top-right", "bottom-left", "bottom-right", "center")
+CAMERA_SIZES = ("small", "medium", "large")
+
+
+@dataclass
+class VideoDevice:
+    id: str          # /dev/videoN (linux) | avf index (macos) | dshow name (windows)
+    label: str
+
+
+def detect_cameras(si: SystemInfo) -> list[VideoDevice]:
+    """Enumerate webcams/capture devices for the overlay picker."""
+    cams: list[VideoDevice] = []
+    if si.os == "linux":
+        import glob
+        for path in sorted(glob.glob("/dev/video*"),
+                           key=lambda p: int(re.sub(r"\D", "", p) or 0)):
+            name = ""
+            try:
+                base = os.path.basename(path)
+                with open(f"/sys/class/video4linux/{base}/name") as fh:
+                    name = fh.read().strip()
+            except OSError:
+                pass
+            # keep only capture-capable nodes (many cams expose a metadata node too)
+            probe = run_cmd([si.ffmpeg, "-hide_banner", "-f", "v4l2",
+                             "-list_formats", "all", "-i", path], timeout=4.0)
+            if re.search(r"\d+x\d+", probe):
+                cams.append(VideoDevice(id=path, label=name or base))
+    elif si.os == "macos":
+        out = run_cmd([si.ffmpeg, "-hide_banner", "-f", "avfoundation",
+                       "-list_devices", "true", "-i", ""])
+        video, _ = _parse_avfoundation_devices(out)
+        for entry in video:
+            idx, _, name = entry.partition(": ")
+            low = name.lower()
+            if "capture screen" in low:   # skip the screen-capture pseudo-devices
+                continue
+            cams.append(VideoDevice(id=idx, label=name))
+    elif si.os == "windows":
+        out = run_cmd([si.ffmpeg, "-hide_banner", "-f", "dshow",
+                       "-list_devices", "true", "-i", "dummy"])
+        video_section = False
+        for line in out.splitlines():
+            if "DirectShow video devices" in line:
+                video_section = True
+                continue
+            if "DirectShow audio devices" in line:
+                video_section = False
+                continue
+            m = re.search(r'"([^"]+)"', line)
+            if m and video_section:
+                cams.append(VideoDevice(id=m.group(1), label=m.group(1)))
+    return cams
+
+
+# ---------------------------------------------------------------------------
 # Filename
 # ---------------------------------------------------------------------------
 def timestamp() -> str:
@@ -1057,6 +1172,12 @@ class RecordSpec:
     wl_geometry: Optional[str] = None  # Wayland output-local region "X,Y WxH"
     stream_url: Optional[str] = None   # full RTMP(S) target (ingest URL + key) => go live
     stream_secret: Optional[str] = None  # the stream key, used only to mask displays
+    # Webcam overlay (picture-in-picture) — OBS-style camera on the recording/stream.
+    camera: Optional[str] = None       # webcam device (v4l2 /dev/videoN | avf index | dshow name); None = off
+    camera_size: str = "medium"        # small | medium | large | WxH | N%  (of output width)
+    camera_position: str = "bottom-right"  # top-left | top-right | bottom-left | bottom-right | center
+    # Mic noise suppression (NoiseTorch-style, built in via ffmpeg afftdn).
+    denoise: str = "off"               # off | light | medium | strong
 
 
 def _audio_encode_args(spec: RecordSpec) -> list[str]:
@@ -1083,10 +1204,31 @@ def _audio_pan(channels: str) -> Optional[str]:
     return None
 
 
-def _audio_src_filter(spec: RecordSpec) -> str:
-    """Per-source audio filter chain: resample (soxr) + channel handling → stereo."""
-    pan = _audio_pan(spec.audio_channels)
+def _denoise_filter(spec: RecordSpec) -> Optional[str]:
+    """Mic noise-suppression chain (a built-in, NoiseTorch-style alternative that
+    needs no external app or model file). Uses ffmpeg's FFT denoiser (afftdn) with
+    adaptive noise tracking, plus a high-pass to remove low rumble/handling noise.
+    Applied only to the microphone, never to clean system audio."""
+    level = (spec.denoise or "off").strip().lower()
+    if level in ("off", "", "none"):
+        return None
+    # nr = noise reduction (dB); tn=1 tracks the noise profile live.
+    return {
+        "light":  "afftdn=nr=8:nf=-40:tn=1",
+        "medium": "highpass=f=80,afftdn=nr=16:nf=-38:tn=1",
+        "strong": "highpass=f=90,afftdn=nr=28:nf=-35:tn=1,afftdn=nr=10:tn=1",
+    }.get(level, "highpass=f=80,afftdn=nr=16:nf=-38:tn=1")
+
+
+def _audio_src_filter(spec: RecordSpec, is_mic: bool = False) -> str:
+    """Per-source audio filter chain: resample (soxr) + optional mic denoise +
+    channel handling → stereo. Denoise is applied to the microphone only."""
     chain = f"aresample={spec.audio_rate}:resampler=soxr"
+    if is_mic:
+        dn = _denoise_filter(spec)
+        if dn:
+            chain += f",{dn}"
+    pan = _audio_pan(spec.audio_channels)
     return chain + (f",{pan}" if pan else ",aformat=channel_layouts=stereo")
 
 
@@ -1109,6 +1251,7 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
     enc = None
     audio_inputs: list[AudioDevice] = []
 
+    cam_index = None
     if is_video:
         # RTMP ingests want H.264; force it for streaming regardless of --codec.
         enc = choose_encoder(si, "h264" if spec.stream_url else spec.codec,
@@ -1116,6 +1259,9 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
         geometry = spec.geometry or spec.region
         pre, vin = screen_input_args(si, spec.fps, geometry, enc, spec.win_title)
         cmd += pre + vin
+        if spec.camera:                       # webcam overlay → a second video input
+            cmd += camera_input_args(si, spec)
+            cam_index = 1
 
     # On macOS the screen+audio can come from one avfoundation device, but we
     # keep audio as separate inputs for portability and per-source control.
@@ -1132,23 +1278,38 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
 
     # ---- filtergraph & mapping ----
     video_index = 0 if is_video else None
-    audio_start = 1 if is_video else 0
+    # audio inputs come after the screen (0) and, if present, the webcam (1).
+    audio_start = (2 if cam_index is not None else 1) if is_video else 0
 
     filtergraph_parts: list[str] = []
     maps: list[str] = []
 
     if is_video:
-        vf = video_filter_for(enc)  # type: ignore[arg-type]
+        enc_vf = video_filter_for(enc)  # type: ignore[arg-type]  format/hwupload for the encoder
         # Output-resolution scaling runs in software BEFORE any hwupload, so it
         # works identically for software, NVENC, and VAAPI/QSV encoders.
         sc = _scale_chain(spec.resolution)
-        if sc:
-            vf = f"{sc},{vf}" if vf else sc
-        if vf:
-            filtergraph_parts.append(f"[{video_index}:v]{vf}[v]")
-            maps += ["-map", "[v]"]
+        if cam_index is not None:
+            # Composite: scale the screen to the output size, scale the webcam,
+            # overlay it at the chosen corner, THEN apply the encoder's format
+            # (overlay is a software filter, so it must precede any hwupload).
+            filtergraph_parts.append(
+                f"[{video_index}:v]{sc}[bg]" if sc else f"[{video_index}:v]null[bg]")
+            filtergraph_parts.append(f"[{cam_index}:v]{_camera_overlay_size(si, spec)}[cam]")
+            comp_out = "[v]" if enc_vf else "[comp]"
+            filtergraph_parts.append(
+                f"[bg][cam]overlay={_overlay_position_expr(spec.camera_position)}"
+                + (f",{enc_vf}{comp_out}" if enc_vf else comp_out))
+            maps += ["-map", comp_out]
         else:
-            maps += ["-map", f"{video_index}:v"]
+            vf = enc_vf
+            if sc:
+                vf = f"{sc},{vf}" if vf else sc
+            if vf:
+                filtergraph_parts.append(f"[{video_index}:v]{vf}[v]")
+                maps += ["-map", "[v]"]
+            else:
+                maps += ["-map", f"{video_index}:v"]
 
     if silent:
         maps += ["-map", f"{audio_start}:a"]
@@ -1157,7 +1318,8 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
         for i, _dev in enumerate(audio_inputs):
             ai = audio_start + i
             lbl = f"a{i}"
-            filtergraph_parts.append(f"[{ai}:a]{_audio_src_filter(spec)}[{lbl}]")
+            filtergraph_parts.append(
+                f"[{ai}:a]{_audio_src_filter(spec, _dev is spec.mic)}[{lbl}]")
             labels.append(f"[{lbl}]")
         if len(labels) == 1:
             maps += ["-map", labels[0]]
@@ -1410,8 +1572,8 @@ def _ffmpeg_audio_cmd(si: SystemInfo, spec: RecordSpec, devices: list, out_path:
     for dev in devices:
         cmd += audio_input_args(si, dev)
     parts, labels = [], []
-    for i in range(len(devices)):
-        parts.append(f"[{i}:a]{_audio_src_filter(spec)}[a{i}]")
+    for i, dev in enumerate(devices):
+        parts.append(f"[{i}:a]{_audio_src_filter(spec, dev is spec.mic)}[a{i}]")
         labels.append(f"[a{i}]")
     if len(labels) == 1:
         out_label = labels[0]
@@ -1425,29 +1587,112 @@ def _ffmpeg_audio_cmd(si: SystemInfo, spec: RecordSpec, devices: list, out_path:
     return cmd
 
 
-def _ffmpeg_stream_mux_cmd(si: SystemInfo, spec: RecordSpec, fifo: str, devices: list) -> list[str]:
-    """ffmpeg that reads the wf-recorder H.264 mpegts FIFO (video stream-copy),
-    captures + mixes the audio to AAC, and pushes FLV to the RTMP(S) target."""
-    cmd = [si.ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-stats",
-           "-thread_queue_size", "1024", "-fflags", "+genpts", "-i", fifo]
-    if devices:
-        for dev in devices:
-            cmd += audio_input_args(si, dev)
-        parts, labels = [], []
-        for i in range(len(devices)):
-            parts.append(f"[{i + 1}:a]{_audio_src_filter(spec)}[a{i}]")
-            labels.append(f"[a{i}]")
-        if len(labels) == 1:
-            out_label = labels[0]
+def _hw_init_args(si: SystemInfo, enc: EncoderChoice) -> list[str]:
+    """Global hardware-device init args needed to *encode* with VAAPI/QSV."""
+    if enc.kind == "vaapi" and si.vaapi_device:
+        return ["-vaapi_device", si.vaapi_device]
+    if enc.kind == "qsv":
+        return ["-init_hw_device", "qsv=hw", "-filter_hw_device", "hw"]
+    return []
+
+
+def _ffmpeg_compose_cmd(si: SystemInfo, spec: RecordSpec, fifo: str,
+                        devices: list, out_target: str) -> list[str]:
+    """ffmpeg reads the wf-recorder video FIFO (input 0), optionally overlays the
+    webcam, mixes the audio (mic denoise applied), and writes to a file or pushes
+    FLV to out_target. Video is stream-copied only when there is no webcam overlay
+    and we are streaming; otherwise it is re-encoded (an overlay changes pixels)."""
+    streaming = bool(spec.stream_url)
+    cam = bool(spec.camera)
+    enc = choose_encoder(si, "h264" if streaming else spec.codec,
+                         spec.force_software, spec.backend) if cam else None
+
+    base = [si.ffmpeg, "-y", "-hide_banner",
+            "-loglevel", "info" if streaming else "error", "-stats"]
+    if cam and enc is not None:
+        base += _hw_init_args(si, enc)
+    cmd = list(base)
+    # CRITICAL ORDERING: the screen FIFO must be the LAST input. ffmpeg opens
+    # inputs in order and only starts draining any of them once every input is
+    # open. The webcam (~1s warm-up) and the pulse mic (startup latency) are slow
+    # to open, so if the FIFO were opened before them, wf-recorder would fill —
+    # and then block on — the FIFO's 64 KB kernel pipe buffer while ffmpeg is
+    # still opening the others, losing the first seconds of screen video. By
+    # opening the camera and audio first and the FIFO last, wf-recorder simply
+    # blocks on FIFO-open until ffmpeg is ready, then everything streams in sync
+    # with nothing dropped.
+    idx = 0
+    parts: list[str] = []
+
+    cam_idx = None
+    if cam:
+        cmd += camera_input_args(si, spec)
+        cam_idx = idx
+        idx += 1
+
+    # audio inputs (mic/system), or a silent track for a video-only stream
+    amap = None
+    audio_labels: list[str] = []
+    for dev in devices:
+        cmd += audio_input_args(si, dev)
+        lbl = f"a{len(audio_labels)}"
+        parts.append(f"[{idx}:a]{_audio_src_filter(spec, dev is spec.mic)}[{lbl}]")
+        audio_labels.append(f"[{lbl}]")
+        idx += 1
+    if audio_labels:
+        if len(audio_labels) == 1:
+            amap = audio_labels[0]
         else:
-            parts.append("".join(labels)
-                         + f"amix=inputs={len(labels)}:duration=longest:dropout_transition=2:normalize=0[aout]")
-            out_label = "[aout]"
-        cmd += ["-filter_complex", ";".join(parts), "-map", "0:v:0", "-map", out_label]
-    else:  # video-only stream: YouTube still needs an audio track
-        cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-map", "0:v:0", "-map", "1:a"]
-    cmd += ["-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
-            "-f", "flv", spec.stream_url]  # type: ignore[list-item]
+            parts.append("".join(audio_labels)
+                         + f"amix=inputs={len(audio_labels)}:duration=longest:dropout_transition=2:normalize=0[aout]")
+            amap = "[aout]"
+    elif streaming:
+        cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
+        amap = f"{idx}:a"
+        idx += 1
+
+    # the screen FIFO — opened LAST (see the ordering note above)
+    cmd += ["-thread_queue_size", "1024", "-fflags", "+genpts", "-i", fifo]
+    screen_idx = idx
+
+    # ---- video: overlay the webcam, or copy the screen through ----
+    if cam:
+        enc_vf = video_filter_for(enc)  # type: ignore[arg-type]
+        parts.insert(0, f"[{screen_idx}:v][cam]overlay={_overlay_position_expr(spec.camera_position)}"
+                     + (f",{enc_vf}[v]" if enc_vf else "[v]"))
+        parts.insert(0, f"[{cam_idx}:v]{_camera_overlay_size(si, spec)}[cam]")
+        vmap = "[v]"
+    else:
+        vmap = f"{screen_idx}:v:0"
+
+    if parts:
+        cmd += ["-filter_complex", ";".join(parts)]
+    cmd += ["-map", vmap]
+    if amap:
+        cmd += ["-map", amap]
+
+    # ---- video encode ----
+    if cam:
+        if streaming:
+            dims = _output_dims(si, spec) or (1920, 1080)
+            cmd += _stream_encoder_args(enc, _stream_bitrate_k(*dims, spec.fps), spec.fps)
+        else:
+            cmd += encoder_args(enc, spec.quality, _pixrate_mp(si, spec))  # type: ignore[arg-type]
+        cmd += ["-fps_mode", "cfr", "-r", str(spec.fps),
+                "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
+    else:
+        cmd += ["-c:v", "copy"]
+
+    # ---- audio encode ----
+    if amap:
+        cmd += (["-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2"]
+                if streaming else _audio_encode_args(spec))
+
+    # ---- output ----
+    if streaming:
+        cmd += ["-f", "flv", out_target]
+    else:
+        cmd.append(out_target)
     return cmd
 
 
@@ -1499,35 +1744,49 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
         c += ["-f", target_file]
         return c
 
-    # ---- Live streaming on Wayland ----
-    # wf-recorder can't mix mic+system or emit AAC, so it encodes H.264 into an
-    # mpegts FIFO which ffmpeg reads (stream-copy) while it captures + mixes the
-    # audio (AAC) and pushes the FLV to the RTMP(S) target.
-    if spec.stream_url:
-        dims = _output_dims(si, spec) or (1920, 1080)
-        br = _stream_bitrate_k(*dims, spec.fps)
+    # ---- Compose path: webcam overlay and/or live streaming on Wayland ----
+    # wf-recorder can't overlay a camera, mix mic+system, emit AAC, or push RTMP,
+    # so it encodes the screen into an mpegts FIFO which ffmpeg reads to overlay
+    # the webcam, mix + denoise the audio, and write the file (or push the FLV).
+    if spec.stream_url or spec.camera:
         # Only mint a real temp dir + FIFO when we will actually record; the live
         # GUI preview and CLI --dry-run rebuild this plan repeatedly and would
-        # otherwise orphan a turborec-stream.* dir on every rebuild.
-        fdir = None if preview else tempfile.mkdtemp(prefix="turborec-stream.")
-        fifo = os.path.join(fdir, "v.ts") if fdir else "<stream-pipe>"
-        vcmd = [wf, "-o", output, "-D", "-c", "libx264", "-r", str(spec.fps), "-x", "yuv420p",
-                "-p", "preset=veryfast", "-p", "tune=zerolatency",
-                "-p", f"b={br * 1000}", "-p", f"maxrate={int(br * 1070)}",
-                "-p", f"bufsize={br * 2000}", "-p", f"g={spec.fps * 2}"]
+        # otherwise orphan a temp dir on every rebuild.
+        fdir = None if preview else tempfile.mkdtemp(prefix="turborec-compose.")
+        fifo = os.path.join(fdir, "v.ts") if fdir else "<compose-pipe>"
+        if spec.camera:
+            # High-quality fast intermediate; ffmpeg re-encodes to the final
+            # quality after overlaying the webcam (preserves quality across the
+            # second encode, at all resolutions).
+            vcmd = [wf, "-o", output, "-D", "-c", "libx264", "-r", str(spec.fps),
+                    "-x", "yuv420p", "-p", "preset=ultrafast", "-p", "crf=14",
+                    "-p", f"g={spec.fps * 2}"]
+        else:
+            # Streaming without a camera: CBR intermediate the mux can stream-copy.
+            dims = _output_dims(si, spec) or (1920, 1080)
+            br = _stream_bitrate_k(*dims, spec.fps)
+            vcmd = [wf, "-o", output, "-D", "-c", "libx264", "-r", str(spec.fps),
+                    "-x", "yuv420p", "-p", "preset=veryfast", "-p", "tune=zerolatency",
+                    "-p", f"b={br * 1000}", "-p", f"maxrate={int(br * 1070)}",
+                    "-p", f"bufsize={br * 2000}", "-p", f"g={spec.fps * 2}"]
         if wl_geom:
             vcmd += ["-g", wl_geom]
         if scale:
             vcmd += ["-F", scale]
         vcmd += ["-m", "mpegts", "-f", fifo]
         devices = ([spec.monitor] if wants_sys else []) + ([spec.mic] if wants_mic else [])
-        muxcmd = _ffmpeg_stream_mux_cmd(si, spec, fifo, devices)
+        target = spec.stream_url or out_path
+        composecmd = _ffmpeg_compose_cmd(si, spec, fifo, devices, target)
+        # A recording's ffmpeg must exit 0 to finalize the file → stop it with 'q';
+        # a stream's push proc is stopped with SIGINT (255 exit normalized below).
+        mux_stop = "int" if spec.stream_url else "q"
+        label = ("ffmpeg (overlay + audio + RTMP push)" if spec.stream_url
+                 else "ffmpeg (webcam overlay + audio → file)")
         return RecordPlan(
-            spec.stream_url,
-            [("wf-recorder (video → stream)", vcmd, "int"),
-             ("ffmpeg (audio + RTMP push)", muxcmd, "int")],
+            target,
+            [("wf-recorder (video)", vcmd, "int"), (label, composecmd, mux_stop)],
             self_timed=False, backend="wf-recorder+ffmpeg",
-            is_stream=True, secret=spec.stream_secret,
+            is_stream=bool(spec.stream_url), secret=spec.stream_secret,
             fifos=([fifo] if fdir else []), cleanup=([fdir] if fdir else []))
 
     if not (wants_mic or wants_sys):
@@ -1556,7 +1815,9 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
             self_timed=False, backend="wf-recorder+ffmpeg")
 
     devices = ([spec.monitor] if wants_sys else []) + ([spec.mic] if wants_mic else [])
-    if _audio_pan(spec.audio_channels):
+    # Channel remap and mic denoise are per-source ffmpeg filters, so route audio
+    # through ffmpeg (the wf-recorder combined source can't apply them).
+    if _audio_pan(spec.audio_channels) or (wants_mic and _denoise_filter(spec)):
         return ffmpeg_audio_plan(devices)
 
     if wants_mic and wants_sys:
@@ -1590,6 +1851,8 @@ def build_plan(si: SystemInfo, spec: RecordSpec, preview: bool = False) -> Recor
     streaming = bool(spec.stream_url)
     if streaming and not is_video:
         die("Streaming requires a video mode (video_only/mic/system/both).")
+    if spec.camera and not is_video:
+        die("The webcam overlay needs a video mode (video_only/mic/system/both).")
     out_dir = spec.out_dir or (os.path.join(os.path.expanduser("~"),
                                             "Videos" if is_video else "Audio"))
     if not preview and not streaming:
@@ -1652,12 +1915,19 @@ def record_plan(plan: "RecordPlan", dry_run: bool = False, countdown_secs: int =
         _pulse_mix_unload(pulse_ids)
         die(f"Failed to launch recorder: {e}")
 
-    primary = running[0][0]
+    # Wait until ANY pipeline member exits (or the duration elapses), not just the
+    # first one. In the compose pipeline wf-recorder (the FIFO writer, procs[0])
+    # blocks in open() until ffmpeg opens the read end; if ffmpeg instead dies at
+    # input-open (e.g. the webcam is busy), waiting only on wf-recorder would hang
+    # forever. Polling every member surfaces an early reader failure immediately.
+    procs = [p for p, _ in running]
+    deadline = (time.monotonic() + duration
+                if duration and duration > 0 and not plan.self_timed else None)
     try:
-        if duration and duration > 0 and not plan.self_timed:
-            _wait_with_timeout(primary, duration)
-        else:
-            primary.wait()
+        while not any(p.poll() is not None for p in procs):
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+            time.sleep(0.2)
     except KeyboardInterrupt:
         pass
     _stop_all(running)
@@ -1951,6 +2221,7 @@ _RC_KEYS = (
     "mode", "quality", "codec", "fps", "resolution", "stream_url", "out", "region", "audio_rate",
     "audio_codec", "audio_channels", "container", "mic_device", "system_device", "software",
     "duration", "countdown", "open", "quiet", "ffmpeg",
+    "camera", "camera_size", "camera_position", "denoise",
 )
 
 
@@ -2103,12 +2374,17 @@ def cmd_record(args) -> int:
         audio_codec=args.audio_codec, audio_channels=args.audio_channels, mic=mic, monitor=mon,
         force_software=args.software, backend=backend, container=args.container,
         duration=args.duration, stream_url=stream_url, stream_secret=key,
+        camera=(getattr(args, "camera", None) or "").strip() or None,
+        camera_size=getattr(args, "camera_size", "medium"),
+        camera_position=getattr(args, "camera_position", "bottom-right"),
+        denoise=getattr(args, "denoise", "off"),
     )
     _apply_target_to_spec(si, target, spec)
     if not args.quiet:
         loc = spec.wl_output or spec.geometry or "full screen"
         info(f"{si.os}/{si.display_server} · CPU {si.cpu_vendor} · GPU {si.gpu_vendor}"
              f"{' (HW)' if si.has_gpu else ' (SW)'} · {si.screen or '?'} · encoder {backend} · {loc}"
+             + (" · CAM" if spec.camera else "") + (f" · NR:{spec.denoise}" if spec.denoise != "off" else "")
              + (" · LIVE" if stream_url else ""))
     # A dry run only prints the plan; build it in preview mode so it never touches
     # the filesystem (no output dir, no stream temp dir / FIFO).
@@ -2169,6 +2445,25 @@ def cmd_devices(args) -> int:
     show("System-audio sources (monitor/loopback)", si.monitors, si.default_monitor)
     print(f"\n{dim('Use with:')} turborec record --mic-device <id|label> "
           f"--system-device <id|label>")
+    return 0
+
+
+def cmd_cameras(args) -> int:
+    """List webcams/capture devices usable for the picture-in-picture overlay."""
+    si = probe_system(args.ffmpeg)
+    cams = detect_cameras(si)
+    if getattr(args, "json", False):
+        print(json.dumps([asdict(c) for c in cams], indent=2))
+        return 0
+    print(bold("\nWebcams"))
+    if not cams:
+        print(f"  {yellow('(none detected)')}")
+    for i, c in enumerate(cams):
+        print(f"  [{cyan(str(i))}] {c.label}")
+        if c.label != c.id:
+            print(f"     {dim('id: ' + c.id)}")
+    print(f"\n{dim('Use with:')} turborec record --camera <id> "
+          f"[--camera-size medium] [--camera-position bottom-right]")
     return 0
 
 
@@ -2254,6 +2549,10 @@ def build_parser(rc: Optional[dict] = None) -> argparse.ArgumentParser:
     tgt.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     tgt.set_defaults(func=cmd_targets)
 
+    cam = sub.add_parser("cameras", help="list webcams available for the overlay")
+    cam.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    cam.set_defaults(func=cmd_cameras)
+
     sub.add_parser("gui", help="launch the graphical interface").set_defaults(func=cmd_gui)
 
     r = sub.add_parser("record", help="record screen and/or audio")
@@ -2306,6 +2605,20 @@ def build_parser(rc: Optional[dict] = None) -> argparse.ArgumentParser:
                         "(or other RTMP) stream key, OBS-style")
     r.add_argument("--stream-url", metavar="URL", default=d("stream_url", None),
                    help=f"RTMP(S) ingest URL for --stream (default: YouTube, {YOUTUBE_INGEST})")
+    r.add_argument("--camera", metavar="DEVICE", default=d("camera", None),
+                   help="overlay a webcam (picture-in-picture), OBS-style. Device: "
+                        "/dev/videoN (Linux), an avfoundation index (macOS), or a "
+                        "DirectShow name (Windows). See 'turborec cameras'.")
+    r.add_argument("--camera-size", default=d("camera_size", "medium"),
+                   help="webcam overlay size: small|medium|large, WxH, or N%% of the "
+                        "output width (default: medium)")
+    r.add_argument("--camera-position", choices=CAMERA_POSITIONS,
+                   default=d("camera_position", "bottom-right"),
+                   help="webcam overlay corner (default: bottom-right)")
+    r.add_argument("--denoise", choices=("off", "light", "medium", "strong"),
+                   default=d("denoise", "off"),
+                   help="microphone noise suppression (NoiseTorch-style, built in): "
+                        "off (default), light, medium, or strong")
     r.add_argument("--dry-run", action="store_true", help="print the ffmpeg command and exit")
     r.add_argument("--quiet", action="store_true", default=bool(d("quiet", False)),
                    help="suppress the detection summary line")
@@ -2616,6 +2929,10 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     fps_var = tk.StringVar(value="60")
     acodec_var = tk.StringVar(value="flac")
     achan_var = tk.StringVar(value="stereo")
+    denoise_var = tk.StringVar(value="off")
+    camera_var = tk.StringVar(value="Off")
+    camsize_var = tk.StringVar(value="medium")
+    campos_var = tk.StringVar(value="bottom-right")
     region_var = tk.StringVar(value="")
     mic_var = tk.StringVar()
     mon_var = tk.StringVar()
@@ -2795,6 +3112,11 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     achan_cb = _combo(acodec_row, achan_var, ("stereo", "mono", "left", "right"))
     achan_cb.configure(width=8)
     achan_cb.pack(side="left")
+    # mic noise suppression (NoiseTorch-style, built in)
+    label(acodec_row, "Denoise", fg=C["muted"]).pack(side="left", padx=(16, 8))
+    denoise_cb = _combo(acodec_row, denoise_var, ("off", "light", "medium", "strong"))
+    denoise_cb.configure(width=8)
+    denoise_cb.pack(side="left")
 
     def _has_dev(value):
         # A device combobox holds a real selection iff it is neither the
@@ -2862,6 +3184,29 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         highlightbackground=C["border"], highlightcolor=C["accent"], font=F["value"])
     stream_entry.pack(side="left", fill="x", expand=True, ipady=4)
     label(stream_row, "→ YouTube (blank = record)", fg=C["faint"], font=F["hint"]).pack(side="left", padx=(10, 0))
+
+    # --- Webcam overlay (picture-in-picture), OBS-style ---
+    _cams = detect_cameras(si)
+    cam_labels = ["Off"]
+    cam_map = {"Off": None}
+    for c in _cams:
+        lbl = c.label if c.label not in cam_map else f"{c.label} ({os.path.basename(c.id)})"
+        cam_labels.append(lbl)
+        cam_map[lbl] = c.id
+    cam_row = tk.Frame(inner, bg=C["bg"])
+    cam_row.pack(fill="x", pady=(8, 0))
+    label(cam_row, "Webcam", fg=C["muted"], width=12).pack(side="left", padx=(0, 8))
+    cam_cb = _combo(cam_row, camera_var, cam_labels)
+    cam_cb.configure(width=18)
+    cam_cb.pack(side="left")
+    label(cam_row, "Size", fg=C["muted"]).pack(side="left", padx=(12, 6))
+    camsize_cb = _combo(cam_row, camsize_var, CAMERA_SIZES)
+    camsize_cb.configure(width=8)
+    camsize_cb.pack(side="left")
+    label(cam_row, "Pos", fg=C["muted"]).pack(side="left", padx=(12, 6))
+    campos_cb = _combo(cam_row, campos_var, CAMERA_POSITIONS)
+    campos_cb.configure(width=13)
+    campos_cb.pack(side="left")
 
     # --- encoder backend segmented control: Auto / GPU / CPU ---
     enc_row = tk.Frame(inner, bg=C["bg"])
@@ -3075,6 +3420,10 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             backend=backend_var.get(),
             stream_url=(_stream_target("", key) if key else None),
             stream_secret=key,
+            camera=cam_map.get(camera_var.get()),
+            camera_size=camsize_var.get(),
+            camera_position=campos_var.get(),
+            denoise=denoise_var.get(),
         )
         _apply_target_to_spec(si, target, spec)
         return spec
@@ -3454,7 +3803,8 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
 
     # ---- wire traces (live preview + dependent state) ---------------------
     for v in (mode_var, quality_var, res_var, codec_var, fps_var, acodec_var, achan_var,
-              region_var, mic_var, mon_var, out_var, backend_var, source_var, stream_var):
+              region_var, mic_var, mon_var, out_var, backend_var, source_var, stream_var,
+              denoise_var, camera_var, camsize_var, campos_var):
         v.trace_add("write", schedule_preview)
     for v in (mode_var, codec_var, acodec_var, backend_var):
         v.trace_add("write", _refresh_dependent)

@@ -12,9 +12,9 @@
 #
 #  Usage:
 #     FJTOKEN=<forgejo-token> CBTOKEN=<codeberg-token> \
-#         packaging/publish-release.sh v3.4.0 [asset-dir]
+#         packaging/publish-release.sh v3.5.0 [asset-dir]
 #
-#   - <tag>       the release tag, e.g. v3.4.0 (must already be pushed).
+#   - <tag>       the release tag, e.g. v3.5.0 (must already be pushed).
 #   - [asset-dir] a directory of files to attach. If omitted, the assets are
 #                 downloaded from the GitHub release for <tag> using `gh`.
 #

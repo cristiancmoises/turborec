@@ -1,5 +1,5 @@
 Name:           turborec
-Version:        3.4.0
+Version:        3.5.0
 Release:        1%{?dist}
 Summary:        State-of-the-art hardware-accelerated screen and audio recorder
 
@@ -86,7 +86,7 @@ update-desktop-database &>/dev/null || :
 gtk-update-icon-cache %{_datadir}/icons/hicolor &>/dev/null || :
 
 %changelog
-* Mon Jul 13 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.4.0-1
+* Mon Jul 13 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.5.0-1
 - Adaptive, resolution-aware encoder tuning for higher quality at each resolution.
 - OBS-style YouTube live streaming (RTMP/RTMPS) via a stream key.
 - Stream keys are redacted from all output and previews.

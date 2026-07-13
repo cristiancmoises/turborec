@@ -5,6 +5,34 @@ All notable changes to Turbo Recorder are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] — 2026-07-13
+
+### Added
+- **Webcam overlay (picture-in-picture), OBS-style.** Overlay your camera on the
+  recording *or* the live stream: pick the device (`--camera`, or the GUI
+  **Webcam** dropdown), the **size** (`small`/`medium`/`large`, an explicit `WxH`,
+  or `N%` of the output width) and the **position** (any corner or center). Works
+  on every backend — ffmpeg (X11/macOS/Windows) and Wayland (`wf-recorder` →
+  ffmpeg overlay pipeline) — and for both file recording and RTMP streaming. The
+  camera is hardware-encoded into the output with the rest of the frame. New
+  `turborec cameras` lists available devices.
+- **Built-in microphone noise suppression (`--denoise`), NoiseTorch-style.** A
+  one-switch `off`/`light`/`medium`/`strong` noise reducer (ffmpeg `afftdn` with
+  adaptive noise tracking + a high-pass), applied **to the microphone only** —
+  never to clean system audio. No external NoiseTorch daemon, model file, or
+  virtual device required; it's all in the tool and works in recordings and
+  streams, in the CLI and the GUI (**Denoise** dropdown).
+
+### Fixed
+- **Webcam/stream FIFO frame loss.** On the Wayland compose pipeline the screen
+  FIFO is now opened as ffmpeg's *last* input, after the slow-to-start camera and
+  microphone, so ffmpeg drains it immediately and `wf-recorder` never blocks on
+  the pipe buffer — eliminating the dropped-frames / short-recording bug when a
+  webcam or audio was added.
+
+### Changed
+- The detection summary now flags an active webcam (`· CAM`) and denoise level.
+
 ## [3.4.0] — 2026-07-13
 
 ### Added
@@ -209,6 +237,8 @@ all confirmed findings fixed:
   audio (no more hardcoded device names), full-screen capture by default, and adds
   HEVC / codec / quality / audio-codec options.
 
+[3.5.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.5.0
+[3.4.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.4.0
 [3.3.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.3.0
 [3.2.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.2.0
 [3.1.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.1.0

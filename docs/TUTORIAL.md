@@ -43,14 +43,14 @@ Hyprland, river, …) screen capture additionally needs
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.4.0_all.deb        # pulls ffmpeg, python3, python3-tk
+sudo apt install ./turborec_3.5.0_all.deb        # pulls ffmpeg, python3, python3-tk
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.4.0-1.noarch.rpm   # pulls ffmpeg, python3, python3-tkinter
+sudo dnf install ./turborec-3.5.0-1.noarch.rpm   # pulls ffmpeg, python3, python3-tkinter
 
 # Any Linux — portable AppImage (uses your host ffmpeg/python/tk)
-chmod +x Turbo_Recorder-3.4.0-x86_64.AppImage
-./Turbo_Recorder-3.4.0-x86_64.AppImage
+chmod +x Turbo_Recorder-3.5.0-x86_64.AppImage
+./Turbo_Recorder-3.5.0-x86_64.AppImage
 ```
 
 Get these from the project **Releases** page, or build them yourself with the
@@ -64,11 +64,11 @@ Python plus a POSIX shell front-end, so one archive runs everywhere.
 
 ```sh
 # FreeBSD — native package
-pkg add ./turborec-3.4.0.pkg
+pkg add ./turborec-3.5.0.pkg
 pkg install python3 ffmpeg          # runtime prerequisites (wf-recorder for Wayland)
 
 # Any Unix — portable tarball (installs to /usr/local by default)
-tar xzf turborec-3.4.0.tar.gz && cd turborec-3.4.0
+tar xzf turborec-3.5.0.tar.gz && cd turborec-3.5.0
 sudo ./install.sh                   # or: PREFIX="$HOME/.local" ./install.sh
 ```
 
@@ -101,7 +101,7 @@ guix shell   -f guix.scm -- turborec detect   # run it ad-hoc
 
 # Or the prebuilt relocatable pack from the Releases page (no Guix daemon needed
 # to run it; unpacks the /gnu/store closure + a /bin/turborec launcher)
-tar xf turborec-3.4.0-guix-x86_64.tar.gz -C /
+tar xf turborec-3.5.0-guix-x86_64.tar.gz -C /
 /bin/turborec record -m video_both
 ```
 
@@ -150,7 +150,7 @@ It is **fully self-contained** — Python, Tk **and FFmpeg are bundled inside th
 admin rights needed:
 
 ```powershell
-Turbo_Recorder-3.4.0-windows-x64.exe gui        # or: detect / record / --help
+Turbo_Recorder-3.5.0-windows-x64.exe gui        # or: detect / record / --help
 ```
 
 (The bundle carries its own FFmpeg; if you'd rather use a system FFmpeg, put it
@@ -412,6 +412,42 @@ turborec record -m video_mic --audio-channels right   # fix right-only audio
 > **Recording desktop/system audio** needs a loopback/monitor source: PulseAudio/
 > PipeWire `*.monitor` on Linux, BlackHole/Loopback on macOS, "Stereo Mix" on
 > Windows. `turborec devices` shows what's available.
+
+### Noise suppression (NoiseTorch-style, built in)
+
+Reduce microphone background noise (fans, hiss, room tone) with one switch — no
+NoiseTorch app, model file, or virtual device needed. It's applied to the
+**microphone only**, never to your clean system audio, and works in recordings
+and streams:
+
+```bash
+turborec record -m video_mic --denoise light     # gentle
+turborec record -m video_mic --denoise medium    # recommended
+turborec record -m video_mic --denoise strong    # aggressive (very noisy rooms)
+```
+
+In the GUI use the **Denoise** dropdown next to the audio codec. Under the hood
+it uses FFmpeg's adaptive `afftdn` denoiser plus a high-pass filter.
+
+### Webcam overlay (picture-in-picture)
+
+Overlay your camera on the recording or stream, OBS-style:
+
+```bash
+turborec cameras                                             # list webcams
+turborec record -m video_both --camera /dev/video0 \
+    --camera-size medium --camera-position bottom-right
+```
+
+- `--camera` — `/dev/videoN` (Linux), an AVFoundation index (macOS), or a
+  DirectShow name (Windows). In the GUI: the **Webcam** dropdown.
+- `--camera-size` — `small` / `medium` / `large`, an explicit `WxH`, or `N%` of
+  the output width.
+- `--camera-position` — `top-left`, `top-right`, `bottom-left`, `bottom-right`,
+  or `center`.
+
+It works on every backend and combines with streaming (`--stream KEY --camera …`)
+so you can go live with your camera and clean audio in one command.
 
 ---
 
