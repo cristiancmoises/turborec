@@ -29,13 +29,14 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Optional
 
 APP_NAME = "Turbo Recorder"
-VERSION = "3.2.0"
+VERSION = "3.3.0"
 
 # ---------------------------------------------------------------------------
 # Small terminal helpers
@@ -725,11 +726,124 @@ def _scale_chain(resolution: str) -> Optional[str]:
             f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2")
 
 
+# ---- Live streaming (OBS-style, YouTube RTMP ingest) ------------------------
+YOUTUBE_INGEST = "rtmps://a.rtmps.youtube.com:443/live2"
+
+
+def _stream_target(url: str, key: str) -> str:
+    return (url or YOUTUBE_INGEST).rstrip("/") + "/" + key.strip()
+
+
+def _mask_secret(text: str, secret: Optional[str]) -> str:
+    """Redact a credential (stream key) anywhere it appears in display text."""
+    if secret:
+        return text.replace(secret, "••••••••")
+    return text
+
+
+def _stream_bitrate_k(w: int, h: int, fps: int) -> int:
+    """H.264 live bitrate (kbps) per YouTube's recommendations for the frame size."""
+    if h <= 720:
+        base = 4000
+    elif h <= 1080:
+        base = 6800
+    elif h <= 1440:
+        base = 13000
+    else:
+        base = 23000
+    return int(base * 1.5) if fps >= 48 else base
+
+
+def _stream_encoder_args(enc: EncoderChoice, bitrate_k: int, fps: int) -> list[str]:
+    """CBR-ish, low-latency H.264 args for RTMP(S) live ingest (YouTube etc.).
+
+    Live streaming wants a bounded, roughly-constant bitrate (not CRF) and a
+    ~2 s keyframe interval, so the platform can segment and adapt.
+    """
+    br, mx, buf = f"{bitrate_k}k", f"{int(bitrate_k * 1.07)}k", f"{bitrate_k * 2}k"
+    gop = ["-g", str(fps * 2), "-keyint_min", str(fps), "-pix_fmt", "yuv420p"]
+    a = ["-c:v", enc.name]
+    if enc.kind == "nvenc":
+        a += ["-preset", "p5", "-tune", "ll", "-rc", "cbr", "-b:v", br,
+              "-maxrate", mx, "-bufsize", buf, "-profile:v", "high", "-bf", "0"]
+    elif enc.kind == "qsv":
+        a += ["-preset", "fast", "-b:v", br, "-maxrate", mx, "-bufsize", buf]
+    elif enc.kind == "vaapi":
+        a += ["-rc_mode", "CBR", "-b:v", br, "-maxrate", mx, "-profile:v", "high"]
+    elif enc.kind == "amf":
+        a += ["-usage", "lowlatency", "-rc", "cbr", "-b:v", br, "-maxrate", mx]
+    elif enc.kind == "videotoolbox":
+        a += ["-b:v", br, "-maxrate", mx, "-realtime", "1"]
+    else:  # software libx264
+        a += ["-preset", "veryfast", "-tune", "zerolatency", "-b:v", br,
+              "-maxrate", mx, "-bufsize", buf, "-profile:v", "high"]
+    return a + gop
+
+
+def _capture_dims(si: SystemInfo, spec: RecordSpec) -> Optional[tuple[int, int]]:
+    """Best-effort capture WxH from the selected region/output/screen."""
+    if spec.wl_geometry:
+        m = re.match(r"\d+,\d+ (\d+)x(\d+)$", spec.wl_geometry)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    wl_out = spec.wl_output or si.wl_default_output   # native full screen == focused output
+    if wl_out:
+        for t in si.wl_outputs:
+            if t.output == wl_out:
+                g = _parse_wxhxy(t.geometry or "")
+                if g:
+                    return g[0], g[1]
+    for geom in (spec.geometry, spec.region):
+        g = _parse_wxhxy(geom or "")
+        if g:
+            return g[0], g[1]
+    m = re.match(r"(\d+)x(\d+)$", si.screen or "")
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return None
+
+
+def _output_dims(si: SystemInfo, spec: RecordSpec) -> Optional[tuple[int, int]]:
+    return _RES_DIMS.get((spec.resolution or "native").lower()) or _capture_dims(si, spec)
+
+
+def _pixrate_mp(si: SystemInfo, spec: RecordSpec) -> Optional[float]:
+    """Output pixel throughput in megapixels/second (None if size is unknown)."""
+    dims = _output_dims(si, spec)
+    if not dims:
+        return None
+    return dims[0] * dims[1] * spec.fps / 1e6
+
+
 def _quality_index(q: str) -> int:
     return {"best": 0, "high": 1, "balanced": 2, "compact": 3}.get(q, 0)
 
 
-def encoder_args(enc: EncoderChoice, quality: str) -> list[str]:
+def _speed_tier(pixrate: Optional[float]) -> int:
+    """Encoder speed tier 0(slowest/best-quality) .. 3(fastest) from the output
+    pixel throughput (megapixels/sec). Chosen so the slowest tier still sustains
+    real-time capture on typical modern hardware, measured empirically:
+      0: <= ~65 MP/s (1080p30, 720p60) — lots of headroom, use best presets
+      1: <= ~130 MP/s (1080p60 / 1440p30)
+      2: <= ~260 MP/s (4K30 / 1440p60)
+      3: > 260 MP/s (4K48+), or unknown-and-large
+    Thresholds sit just above each canonical resolution's exact pixel rate
+    (1080p30=62.2, 1080p60=124.4, 4K30=248.8 MP/s) so the headline resolutions
+    land in the quality tier the presets are designed for, not one notch faster.
+    """
+    if pixrate is None:
+        return 2          # unknown: stay conservative (fast)
+    if pixrate <= 65:
+        return 0
+    if pixrate <= 130:
+        return 1
+    if pixrate <= 260:
+        return 2
+    return 3
+
+
+def encoder_args(enc: EncoderChoice, quality: str,
+                 pixrate: Optional[float] = None) -> list[str]:
     """Real-time-capable, quality-first parameters for the chosen encoder.
 
     Screen capture is a LIVE source: the encoder must keep up with wall-clock
@@ -739,54 +853,57 @@ def encoder_args(enc: EncoderChoice, quality: str) -> list[str]:
     (added in build_command) the playback speed is always correct.
     """
     qi = _quality_index(quality)
+    # Speed tier from the actual pixel throughput: at low resolutions there is
+    # lots of spare encoder time, so use much slower/higher-quality presets;
+    # only fall back to fast presets at 4K / high-fps. 'balanced'/'compact' also
+    # nudge one tier faster (smaller/cheaper). Everything still sustains realtime.
+    st = _speed_tier(pixrate)
+    if qi >= 2:
+        st = min(3, st + 1)
     a: list[str] = ["-c:v", enc.name]
     if enc.kind == "nvenc":
-        # p1(fastest)..p7(slowest). p7 cannot sustain real-time at high res;
-        # p4–p6 are real-time on modern GPUs and look great. No rc-lookahead
-        # (it buffers future frames -> latency/stalls on a live source).
-        preset = ["p6", "p5", "p5", "p4"][qi]
-        cq = [19, 21, 24, 28][qi]
+        # p1(fastest)..p7(slowest). p7 + temporal-AQ + look-ahead is real-time at
+        # 1080p and looks superb; drop the preset and the buffering extras as the
+        # pixel rate climbs so 4K/high-fps still keeps up.
+        preset = ["p7", "p7", "p6", "p5"][st]
+        cq = [18, 21, 24, 28][qi]
         a += ["-preset", preset, "-tune", "hq", "-rc", "vbr",
-              "-cq", str(cq), "-b:v", "0", "-spatial-aq", "1", "-bf", "2"]
+              "-cq", str(cq), "-b:v", "0", "-spatial-aq", "1", "-bf", "3"]
+        if st <= 1:            # enough headroom for the quality-boosting extras
+            a += ["-temporal-aq", "1", "-rc-lookahead", "20"]
         if enc.codec in ("h264", "hevc"):
             a += ["-profile:v", "high" if enc.codec == "h264" else "main"]
     elif enc.kind == "qsv":
-        # 'veryslow' defeats the hardware for live capture; medium/fast sustain it.
-        preset = ["medium", "fast", "faster", "veryfast"][qi]
-        gq = [20, 22, 26, 30][qi]
+        preset = ["slow", "medium", "fast", "veryfast"][st]
+        gq = [19, 22, 26, 30][qi]
         a += ["-preset", preset, "-global_quality", str(gq)]
     elif enc.kind == "vaapi":
-        qp = [20, 23, 26, 30][qi]
+        qp = [19, 23, 26, 30][qi]
         a += ["-qp", str(qp)]
         if enc.codec == "h264":
             a += ["-profile:v", "high"]
     elif enc.kind == "amf":
-        # 'quality' is the slowest AMF preset; 'balanced'/'speed' sustain live.
-        usage = ["balanced", "balanced", "speed", "speed"][qi]
-        qp = [20, 23, 26, 30][qi]
+        usage = ["quality", "balanced", "balanced", "speed"][st]
+        qp = [19, 23, 26, 30][qi]
         a += ["-quality", usage, "-rc", "cqp", "-qp_i", str(qp), "-qp_p", str(qp)]
     elif enc.kind == "videotoolbox":
-        vq = [70, 60, 48, 36][qi]
-        # realtime=1 keeps the hardware encoder pacing with a live source.
+        vq = [72, 62, 50, 38][qi]
         a += ["-q:v", str(vq), "-realtime", "1"]
         if enc.codec == "hevc":
             a += ["-tag:v", "hvc1"]
     else:  # software libx264 / libx265 / libsvtav1
-        # Software MUST use fast presets to keep real-time on a live capture at
-        # high resolution; 'slow'/'medium' fall far behind and slow the video.
         if enc.name == "libsvtav1":
-            # SVT-AV1 presets 0(slow)..13(fastest); high presets are real-time.
-            a += ["-preset", str([8, 9, 10, 11][qi]), "-crf", str([28, 30, 32, 35][qi])]
+            # SVT-AV1 presets 0(slow)..13(fastest); scale with the pixel rate.
+            a += ["-preset", str([6, 8, 9, 11][st]), "-crf", str([26, 29, 32, 35][qi])]
         elif enc.name == "libaom-av1":
-            crf = [28, 30, 32, 35][qi]
-            a += ["-crf", str(crf), "-b:v", "0", "-cpu-used", "8", "-row-mt", "1",
-                  "-usage", "realtime"]
-        else:
-            preset = ["veryfast", "veryfast", "faster", "ultrafast"][qi]
-            crf = [18, 20, 23, 26][qi]
-            a += ["-preset", preset, "-crf", str(crf)]
-            if enc.name == "libx264":
-                a += ["-profile:v", "high"]
+            a += ["-crf", str([28, 30, 32, 35][qi]), "-b:v", "0",
+                  "-cpu-used", str([6, 7, 8, 8][st]), "-row-mt", "1", "-usage", "realtime"]
+        elif enc.name == "libx265":
+            a += ["-preset", ["medium", "fast", "faster", "veryfast"][st],
+                  "-crf", str([19, 21, 24, 27][qi])]
+        else:  # libx264
+            a += ["-preset", ["slow", "medium", "fast", "veryfast"][st],
+                  "-crf", str([17, 19, 22, 25][qi]), "-profile:v", "high"]
     return a
 
 
@@ -913,6 +1030,8 @@ class RecordSpec:
     win_title: Optional[str] = None    # Windows gdigrab window title (window capture)
     wl_output: Optional[str] = None    # Wayland output name (wf-recorder -o)
     wl_geometry: Optional[str] = None  # Wayland output-local region "X,Y WxH"
+    stream_url: Optional[str] = None   # full RTMP(S) target (ingest URL + key) => go live
+    stream_secret: Optional[str] = None  # the stream key, used only to mask displays
 
 
 def _audio_encode_args(spec: RecordSpec) -> list[str]:
@@ -957,7 +1076,8 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
         die("System audio requested but no monitor/loopback source detected/selected.")
 
     out_dir = spec.out_dir or (os.path.join(os.path.expanduser("~"), "Videos" if is_video else "Audio"))
-    ensure_dir(out_dir)
+    if not spec.stream_url:
+        ensure_dir(out_dir)
 
     cmd: list[str] = [si.ffmpeg, "-y", "-hide_banner", "-loglevel", "info", "-stats"]
 
@@ -965,7 +1085,9 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
     audio_inputs: list[AudioDevice] = []
 
     if is_video:
-        enc = choose_encoder(si, spec.codec, spec.force_software, spec.backend)
+        # RTMP ingests want H.264; force it for streaming regardless of --codec.
+        enc = choose_encoder(si, "h264" if spec.stream_url else spec.codec,
+                             spec.force_software, spec.backend)
         geometry = spec.geometry or spec.region
         pre, vin = screen_input_args(si, spec.fps, geometry, enc, spec.win_title)
         cmd += pre + vin
@@ -978,6 +1100,10 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
         audio_inputs.append(spec.mic)      # type: ignore[arg-type]
     for dev in audio_inputs:
         cmd += audio_input_args(si, dev)
+    # YouTube etc. require an audio track; add silence for a video-only stream.
+    silent = bool(spec.stream_url) and not audio_inputs
+    if silent:
+        cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
 
     # ---- filtergraph & mapping ----
     video_index = 0 if is_video else None
@@ -999,6 +1125,8 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
         else:
             maps += ["-map", f"{video_index}:v"]
 
+    if silent:
+        maps += ["-map", f"{audio_start}:a"]
     if audio_inputs:
         labels = []
         for i, _dev in enumerate(audio_inputs):
@@ -1018,19 +1146,31 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
         cmd += ["-filter_complex", ";".join(filtergraph_parts)]
     cmd += maps
 
+    streaming = bool(spec.stream_url)
+
     # ---- encoders ----
     if is_video:
-        cmd += encoder_args(enc, spec.quality)  # type: ignore[arg-type]
+        if streaming:
+            dims = _output_dims(si, spec) or (1920, 1080)
+            cmd += _stream_encoder_args(enc, _stream_bitrate_k(*dims, spec.fps), spec.fps)
+        else:
+            cmd += encoder_args(enc, spec.quality, _pixrate_mp(si, spec))  # type: ignore[arg-type]
         # Force constant frame rate so playback speed is always correct even if
         # the encoder briefly falls behind the live source (no slow-motion).
         cmd += ["-fps_mode", "cfr", "-r", str(spec.fps)]
         # color metadata for fidelity
         cmd += ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
-    if audio_inputs:
-        cmd += _audio_encode_args(spec)
+    if audio_inputs or silent:
+        # RTMP ingests (YouTube) require AAC, not FLAC.
+        cmd += (["-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2"]
+                if streaming else _audio_encode_args(spec))
 
     if spec.duration and spec.duration > 0:
         cmd += ["-t", f"{spec.duration:g}"]
+
+    if streaming:
+        cmd += ["-f", "flv", spec.stream_url]  # type: ignore[list-item]
+        return cmd, spec.stream_url            # type: ignore[return-value]
 
     container = spec.container if is_video else ("flac" if spec.audio_codec == "flac" else ("opus" if spec.audio_codec == "opus" else "m4a"))
     name = f"{spec.mode}_{timestamp()}.{container}"
@@ -1061,6 +1201,9 @@ class RecordPlan:
     # (sink_name, mic_id, monitor_id); module ids are captured at activation.
     pulse_setup: Optional[tuple] = None
     fallback: Optional["RecordPlan"] = None   # used if pulse_setup fails
+    is_stream: bool = False           # True when pushing to an RTMP(S) target
+    secret: Optional[str] = None      # credential to redact from any display
+    fifos: list = field(default_factory=list)  # named pipes to create at start
 
 
 # ---- Wayland (wlroots) encoder selection for wf-recorder --------------------
@@ -1069,25 +1212,29 @@ def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False,
     """Return (codec, [codec params], kind, drm_device) for wf-recorder.
 
     wf-recorder cannot use NVENC; on NVIDIA it uses software (libx264/x265).
-    VAAPI is used only on Intel/AMD when available. All presets are real-time.
+    VAAPI is used only on Intel/AMD when available. Presets adapt to the output
+    pixel rate: slower/higher-quality when there's headroom, fast at 4K.
     """
     qi = _quality_index(spec.quality)
+    st = _speed_tier(_pixrate_mp(si, spec))
+    if qi >= 2:
+        st = min(3, st + 1)
     codec = spec.codec
     if not force_software and spec.backend != "cpu" \
             and si.gpu_vendor in ("intel", "amd") and si.vaapi_device:
         venc = {"h264": "h264_vaapi", "hevc": "hevc_vaapi"}.get(codec)
         if venc and venc in si.encoders:
-            qp = [20, 23, 26, 30][qi]
+            qp = [19, 23, 26, 30][qi]
             return venc, [f"qp={qp}"], "vaapi", si.vaapi_device
     if spec.backend == "gpu" and si.gpu_vendor == "nvidia" and not quiet:
         warn("wf-recorder cannot use NVENC on Wayland; recording with software x264.")
     if codec == "hevc":
-        preset = ["veryfast", "veryfast", "faster", "ultrafast"][qi]
-        return "libx265", [f"preset={preset}", f"crf={[20,22,25,28][qi]}"], "software", ""
+        preset = ["medium", "fast", "faster", "veryfast"][st]
+        return "libx265", [f"preset={preset}", f"crf={[19,21,24,27][qi]}"], "software", ""
     if codec == "av1" and not quiet:
         warn("AV1 software encoding is not real-time for live capture; using H.264.")
-    preset = ["veryfast", "veryfast", "faster", "ultrafast"][qi]
-    return "libx264", [f"preset={preset}", f"crf={[18,20,23,26][qi]}"], "software", ""
+    preset = ["slow", "medium", "fast", "veryfast"][st]
+    return "libx264", [f"preset={preset}", f"crf={[17,19,22,25][qi]}"], "software", ""
 
 
 def _parse_wxhxy(geom: Optional[str]) -> Optional[tuple[int, int, int, int]]:
@@ -1168,7 +1315,12 @@ def _pulse_mix_unload(ids: list[str]) -> None:
 
 
 def _activate_plan(plan: "RecordPlan") -> tuple["RecordPlan", list[str]]:
-    """Perform a plan's pre-record setup (PipeWire mix). Returns (plan to run, module ids)."""
+    """Perform a plan's pre-record setup (FIFOs + PipeWire mix). Returns (plan, module ids)."""
+    for fifo in plan.fifos:
+        try:
+            os.path.exists(fifo) or os.mkfifo(fifo)
+        except OSError as e:
+            die(f"Could not create stream pipe {fifo}: {e}")
     if plan.pulse_setup:
         sink, mic_id, mon_id = plan.pulse_setup
         ids = _pulse_mix_load(sink, mic_id, mon_id)
@@ -1179,6 +1331,22 @@ def _activate_plan(plan: "RecordPlan") -> tuple["RecordPlan", list[str]]:
         if plan.fallback:
             return plan.fallback, []
     return plan, []
+
+
+def _plan_cleanup(plan: "RecordPlan") -> None:
+    """Remove a plan's temp files and directories (FIFOs, scratch dirs)."""
+    for path in plan.cleanup:
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            elif os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
+
+
+def _redact_cmd(argv: list, secret: Optional[str]) -> str:
+    return _mask_secret(" ".join(_shquote(c) for c in argv), secret)
 
 
 def _ffmpeg_audio_cmd(si: SystemInfo, spec: RecordSpec, devices: list, out_path: str) -> list[str]:
@@ -1200,6 +1368,32 @@ def _ffmpeg_audio_cmd(si: SystemInfo, spec: RecordSpec, devices: list, out_path:
     cmd += ["-filter_complex", ";".join(parts), "-map", out_label]
     cmd += _audio_encode_args(spec)
     cmd.append(out_path)
+    return cmd
+
+
+def _ffmpeg_stream_mux_cmd(si: SystemInfo, spec: RecordSpec, fifo: str, devices: list) -> list[str]:
+    """ffmpeg that reads the wf-recorder H.264 mpegts FIFO (video stream-copy),
+    captures + mixes the audio to AAC, and pushes FLV to the RTMP(S) target."""
+    cmd = [si.ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-stats",
+           "-thread_queue_size", "1024", "-fflags", "+genpts", "-i", fifo]
+    if devices:
+        for dev in devices:
+            cmd += audio_input_args(si, dev)
+        parts, labels = [], []
+        for i in range(len(devices)):
+            parts.append(f"[{i + 1}:a]{_audio_src_filter(spec)}[a{i}]")
+            labels.append(f"[a{i}]")
+        if len(labels) == 1:
+            out_label = labels[0]
+        else:
+            parts.append("".join(labels)
+                         + f"amix=inputs={len(labels)}:duration=longest:dropout_transition=2:normalize=0[aout]")
+            out_label = "[aout]"
+        cmd += ["-filter_complex", ";".join(parts), "-map", "0:v:0", "-map", out_label]
+    else:  # video-only stream: YouTube still needs an audio track
+        cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-map", "0:v:0", "-map", "1:a"]
+    cmd += ["-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
+            "-f", "flv", spec.stream_url]  # type: ignore[list-item]
     return cmd
 
 
@@ -1250,6 +1444,37 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
             c += ["-C", acodec]      # honor the chosen audio codec (flac/aac/opus)
         c += ["-f", target_file]
         return c
+
+    # ---- Live streaming on Wayland ----
+    # wf-recorder can't mix mic+system or emit AAC, so it encodes H.264 into an
+    # mpegts FIFO which ffmpeg reads (stream-copy) while it captures + mixes the
+    # audio (AAC) and pushes the FLV to the RTMP(S) target.
+    if spec.stream_url:
+        dims = _output_dims(si, spec) or (1920, 1080)
+        br = _stream_bitrate_k(*dims, spec.fps)
+        # Only mint a real temp dir + FIFO when we will actually record; the live
+        # GUI preview and CLI --dry-run rebuild this plan repeatedly and would
+        # otherwise orphan a turborec-stream.* dir on every rebuild.
+        fdir = None if preview else tempfile.mkdtemp(prefix="turborec-stream.")
+        fifo = os.path.join(fdir, "v.ts") if fdir else "<stream-pipe>"
+        vcmd = [wf, "-o", output, "-D", "-c", "libx264", "-r", str(spec.fps), "-x", "yuv420p",
+                "-p", "preset=veryfast", "-p", "tune=zerolatency",
+                "-p", f"b={br * 1000}", "-p", f"maxrate={int(br * 1070)}",
+                "-p", f"bufsize={br * 2000}", "-p", f"g={spec.fps * 2}"]
+        if wl_geom:
+            vcmd += ["-g", wl_geom]
+        if scale:
+            vcmd += ["-F", scale]
+        vcmd += ["-m", "mpegts", "-f", fifo]
+        devices = ([spec.monitor] if wants_sys else []) + ([spec.mic] if wants_mic else [])
+        muxcmd = _ffmpeg_stream_mux_cmd(si, spec, fifo, devices)
+        return RecordPlan(
+            spec.stream_url,
+            [("wf-recorder (video → stream)", vcmd, "int"),
+             ("ffmpeg (audio + RTMP push)", muxcmd, "int")],
+            self_timed=False, backend="wf-recorder+ffmpeg",
+            is_stream=True, secret=spec.stream_secret,
+            fifos=([fifo] if fdir else []), cleanup=([fdir] if fdir else []))
 
     if not (wants_mic or wants_sys):
         return RecordPlan(out_path, [("wf-recorder", wf_cmd(out_path), "int")],
@@ -1303,15 +1528,19 @@ def build_plan(si: SystemInfo, spec: RecordSpec, preview: bool = False) -> Recor
         die("Microphone requested but no microphone device detected/selected.")
     if wants_sys and not spec.monitor:
         die("System audio requested but no monitor/loopback source detected/selected.")
+    streaming = bool(spec.stream_url)
+    if streaming and not is_video:
+        die("Streaming requires a video mode (video_only/mic/system/both).")
     out_dir = spec.out_dir or (os.path.join(os.path.expanduser("~"),
                                             "Videos" if is_video else "Audio"))
-    if not preview:
+    if not preview and not streaming:
         ensure_dir(out_dir)
     if is_video and si.os == "linux" and si.display_server == "wayland":
         return _build_wayland_plan(si, spec, preview, out_dir, wants_mic, wants_sys)
     cmd, out_path = build_command(si, spec)
-    return RecordPlan(out_path, [("ffmpeg", cmd, "q")], is_video=is_video,
-                      self_timed=True, backend="ffmpeg")
+    return RecordPlan(out_path, [("ffmpeg", cmd, "int" if streaming else "q")],
+                      is_video=is_video, self_timed=not streaming, backend="ffmpeg",
+                      is_stream=streaming, secret=spec.stream_secret)
 
 
 # ---------------------------------------------------------------------------
@@ -1320,12 +1549,13 @@ def build_plan(si: SystemInfo, spec: RecordSpec, preview: bool = False) -> Recor
 def record_plan(plan: "RecordPlan", dry_run: bool = False, countdown_secs: int = 0,
                 open_when_done: bool = False, duration: Optional[float] = None) -> int:
     """Run a RecordPlan: start its process(es), stop them gracefully, finalize."""
-    info(f"Output → {bold(plan.out_path)}")
+    dest = _mask_secret(plan.out_path, plan.secret)
+    info(("Streaming → " if plan.is_stream else "Output → ") + bold(dest))
     for label, argv, _m in plan.procs:
         info(f"{label}:")
-        print(dim(" ".join(_shquote(c) for c in argv)), file=sys.stderr)
+        print(dim(_redact_cmd(argv, plan.secret)), file=sys.stderr)
     if plan.finalize:
-        print(dim("  (then mux) " + " ".join(_shquote(c) for c in plan.finalize)), file=sys.stderr)
+        print(dim("  (then mux) " + _redact_cmd(plan.finalize, plan.secret)), file=sys.stderr)
     if dry_run:
         return 0
     if countdown_secs > 0:
@@ -1333,8 +1563,17 @@ def record_plan(plan: "RecordPlan", dry_run: bool = False, countdown_secs: int =
 
     # pre-record setup (PipeWire combined source); may switch to a fallback plan
     plan, pulse_ids = _activate_plan(plan)
-    stop_hint = "stop early" if duration else "stop and finalize"
-    info(f"Recording… press {bold('q')} or {bold('Ctrl-C')} to {stop_hint}.")
+    if plan.is_stream:
+        info(f"{green('● LIVE')} — press {bold('q')} or {bold('Ctrl-C')} to stop streaming.")
+        # The RTMP output URL (with the key) is an ffmpeg argv element, so it is
+        # visible to other local users via the process list while live. This is
+        # inherent to ffmpeg RTMP output; only relevant on shared multi-user hosts.
+        dim_note = dim("  note: on a shared machine your stream key is visible to "
+                       "other local users via the process list while live.")
+        print(dim_note, file=sys.stderr)
+    else:
+        stop_hint = "stop early" if duration else "stop and finalize"
+        info(f"Recording… press {bold('q')} or {bold('Ctrl-C')} to {stop_hint}.")
 
     running: list[tuple[subprocess.Popen, str]] = []
     try:
@@ -1355,12 +1594,14 @@ def record_plan(plan: "RecordPlan", dry_run: bool = False, countdown_secs: int =
             primary.wait()
     except KeyboardInterrupt:
         pass
-    for proc, method in running:
-        _stop_proc(proc, method)
+    _stop_all(running)
     _pulse_mix_unload(pulse_ids)
 
     # a None returncode (un-reaped / killed) is a failure, not success
     rc = max(((p.returncode if p.returncode is not None else 1) for p, _ in running), default=0)
+    # A stream we asked to stop exits via SIGINT (255 / -2 / 130) — that's clean.
+    if plan.is_stream and rc in (255, 130, -2, -15, -signal.SIGINT if hasattr(signal, "SIGINT") else -2):
+        rc = 0
     inputs_ok = all(os.path.exists(t) and os.path.getsize(t) > 0 for t in plan.cleanup)
     if plan.finalize:
         if not inputs_ok:
@@ -1376,13 +1617,11 @@ def record_plan(plan: "RecordPlan", dry_run: bool = False, countdown_secs: int =
             except OSError as e:
                 rc = 1
                 warn(f"mux failed: {e}")
-    for tmp in plan.cleanup:
-        try:
-            os.path.exists(tmp) and os.remove(tmp)
-        except OSError:
-            pass
+    _plan_cleanup(plan)
 
-    if rc == 0 and os.path.exists(plan.out_path):
+    if plan.is_stream:
+        info(f"{green('Stream ended.')}") if rc == 0 else warn(f"stream exited with code {rc}")
+    elif rc == 0 and os.path.exists(plan.out_path):
         try:
             size = _gui_fmt_size(os.path.getsize(plan.out_path))
         except OSError:
@@ -1415,6 +1654,48 @@ def _reap(proc: subprocess.Popen) -> None:
         proc.wait(timeout=5)
     except (subprocess.TimeoutExpired, OSError):
         pass
+
+
+def _signal_stop(proc: subprocess.Popen, method: str) -> None:
+    """Ask one process to stop (non-blocking): SIGINT, or 'q' on stdin for ffmpeg."""
+    if proc.poll() is not None:
+        return
+    if method == "int":
+        if hasattr(signal, "SIGINT"):
+            proc.send_signal(signal.SIGINT)
+    else:
+        try:
+            if proc.stdin and not proc.stdin.closed:
+                proc.stdin.write(b"q")
+                proc.stdin.flush()
+        except (OSError, ValueError):
+            pass
+
+
+def _stop_all(running: list) -> None:
+    """Stop several capture processes together. Signalling every process FIRST
+    (before waiting on any) is essential for the FIFO streaming pipeline: the
+    wf-recorder writer can be blocked writing to a pipe whose ffmpeg reader must
+    also be told to quit — waiting on one before signalling the other deadlocks."""
+    for proc, method in running:
+        _signal_stop(proc, method)
+    for proc, method in running:
+        if proc.poll() is not None:
+            continue
+        try:
+            proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            if method != "int" and hasattr(signal, "SIGINT"):
+                proc.send_signal(signal.SIGINT)
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    _reap(proc)
 
 
 def _stop_proc(proc: subprocess.Popen, method: str) -> None:
@@ -1601,7 +1882,7 @@ MODES = (
 # maps to the matching argparse dest; values become argparse defaults so an
 # explicit CLI flag always wins.
 _RC_KEYS = (
-    "mode", "quality", "codec", "fps", "resolution", "out", "region", "audio_rate",
+    "mode", "quality", "codec", "fps", "resolution", "stream_url", "out", "region", "audio_rate",
     "audio_codec", "audio_channels", "container", "mic_device", "system_device", "software",
     "duration", "countdown", "open", "quiet", "ffmpeg",
 )
@@ -1740,20 +2021,31 @@ def cmd_record(args) -> int:
     backend = _resolve_backend(args)
     target = _resolve_capture_target(si, args)
     mic, mon = _resolve_audio_devices(si, args)
+    # Strip once at the source so the value embedded in the RTMP URL is byte-for-byte
+    # the value stored as the redaction secret (a whitespace-padded key would otherwise
+    # slip past _mask_secret's literal substring match and print in cleartext).
+    key = (getattr(args, "stream", None) or "").strip() or None
+    ingest = (getattr(args, "stream_url", None) or "").strip()
+    if key and ingest and not ingest.lower().startswith(("rtmp://", "rtmps://")):
+        die("--stream-url must be an rtmp:// or rtmps:// ingest URL")
+    stream_url = _stream_target(ingest, key) if key else None
     spec = RecordSpec(
         mode=args.mode, quality=args.quality, codec=args.codec, fps=args.fps,
         resolution=args.resolution,
         region=args.region, out_dir=args.out or "", audio_rate=args.audio_rate,
         audio_codec=args.audio_codec, audio_channels=args.audio_channels, mic=mic, monitor=mon,
         force_software=args.software, backend=backend, container=args.container,
-        duration=args.duration,
+        duration=args.duration, stream_url=stream_url, stream_secret=key,
     )
     _apply_target_to_spec(si, target, spec)
     if not args.quiet:
         loc = spec.wl_output or spec.geometry or "full screen"
         info(f"{si.os}/{si.display_server} · CPU {si.cpu_vendor} · GPU {si.gpu_vendor}"
-             f"{' (HW)' if si.has_gpu else ' (SW)'} · {si.screen or '?'} · encoder {backend} · {loc}")
-    plan = build_plan(si, spec)
+             f"{' (HW)' if si.has_gpu else ' (SW)'} · {si.screen or '?'} · encoder {backend} · {loc}"
+             + (" · LIVE" if stream_url else ""))
+    # A dry run only prints the plan; build it in preview mode so it never touches
+    # the filesystem (no output dir, no stream temp dir / FIFO).
+    plan = build_plan(si, spec, preview=args.dry_run)
     return record_plan(plan, dry_run=args.dry_run, countdown_secs=args.countdown,
                        open_when_done=args.open, duration=args.duration)
 
@@ -1942,6 +2234,11 @@ def build_parser(rc: Optional[dict] = None) -> argparse.ArgumentParser:
     r.add_argument("--cpu", action="store_true", help="shorthand for --backend cpu")
     r.add_argument("--software", action="store_true", default=bool(d("software", False)),
                    help="alias for --cpu (force CPU/software encoding)")
+    r.add_argument("--stream", metavar="KEY", default=None,
+                   help="go LIVE instead of recording to a file — pass your YouTube "
+                        "(or other RTMP) stream key, OBS-style")
+    r.add_argument("--stream-url", metavar="URL", default=d("stream_url", None),
+                   help=f"RTMP(S) ingest URL for --stream (default: YouTube, {YOUTUBE_INGEST})")
     r.add_argument("--dry-run", action="store_true", help="print the ffmpeg command and exit")
     r.add_argument("--quiet", action="store_true", default=bool(d("quiet", False)),
                    help="suppress the detection summary line")
@@ -2486,6 +2783,19 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     fname_preview = label(inner, "", fg=C["muted"], font=F["mono"])
     fname_preview.pack(fill="x", pady=(6, 0))
 
+    # --- LIVE streaming (OBS-style): paste a stream key to go live instead of recording ---
+    stream_var = tk.StringVar(value="")
+    stream_row = tk.Frame(inner, bg=C["bg"])
+    stream_row.pack(fill="x", pady=(8, 0))
+    label(stream_row, "Stream key", fg=C["muted"], width=12).pack(side="left", padx=(0, 8))
+    stream_entry = tk.Entry(
+        stream_row, textvariable=stream_var, show="•",
+        bg=C["surface2"], fg=C["text"], insertbackground=C["accent"],
+        relief="flat", bd=0, highlightthickness=1,
+        highlightbackground=C["border"], highlightcolor=C["accent"], font=F["value"])
+    stream_entry.pack(side="left", fill="x", expand=True, ipady=4)
+    label(stream_row, "→ YouTube (blank = record)", fg=C["faint"], font=F["hint"]).pack(side="left", padx=(10, 0))
+
     # --- encoder backend segmented control: Auto / GPU / CPU ---
     enc_row = tk.Frame(inner, bg=C["bg"])
     enc_row.pack(fill="x", pady=(10, 0))
@@ -2683,6 +2993,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         else:
             t = cap_targets["map"].get(source_var.get())
             target = t if (t and t.kind != "screen") else None
+        key = stream_var.get().strip() or None
         spec = RecordSpec(
             mode=mode_var.get(),
             quality=quality_var.get(),
@@ -2695,6 +3006,8 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             mic=find_dev(si.mics, mic_var.get()),
             monitor=find_dev(si.monitors, mon_var.get(), fallback_monitor=True),
             backend=backend_var.get(),
+            stream_url=(_stream_target("", key) if key else None),
+            stream_secret=key,
         )
         _apply_target_to_spec(si, target, spec)
         return spec
@@ -2737,14 +3050,18 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         if not (state["recording"] or state["stopping"]):
             state_line.configure(text="idle", fg=C["muted"])
             action_btn.configure(state="normal")
-        fname_preview.configure(text="↳ " + os.path.basename(plan.out_path), fg=C["muted"])
+        if plan.is_stream:
+            fname_preview.configure(text="↳ ● LIVE → " + _mask_secret(plan.out_path, plan.secret),
+                                    fg=C["success"])
+        else:
+            fname_preview.configure(text="↳ " + os.path.basename(plan.out_path), fg=C["muted"])
         lines = []
         for label, argv, _m in plan.procs:
             lines.append(f"# {label}")
-            lines.append(" ".join(_shquote(c) for c in argv))
+            lines.append(_redact_cmd(argv, plan.secret))
         if plan.finalize:
             lines.append("# mux")
-            lines.append(" ".join(_shquote(c) for c in plan.finalize))
+            lines.append(_redact_cmd(plan.finalize, plan.secret))
         _set_preview_text("\n".join(lines))
 
     def schedule_preview(*_a):
@@ -2872,8 +3189,16 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             pass
         _set_recording_ui(False)
         out_path = state.get("out_path")
+        plan = state.get("plan")
+        streaming = bool(plan and getattr(plan, "is_stream", False))
         saved = bool(out_path and os.path.exists(out_path) and os.path.getsize(out_path) > 0)
-        if crashed and not saved:
+        if streaming:
+            # For a live stream out_path is the secret-bearing RTMP URL; never
+            # render it (basename would be the raw stream key). SIGINT-driven
+            # exits are the normal way to stop a stream, so they aren't "crashes".
+            state_line.configure(text=("Stream ended" if not crashed else f"Stream ended (code {code})"),
+                                 fg=(C["success"] if not crashed else C["warn"]))
+        elif crashed and not saved:
             state_line.configure(text=f"recorder exited (code {code})", fg=C["warn"])
         else:
             base = os.path.basename(out_path) if out_path else ""
@@ -2909,11 +3234,11 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             fg=C["warn"])
         action_btn.configure(state="disabled")
 
-        # Stop every capture process, unload the PipeWire mix, then mux + clean up,
+        # Stop every capture process (signal all FIRST — see _stop_all: streaming
+        # FIFOs deadlock otherwise), unload the PipeWire mix, then mux + clean up,
         # on a worker thread so the UI keeps animating; poll completion via after().
         def _worker():
-            for proc, method in procs:
-                _stop_proc(proc, method)
+            _stop_all(procs)
             _pulse_mix_unload(pulse_ids)
             if plan and plan.finalize:
                 ok = all(os.path.exists(t) and os.path.getsize(t) > 0 for t in plan.cleanup)
@@ -2923,11 +3248,8 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
                                        stderr=subprocess.DEVNULL)
                     except OSError:
                         pass
-                for t in plan.cleanup:
-                    try:
-                        os.path.exists(t) and os.remove(t)
-                    except OSError:
-                        pass
+            if plan:
+                _plan_cleanup(plan)
 
         import threading  # noqa: PLC0415
         t = threading.Thread(target=_worker, daemon=True)
@@ -3042,7 +3364,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     # ---- keyboard shortcuts ----------------------------------------------
     def _on_space(_e=None):
         # don't steal the spacebar while typing in an entry/text field
-        if root.focus_get() in (region_entry, out_entry, preview_box):
+        if root.focus_get() in (region_entry, out_entry, preview_box, stream_entry):
             return None
         toggle_record()
         return "break"
@@ -3059,7 +3381,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
 
     # ---- wire traces (live preview + dependent state) ---------------------
     for v in (mode_var, quality_var, res_var, codec_var, fps_var, acodec_var, achan_var,
-              region_var, mic_var, mon_var, out_var, backend_var, source_var):
+              region_var, mic_var, mon_var, out_var, backend_var, source_var, stream_var):
         v.trace_add("write", schedule_preview)
     for v in (mode_var, codec_var, acodec_var, backend_var):
         v.trace_add("write", _refresh_dependent)

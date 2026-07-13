@@ -5,6 +5,43 @@ All notable changes to Turbo Recorder are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] — 2026-07-13
+
+### Added
+- **YouTube live streaming (OBS-style)** — go live straight from Turbo Recorder
+  with your YouTube **stream key**, no third-party software. CLI: `--stream KEY`
+  (optionally `--stream-url` for a custom RTMP/RTMPS ingest; defaults to YouTube's
+  `rtmps://a.rtmps.youtube.com:443/live2`); GUI: a masked **Stream key** field.
+  The engine forces a streaming-correct pipeline — H.264 (CBR at YouTube's
+  recommended bitrate for the frame size), AAC audio, a 2-second keyframe interval
+  (GOP = 2×fps) and FLV — while still mixing mic + system audio. On Wayland,
+  `wf-recorder` encodes into an mpegts FIFO that ffmpeg stream-copies and pushes,
+  so live streaming works on wlroots compositors too. Video-only streams get a
+  silent audio track so YouTube always sees audio.
+- **Adaptive, resolution-aware encoder tuning** — the encoder presets now scale
+  with the actual pixel throughput (megapixels/sec). At 1080p there is spare
+  encode time, so Turbo Recorder uses much slower/higher-quality presets
+  (NVENC `p7` + temporal-AQ + look-ahead, x264 `slow` CRF 17, x265, SVT-AV1),
+  and it steps down toward faster presets only at 4K / high-fps to keep capture
+  real-time. Result: visibly better quality at the resolutions most people record,
+  with no dropped frames at the demanding ones.
+
+### Security
+- **Stream keys are treated as credentials.** They are redacted (`••••`) from every
+  printed command, the `--dry-run` output, the GUI command preview, and the
+  end-of-stream status line — including whitespace-padded keys. The live preview /
+  dry-run no longer creates a temporary stream pipe on disk. A note is shown when
+  going live that, as with any ffmpeg RTMP push, the key is visible to other local
+  users via the process list on a shared machine. `--stream-url` is restricted to
+  `rtmp://` / `rtmps://` ingests.
+
+### Packaging
+- **BSD / portable binary release.** A new architecture-independent tarball
+  (`turborec-<version>.tar.gz`, with `install.sh` / `uninstall.sh`) installs on any
+  Unix with Python 3 — FreeBSD, OpenBSD, NetBSD, DragonFly, illumos, Linux, macOS —
+  and a native **FreeBSD package** (`turborec-<version>.pkg`, `pkg add`) is now
+  built and smoke-tested in CI alongside the `.deb`, `.rpm`, and AppImage.
+
 ## [3.2.0] — 2026-07-12
 
 ### Added
@@ -135,6 +172,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   audio (no more hardcoded device names), full-screen capture by default, and adds
   HEVC / codec / quality / audio-codec options.
 
+[3.3.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.3.0
 [3.2.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.2.0
 [3.1.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.1.0
 [3.0.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.0.0

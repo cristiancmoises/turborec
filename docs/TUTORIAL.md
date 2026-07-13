@@ -18,13 +18,14 @@
 7. [Choosing what to capture (screen, monitor, window, region)](#7-choosing-what-to-capture)
 8. [Choosing how to encode (CPU vs GPU, quality, codec)](#8-choosing-how-to-encode)
 9. [Audio](#9-audio)
-10. [Timed recording, countdown and auto-open](#10-timed-recording-countdown-and-auto-open)
-11. [Saving your defaults (config file)](#11-saving-your-defaults)
-12. [The Linux bash recorder (`turborecorder`)](#12-the-linux-bash-recorder)
-13. [Recipes and cookbook](#13-recipes-and-cookbook)
-14. [Tips for the best possible quality](#14-tips-for-the-best-possible-quality)
-15. [Troubleshooting](#15-troubleshooting)
-16. [FAQ](#16-faq)
+10. [Live streaming to YouTube (OBS-style)](#10-live-streaming-to-youtube)
+11. [Timed recording, countdown and auto-open](#11-timed-recording-countdown-and-auto-open)
+12. [Saving your defaults (config file)](#12-saving-your-defaults)
+13. [The Linux bash recorder (`turborecorder`)](#13-the-linux-bash-recorder)
+14. [Recipes and cookbook](#14-recipes-and-cookbook)
+15. [Tips for the best possible quality](#15-tips-for-the-best-possible-quality)
+16. [Troubleshooting](#16-troubleshooting)
+17. [FAQ](#17-faq)
 
 ---
 
@@ -42,18 +43,37 @@ Hyprland, river, …) screen capture additionally needs
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_2.2.0_all.deb        # pulls ffmpeg, python3, python3-tk
+sudo apt install ./turborec_3.3.0_all.deb        # pulls ffmpeg, python3, python3-tk
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-2.2.0-1.noarch.rpm   # pulls ffmpeg, python3, python3-tkinter
+sudo dnf install ./turborec-3.3.0-1.noarch.rpm   # pulls ffmpeg, python3, python3-tkinter
 
 # Any Linux — portable AppImage (uses your host ffmpeg/python/tk)
-chmod +x Turbo_Recorder-2.2.0-x86_64.AppImage
-./Turbo_Recorder-2.2.0-x86_64.AppImage
+chmod +x Turbo_Recorder-3.3.0-x86_64.AppImage
+./Turbo_Recorder-3.3.0-x86_64.AppImage
 ```
 
 Get these from the project **Releases** page, or build them yourself with the
 scripts in [`packaging/`](../packaging/).
+
+### BSD and other Unix
+
+FreeBSD has a native package; every other Unix (OpenBSD, NetBSD, DragonFly,
+illumos, macOS, or Linux) can use the portable tarball. Turbo Recorder is pure
+Python plus a POSIX shell front-end, so one archive runs everywhere.
+
+```sh
+# FreeBSD — native package
+pkg add ./turborec-3.3.0.pkg
+pkg install python3 ffmpeg          # runtime prerequisites (wf-recorder for Wayland)
+
+# Any Unix — portable tarball (installs to /usr/local by default)
+tar xzf turborec-3.3.0.tar.gz && cd turborec-3.3.0
+sudo ./install.sh                   # or: PREFIX="$HOME/.local" ./install.sh
+```
+
+On **OpenBSD** install the prerequisites with `pkg_add python3 ffmpeg`. The
+tarball's `install.sh` prints any missing prerequisite it detects.
 
 ### Linux — from source (works everywhere)
 
@@ -354,7 +374,60 @@ turborec record -m video_mic --audio-channels right   # fix right-only audio
 
 ---
 
-## 10. Timed recording, countdown and auto-open
+## 10. Live streaming to YouTube
+
+Turbo Recorder can **go live** the same way OBS does — with your YouTube
+**stream key** — no extra software.
+
+**Get your key:** in **YouTube Studio → Create → Go live → Stream**, copy the
+**Stream key** (looks like `xxxx-xxxx-xxxx-xxxx-xxxx`).
+
+**GUI:** paste it into the **Stream key** field (it shows as dots) and press
+**Start**. The status turns to **● LIVE**; press **Stop** to end.
+
+**CLI:**
+
+```bash
+# Go live with screen + mic + system audio
+turborec record -m video_both --stream YOUR_YT_STREAM_KEY
+
+# Video + mic only
+turborec record -m video_mic --stream YOUR_YT_STREAM_KEY
+
+# A different service / custom ingest (Twitch, Restream, your own RTMP server)
+turborec record --stream KEY --stream-url rtmp://live.twitch.tv/app
+```
+
+Press **`q`** or **Ctrl-C** to stop streaming.
+
+**What it does for you.** Streaming has different requirements than recording to
+a file, so Turbo Recorder switches the pipeline automatically:
+
+- **H.264** video at **constant bitrate** (YouTube's recommended rate for your
+  frame size — e.g. ~4.5–9 Mbps at 1080p), regardless of the `-c` codec you'd use
+  for a file.
+- **AAC** audio, 48 kHz stereo, with mic + system mixed just like a recording.
+- A **2-second keyframe interval** (GOP = 2×fps) and **FLV over RTMPS**, which is
+  what YouTube expects.
+- Video-only modes still get a **silent audio track** so YouTube always sees audio.
+- On **Wayland**, `wf-recorder` encodes into a pipe that ffmpeg pushes, so live
+  streaming works on wlroots compositors too.
+
+Choose a resolution with `-R` (e.g. `-R 1080p`) exactly as for recording; the
+bitrate follows the frame size.
+
+> 🔒 **Your stream key is a credential.** Turbo Recorder redacts it (`••••`) from
+> every printed command, the `--dry-run` output, the GUI preview, and the
+> end-of-stream status line. As with any ffmpeg RTMP push, the key is present in
+> the process's command line, so on a **shared multi-user machine** other local
+> users could read it from the process list while you're live — Turbo Recorder
+> prints a one-line note when you go live to remind you. On a personal machine
+> this isn't a concern. Only pass `--stream-url` values you trust (it's
+> restricted to `rtmp://` / `rtmps://`).
+
+---
+
+## 11. Timed recording, countdown and auto-open
 
 ```bash
 turborec record -t 30                 # stop after 30 seconds
@@ -365,7 +438,7 @@ turborec record -t 1m --open          # record 1 min, then open the file
 
 ---
 
-## 11. Saving your defaults
+## 12. Saving your defaults
 
 Put a JSON file at `~/.config/turborec/config.json` (or point `--config` / the
 `$TURBOREC_CONFIG` env var at one). Any CLI flag overrides the file.
@@ -389,7 +462,7 @@ turborec --config ./project.json record           # a project-specific config
 
 ---
 
-## 12. The Linux bash recorder
+## 13. The Linux bash recorder
 
 `turborecorder` is a fast, dependency-light path for X11 (FFmpeg + `xrandr`/
 `xdpyinfo` + PulseAudio/PipeWire). It auto-detects CPU/GPU, the best encoder, your
@@ -407,7 +480,7 @@ Override audio sources with `MONITOR_SOURCE=` / `MIC_SOURCE=` env vars if needed
 
 ---
 
-## 13. Recipes and cookbook
+## 14. Recipes and cookbook
 
 ```bash
 # Tutorial / screencast with your voice (GPU), 30 fps, stop after 10 min
@@ -434,7 +507,7 @@ turborec record -m video_both --dry-run
 
 ---
 
-## 14. Tips for the best possible quality
+## 15. Tips for the best possible quality
 
 - **Use GPU encoding** (`--gpu`, the default when available) — it leaves CPU
   headroom so capture stays real-time and smooth.
@@ -452,7 +525,7 @@ turborec record -m video_both --dry-run
 
 ---
 
-## 15. Troubleshooting
+## 16. Troubleshooting
 
 **The video plays in slow motion / looks laggy.**
 Fixed in 2.2.0 (real-time presets + forced constant frame rate). Make sure you're
@@ -489,7 +562,7 @@ FFmpeg command, and `turborec detect` to confirm what was detected.
 
 ---
 
-## 16. FAQ
+## 17. FAQ
 
 **Where are my recordings?** `~/Videos` for video, `~/Audio` for audio, with
 timestamped names. Change with `-o /path` or the GUI Output folder.

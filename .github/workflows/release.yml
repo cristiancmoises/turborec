@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build packages and publish release
+  linux:
+    name: Build Linux packages + portable tarball
     runs-on: ubuntu-latest
 
     steps:
@@ -34,6 +34,8 @@ jobs:
           packaging/build-deb.sh
           packaging/build-rpm.sh
           packaging/build-appimage.sh
+          # Architecture-independent tarball — installs on any Unix (incl. the BSDs).
+          packaging/build-tarball.sh
 
       - name: Collect artifacts
         run: |
@@ -45,12 +47,44 @@ jobs:
           echo "Artifacts:"
           ls -l dist
 
-      - name: Create GitHub Release
+      - name: Publish Linux artifacts to the release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/*.deb
             dist/*.rpm
             dist/*.AppImage
+            dist/*.tar.gz
           fail_on_unmatched_files: true
           generate_release_notes: true
+
+  freebsd:
+    name: Build FreeBSD package
+    runs-on: ubuntu-latest
+    needs: linux
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build + smoke-test the FreeBSD .pkg in a FreeBSD VM
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          # python3 is needed both to read VERSION cleanly and to smoke-test the
+          # installed package; pkg(8) itself is part of the base FreeBSD image.
+          prepare: |
+            pkg install -y python3
+          run: |
+            set -eu
+            sh packaging/build-freebsd-pkg.sh
+            echo "== smoke test: install the built package =="
+            pkg add -f dist/turborec-*.pkg
+            turborec --version
+            pkg delete -y turborec
+
+      - name: Publish FreeBSD artifact to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.pkg
+          fail_on_unmatched_files: true

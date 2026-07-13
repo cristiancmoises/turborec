@@ -31,7 +31,9 @@ builds a **real-time, correct-speed** FFmpeg pipeline and records.
 - 🎚️ **You choose** — CPU or GPU encoding · H.264 / H.265 / AV1 · lossless FLAC (or AAC/Opus) audio
 - 🔊 **Fix one-sided audio** — clone a live channel to both sides (`--audio-channels left/right/mono`)
 - 📐 **Record in 720p / 1080p / 1440p / 4K** — `-R 4k` upscales any screen to true 4K, so YouTube serves its high-bitrate 4K tier
-- 🖤 **Beautiful dark GUI _and_ a powerful CLI** — packaged as `.deb` / `.rpm` / AppImage
+- 📡 **Go live to YouTube (OBS-style)** — paste your stream key (`--stream KEY` or the GUI field) and stream; keys are always redacted from output
+- 🧠 **Adaptive quality** — presets scale with the pixel rate: best-quality at 1080p, fast enough to stay real-time at 4K
+- 🖤 **Beautiful dark GUI _and_ a powerful CLI** — packaged as `.deb` / `.rpm` / AppImage / FreeBSD `.pkg` / portable tarball
 
 Two front-ends, one engine:
 
@@ -56,22 +58,31 @@ New here? Start with the [60-second quick start](docs/TUTORIAL.md#2-60-second-qu
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.2.0_all.deb
+sudo apt install ./turborec_3.3.0_all.deb
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.2.0-1.noarch.rpm
+sudo dnf install ./turborec-3.3.0-1.noarch.rpm
 
 # Any Linux — portable, no install
-chmod +x Turbo_Recorder-3.2.0-x86_64.AppImage
-./Turbo_Recorder-3.2.0-x86_64.AppImage
+chmod +x Turbo_Recorder-3.3.0-x86_64.AppImage
+./Turbo_Recorder-3.3.0-x86_64.AppImage
+
+# FreeBSD — native package
+pkg add ./turborec-3.3.0.pkg
+
+# Any Unix (BSD / illumos / Linux / macOS) — portable tarball
+tar xzf turborec-3.3.0.tar.gz && cd turborec-3.3.0
+sudo ./install.sh            # installs to /usr/local (PREFIX=… to change)
 ```
 
-Packages install `turborec` and `turborecorder` to `/usr/bin`, plus a desktop
-launcher and icon. Runtime needs: `ffmpeg`, `python3` (≥ 3.8), `python3-tk`
-(`python3-tkinter` on Fedora) for the GUI, and — **on a Wayland session** —
+Packages install `turborec` and `turborecorder` to `/usr/bin` (`/usr/local/bin`
+for the BSD/tarball route), plus a desktop launcher and icon. Runtime needs:
+`ffmpeg`, `python3` (≥ 3.8), `python3-tk` (`python3-tkinter` on Fedora) for the
+GUI, and — **on a Wayland session** —
 [`wf-recorder`](https://github.com/ammen99/wf-recorder) for screen capture
 (`sudo apt install wf-recorder` · `sudo dnf install wf-recorder` ·
-`guix install wf-recorder`).
+`guix install wf-recorder`). On **FreeBSD**: `pkg install python3 ffmpeg`
+(add `wf-recorder` for Wayland); on **OpenBSD**: `pkg_add python3 ffmpeg`.
 
 **From source** (no packaging needed):
 
@@ -84,9 +95,11 @@ python3 turborec.py gui      # or: detect / record / devices
 **Build the packages yourself** — scripts live in [`packaging/`](packaging/):
 
 ```bash
-packaging/build-deb.sh        # → dist/turborec_3.2.0_all.deb  (works even without dpkg-deb)
-packaging/build-rpm.sh        # → dist/turborec-3.2.0-1.noarch.rpm
-packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.2.0-x86_64.AppImage
+packaging/build-deb.sh        # → dist/turborec_3.3.0_all.deb  (works even without dpkg-deb)
+packaging/build-rpm.sh        # → dist/turborec-3.3.0-1.noarch.rpm
+packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.3.0-x86_64.AppImage
+packaging/build-tarball.sh    # → dist/turborec-3.3.0.tar.gz   (portable; any Unix incl. the BSDs)
+packaging/build-freebsd-pkg.sh # → dist/turborec-3.3.0.pkg      (run on FreeBSD; pkg add)
 ```
 
 ## The GUI
@@ -166,6 +179,10 @@ python3 turborec.py record -m video_mic --audio-channels right   # or left / mon
 # Record in 4K (upscaled if the screen is smaller) — YouTube then serves its 4K tier
 python3 turborec.py record -R 4k -c hevc -f 23                   # also: 720p / 1080p / 1440p
 
+# Go live to YouTube (OBS-style) — paste your stream key; it's redacted from all output
+python3 turborec.py record -m video_both --stream YOUR_YT_STREAM_KEY
+python3 turborec.py record --stream KEY --stream-url rtmps://host/app   # custom RTMP/RTMPS ingest
+
 # Record for a fixed time, then open the file when done
 python3 turborec.py record -m video_both -t 60 --countdown 3 --open
 
@@ -198,6 +215,29 @@ use `-t/--duration` for a fixed length. Everything is overridable
 `--countdown`, …) and defaults can be saved in a JSON config (`--config`, or
 `$TURBOREC_CONFIG` / `~/.config/turborec/config.json`). Run
 `python3 turborec.py record -h` for the full list.
+
+### 📡 Live streaming to YouTube
+
+Stream straight from Turbo Recorder — no OBS needed. In **YouTube Studio → Go
+live**, copy your **Stream key**, then either paste it into the GUI's **Stream
+key** field or pass it on the CLI:
+
+```bash
+python3 turborec.py record -m video_both --stream YOUR_YT_STREAM_KEY
+```
+
+Turbo Recorder builds a streaming-correct pipeline automatically: **H.264** (CBR
+at YouTube's recommended bitrate for your frame size), **AAC** audio, a
+**2-second keyframe interval**, and **FLV** over **RTMPS**, while still mixing
+mic + system audio. It works on X11, macOS, Windows, and **Wayland** (via
+`wf-recorder`). Default ingest is YouTube; override it with `--stream-url` for
+another RTMP/RTMPS service (Twitch, a custom server, …). Press **`q`** / **Ctrl-C**
+to stop.
+
+> 🔒 Your stream key is a credential: it's **redacted (`••••`) from every command,
+> preview, dry-run and status line**. As with any ffmpeg RTMP push, the key is
+> visible to other local users via the process list while live — only a concern
+> on shared multi-user machines.
 
 ---
 
