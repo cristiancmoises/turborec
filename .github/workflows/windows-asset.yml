@@ -1,0 +1,58 @@
+name: Windows asset
+
+# Build the Windows .exe and attach it to an existing release, on demand.
+# release.yml already builds the .exe for every new tag; this manual workflow
+# exists to (re)attach a Windows binary to an already-published tag without
+# re-tagging (e.g. when a prior run's Windows job needed a fix).
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build from and attach the .exe to (e.g. v3.3.0)
+        required: true
+        default: v3.3.0
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Build + attach Windows executable
+    runs-on: windows-latest
+    steps:
+      - name: Checkout the tagged source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build a single-file .exe with PyInstaller
+        shell: bash
+        run: |
+          set -eu
+          python -m pip install --upgrade pip pyinstaller
+          pyinstaller --onefile --name turborec \
+            --collect-submodules tkinter --hidden-import tkinter \
+            turborec.py
+          # Byte-safe version read (turborec.py has UTF-8 glyphs that Windows'
+          # default cp1252 text mode can't decode).
+          VER=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' turborec.py | head -1)
+          mkdir -p out
+          cp dist/turborec.exe "out/Turbo_Recorder-${VER}-windows-x64.exe"
+          ls -l out
+
+      - name: Smoke-test the executable
+        shell: bash
+        run: ./dist/turborec.exe --version
+
+      - name: Attach the .exe to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag }}
+          files: out/*.exe
+          fail_on_unmatched_files: true
