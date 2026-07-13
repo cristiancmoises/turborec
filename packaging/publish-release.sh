@@ -116,14 +116,17 @@ publish_to() {
             log "  = ${name} (already present, skipped)"
             continue
         fi
-        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 1800 \
+        # --http1.1 avoids HTTP/2 framing errors some servers hit on large
+        # uploads; a failed upload must not abort the whole run (|| code=000),
+        # so remaining assets and the other forge still get published.
+        code="$(curl -s -o /dev/null -w '%{http_code}' --http1.1 --max-time 3600 \
                -X POST -H "${auth}" \
                -F "attachment=@${f};filename=${name}" \
-               "${base}/releases/${rid}/assets?name=${name}")"
+               "${base}/releases/${rid}/assets?name=${name}")" || code="000"
         if [ "${code}" = "201" ]; then
             log "  + ${name}"
         else
-            log "  ! ${name} FAILED (HTTP ${code})"
+            log "  ! ${name} FAILED (HTTP ${code}) — continuing"
         fi
     done
 }
