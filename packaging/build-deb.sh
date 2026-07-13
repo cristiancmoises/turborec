@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  build-deb.sh — build dist/turborec_3.1.0_all.deb
+#  build-deb.sh — build dist/turborec_3.2.0_all.deb
 #
 #  Stages the install layout from the repository and assembles a Debian
 #  package.  Uses dpkg-deb when available; otherwise falls back to a portable
@@ -17,7 +17,7 @@ set -euo pipefail
 
 # ---- package metadata -------------------------------------------------------
 PKG_NAME="turborec"
-PKG_VERSION="3.1.0"
+PKG_VERSION="3.2.0"
 PKG_ARCH="all"
 
 # ---- resolve paths ----------------------------------------------------------

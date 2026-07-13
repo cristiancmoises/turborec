@@ -30,6 +30,7 @@ builds a **real-time, correct-speed** FFmpeg pipeline and records.
 - 🖥️ **OBS-style capture** — full screen, a specific monitor, a window, or an exact region
 - 🎚️ **You choose** — CPU or GPU encoding · H.264 / H.265 / AV1 · lossless FLAC (or AAC/Opus) audio
 - 🔊 **Fix one-sided audio** — clone a live channel to both sides (`--audio-channels left/right/mono`)
+- 📐 **Record in 720p / 1080p / 1440p / 4K** — `-R 4k` upscales any screen to true 4K, so YouTube serves its high-bitrate 4K tier
 - 🖤 **Beautiful dark GUI _and_ a powerful CLI** — packaged as `.deb` / `.rpm` / AppImage
 
 Two front-ends, one engine:
@@ -55,14 +56,14 @@ New here? Start with the [60-second quick start](docs/TUTORIAL.md#2-60-second-qu
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.1.0_all.deb
+sudo apt install ./turborec_3.2.0_all.deb
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.1.0-1.noarch.rpm
+sudo dnf install ./turborec-3.2.0-1.noarch.rpm
 
 # Any Linux — portable, no install
-chmod +x Turbo_Recorder-3.1.0-x86_64.AppImage
-./Turbo_Recorder-3.1.0-x86_64.AppImage
+chmod +x Turbo_Recorder-3.2.0-x86_64.AppImage
+./Turbo_Recorder-3.2.0-x86_64.AppImage
 ```
 
 Packages install `turborec` and `turborecorder` to `/usr/bin`, plus a desktop
@@ -83,9 +84,9 @@ python3 turborec.py gui      # or: detect / record / devices
 **Build the packages yourself** — scripts live in [`packaging/`](packaging/):
 
 ```bash
-packaging/build-deb.sh        # → dist/turborec_3.1.0_all.deb  (works even without dpkg-deb)
-packaging/build-rpm.sh        # → dist/turborec-3.1.0-1.noarch.rpm
-packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.1.0-x86_64.AppImage
+packaging/build-deb.sh        # → dist/turborec_3.2.0_all.deb  (works even without dpkg-deb)
+packaging/build-rpm.sh        # → dist/turborec-3.2.0-1.noarch.rpm
+packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.2.0-x86_64.AppImage
 ```
 
 ## The GUI
@@ -161,6 +162,9 @@ python3 turborec.py record -m audio_both --audio-codec flac
 
 # Fix sound only on one side (clone that channel to both), e.g. a mono mic on input 2
 python3 turborec.py record -m video_mic --audio-channels right   # or left / mono
+
+# Record in 4K (upscaled if the screen is smaller) — YouTube then serves its 4K tier
+python3 turborec.py record -R 4k -c hevc -f 23                   # also: 720p / 1080p / 1440p
 
 # Record for a fixed time, then open the file when done
 python3 turborec.py record -m video_both -t 60 --countdown 3 --open

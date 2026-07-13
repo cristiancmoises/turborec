@@ -306,6 +306,23 @@ hardware/FFmpeg supports it. See what you have:
 turborec encoders          # shows the best h264/hevc/av1 encoder for your machine
 ```
 
+### Output resolution (record in 4K)
+
+`-R native|720p|1080p|1440p|4k` (GUI: the **Output** dropdown). `native`
+(default) records at the capture size. Any other value scales the recording with
+high-quality **lanczos** (aspect preserved, padded to the exact standard frame):
+
+```bash
+turborec record -R 4k -c hevc -f 23     # true 3840×2160 output from any screen
+turborec record -R 1080p                # normalize to 1920×1080
+```
+
+> **Why upscale to 4K for YouTube?** YouTube picks the quality tier — and,
+> crucially, the **bitrate budget** — from the *uploaded* resolution. A native
+> 1920×1200 screen capture can land at a low tier (720p/1080p) with heavy
+> compression, while the same content uploaded as 4K gets the high-bitrate 4K
+> pipeline and looks dramatically better at every playback quality.
+
 ---
 
 ## 9. Audio
@@ -426,7 +443,10 @@ turborec record -m video_both --dry-run
 - **`-q best`** plus **FLAC** audio for archival masters; transcode later if needed.
 - **HEVC/AV1** (`-c hevc` / `-c av1`) for much smaller files at the same quality,
   if your players support them.
-- **Capture native resolution** (the default) — Turbo Recorder never upscales.
+- **Capture native resolution** (the default) for archival; **`-R 4k` for
+  YouTube** — the platform assigns its quality tier and bitrate budget from the
+  uploaded resolution, so a 4K upload keeps your video sharp (see
+  [§8 Output resolution](#output-resolution-record-in-4k)).
 - If a recording is ever choppy, drop to `-q high`/`-f 30` or a smaller `--region`
   to give the encoder more headroom (see Troubleshooting).
 

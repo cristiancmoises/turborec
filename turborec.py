@@ -35,7 +35,7 @@ from datetime import datetime
 from typing import Optional
 
 APP_NAME = "Turbo Recorder"
-VERSION = "3.1.0"
+VERSION = "3.2.0"
 
 # ---------------------------------------------------------------------------
 # Small terminal helpers
@@ -702,6 +702,28 @@ def choose_encoder(si: SystemInfo, codec: str = "h264", force_software: bool = F
 # ---------------------------------------------------------------------------
 QUALITY_LEVELS = ("best", "high", "balanced", "compact")
 
+# Output resolution presets ("native" = capture size, no scaling). Upscaling to
+# 4k is deliberate and useful: platforms like YouTube pick their quality tier
+# (and bitrate budget) from the uploaded resolution, so a 4K upload gets the
+# high-bitrate 4K pipeline even when the source screen is 1080p/1200p.
+RESOLUTIONS = ("native", "720p", "1080p", "1440p", "4k")
+_RES_DIMS = {"720p": (1280, 720), "1080p": (1920, 1080),
+             "1440p": (2560, 1440), "4k": (3840, 2160)}
+
+
+def _scale_chain(resolution: str) -> Optional[str]:
+    """ffmpeg filter scaling to the chosen output resolution, or None for native.
+
+    Fits the capture inside the target (lanczos, aspect preserved) and pads to the
+    exact WxH with black bars, so the output is always the standard frame size.
+    """
+    dims = _RES_DIMS.get((resolution or "native").lower())
+    if not dims:
+        return None
+    w, h = dims
+    return (f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
+            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2")
+
 
 def _quality_index(q: str) -> int:
     return {"best": 0, "high": 1, "balanced": 2, "compact": 3}.get(q, 0)
@@ -875,6 +897,7 @@ class RecordSpec:
     quality: str = "best"
     codec: str = "h264"
     fps: int = 60
+    resolution: str = "native"  # native | 720p | 1080p | 1440p | 4k (scale output)
     region: Optional[str] = None
     out_dir: str = ""
     audio_rate: int = 48000
@@ -965,6 +988,11 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
 
     if is_video:
         vf = video_filter_for(enc)  # type: ignore[arg-type]
+        # Output-resolution scaling runs in software BEFORE any hwupload, so it
+        # works identically for software, NVENC, and VAAPI/QSV encoders.
+        sc = _scale_chain(spec.resolution)
+        if sc:
+            vf = f"{sc},{vf}" if vf else sc
         if vf:
             filtergraph_parts.append(f"[{video_index}:v]{vf}[v]")
             maps += ["-map", "[v]"]
@@ -1036,7 +1064,8 @@ class RecordPlan:
 
 
 # ---- Wayland (wlroots) encoder selection for wf-recorder --------------------
-def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False) -> tuple[str, list[str], str, str]:
+def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False,
+             force_software: bool = False) -> tuple[str, list[str], str, str]:
     """Return (codec, [codec params], kind, drm_device) for wf-recorder.
 
     wf-recorder cannot use NVENC; on NVIDIA it uses software (libx264/x265).
@@ -1044,7 +1073,8 @@ def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False) -> tuple[str
     """
     qi = _quality_index(spec.quality)
     codec = spec.codec
-    if spec.backend != "cpu" and si.gpu_vendor in ("intel", "amd") and si.vaapi_device:
+    if not force_software and spec.backend != "cpu" \
+            and si.gpu_vendor in ("intel", "amd") and si.vaapi_device:
         venc = {"h264": "h264_vaapi", "hevc": "hevc_vaapi"}.get(codec)
         if venc and venc in si.encoders:
             qp = [20, 23, 26, 30][qi]
@@ -1190,6 +1220,15 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
         die("No Wayland output detected to record. Run 'turborec targets' to list "
             "outputs, then pass --monitor <name> (or check that swaymsg/wlr-randr works).")
     codec, cparams, kind, drm = wf_codec(si, spec, quiet=preview)
+    # Output-resolution scaling (wf-recorder -F runs an ffmpeg filter chain).
+    # The software scale chain can't feed a VAAPI encoder's hw frames, so when
+    # scaling is requested on a VAAPI pick, drop to the software encoder.
+    scale = _scale_chain(spec.resolution)
+    if scale and kind == "vaapi":
+        if not preview:
+            warn("Scaled output resolution is not supported with VAAPI on Wayland; "
+                 "using the software encoder for this recording.")
+        codec, cparams, kind, drm = wf_codec(si, spec, quiet=True, force_software=True)
     container = spec.container or "mkv"
     ts = timestamp()
     out_path = os.path.join(out_dir, f"{spec.mode}_{ts}.{container}")
@@ -1204,6 +1243,8 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
             c += ["-d", drm]
         if wl_geom:
             c += ["-g", wl_geom]
+        if scale:
+            c += ["-F", scale]       # wf-recorder appends fps=N to this chain itself
         if audio_dev != "__none__":
             c += [f"--audio={audio_dev}"] if audio_dev else ["--audio"]
             c += ["-C", acodec]      # honor the chosen audio codec (flac/aac/opus)
@@ -1560,7 +1601,7 @@ MODES = (
 # maps to the matching argparse dest; values become argparse defaults so an
 # explicit CLI flag always wins.
 _RC_KEYS = (
-    "mode", "quality", "codec", "fps", "out", "region", "audio_rate",
+    "mode", "quality", "codec", "fps", "resolution", "out", "region", "audio_rate",
     "audio_codec", "audio_channels", "container", "mic_device", "system_device", "software",
     "duration", "countdown", "open", "quiet", "ffmpeg",
 )
@@ -1701,6 +1742,7 @@ def cmd_record(args) -> int:
     mic, mon = _resolve_audio_devices(si, args)
     spec = RecordSpec(
         mode=args.mode, quality=args.quality, codec=args.codec, fps=args.fps,
+        resolution=args.resolution,
         region=args.region, out_dir=args.out or "", audio_rate=args.audio_rate,
         audio_codec=args.audio_codec, audio_channels=args.audio_channels, mic=mic, monitor=mon,
         force_software=args.software, backend=backend, container=args.container,
@@ -1860,6 +1902,9 @@ def build_parser(rc: Optional[dict] = None) -> argparse.ArgumentParser:
                    help="what to capture (default: video_both)")
     r.add_argument("-q", "--quality", choices=QUALITY_LEVELS, default=d("quality", "best"),
                    help="quality preset (default: best)")
+    r.add_argument("-R", "--resolution", choices=RESOLUTIONS, default=d("resolution", "native"),
+                   help="output resolution: native (default), 720p, 1080p, 1440p, 4k — "
+                        "scales the recording (upscale to 4k for YouTube's 4K tier)")
     r.add_argument("-c", "--codec", choices=("h264", "hevc", "av1"), default=d("codec", "h264"),
                    help="video codec (default: h264)")
     r.add_argument("-f", "--fps", type=int, default=d("fps", 60),
@@ -2202,6 +2247,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
 
     mode_var = tk.StringVar(value="video_both")
     quality_var = tk.StringVar(value="best")
+    res_var = tk.StringVar(value="native")
     codec_var = tk.StringVar(value="h264")
     fps_var = tk.StringVar(value="60")
     acodec_var = tk.StringVar(value="flac")
@@ -2272,6 +2318,12 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     label(grid, "FPS", fg=C["muted"]).grid(row=0, column=4, sticky="w", padx=(0, 8), pady=4)
     fps_cb = _combo(grid, fps_var, ("23", "24", "30", "48", "60", "120"))
     fps_cb.grid(row=0, column=5, sticky="ew", pady=4)
+    label(grid, "Output", fg=C["muted"]).grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
+    res_cb = _combo(grid, res_var, RESOLUTIONS)
+    res_cb.grid(row=1, column=1, sticky="ew", padx=(0, 14), pady=4)
+    res_hint = label(grid, "native = capture size · 4k best for YouTube",
+                     fg=C["faint"], font=F["hint"])
+    res_hint.grid(row=1, column=2, columnspan=4, sticky="w", pady=4)
 
     # encoder transparency chip
     enc_chip = label(inner, "", fg=C["muted"], font=F["chip"])
@@ -2565,7 +2617,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
 
         # video-only rows
         vid_state = "readonly" if is_video else "disabled"
-        for cb in (quality_cb, codec_cb, fps_cb):
+        for cb in (quality_cb, codec_cb, fps_cb, res_cb):
             cb.configure(state=vid_state)
         region_entry.configure(state=("normal" if is_video else "disabled"))
         region_hint.configure(
@@ -2634,6 +2686,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         spec = RecordSpec(
             mode=mode_var.get(),
             quality=quality_var.get(),
+            resolution=res_var.get(),
             codec=codec_var.get(),
             fps=fps,
             out_dir=out_var.get(),
@@ -3005,7 +3058,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     root.bind("<Escape>", _on_escape)
 
     # ---- wire traces (live preview + dependent state) ---------------------
-    for v in (mode_var, quality_var, codec_var, fps_var, acodec_var, achan_var,
+    for v in (mode_var, quality_var, res_var, codec_var, fps_var, acodec_var, achan_var,
               region_var, mic_var, mon_var, out_var, backend_var, source_var):
         v.trace_add("write", schedule_preview)
     for v in (mode_var, codec_var, acodec_var, backend_var):

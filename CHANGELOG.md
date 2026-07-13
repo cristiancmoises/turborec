@@ -5,6 +5,24 @@ All notable changes to Turbo Recorder are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] — 2026-07-12
+
+### Added
+- **Selectable output resolution (`-R/--resolution`)** — `native` (default),
+  `720p`, `1080p`, `1440p`, `4k`. The recording is scaled with high-quality
+  lanczos (aspect preserved, padded to the exact standard frame), so you can
+  **record true 4K videos** even from a 1080p/1200p screen. This matters for
+  YouTube: it picks its quality tier (and bitrate budget) from the uploaded
+  resolution — a native 1920×1200 capture can land at a low tier, while a 4K
+  upload gets the high-bitrate 4K pipeline. Works on every backend: ffmpeg
+  (X11/macOS/Windows; scaling runs before any NVENC/VAAPI/QSV hwupload) and
+  Wayland (`wf-recorder -F`). Available in the CLI, the GUI (**Output** dropdown),
+  and the JSON config (`"resolution": "4k"`).
+
+### Notes
+- On Wayland, choosing a scaled resolution with a VAAPI encoder falls back to the
+  software encoder (the software scale chain can't feed VAAPI hardware frames).
+
 ## [3.1.0] — 2026-07-08
 
 ### Added
@@ -117,6 +135,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   audio (no more hardcoded device names), full-screen capture by default, and adds
   HEVC / codec / quality / audio-codec options.
 
+[3.2.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.2.0
 [3.1.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.1.0
 [3.0.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.0.0
 [2.2.0]: https://github.com/cristiancmoises/turborec/releases/tag/v2.2.0

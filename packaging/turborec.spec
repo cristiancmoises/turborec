@@ -1,5 +1,5 @@
 Name:           turborec
-Version:        3.1.0
+Version:        3.2.0
 Release:        1%{?dist}
 Summary:        State-of-the-art hardware-accelerated screen and audio recorder
 
@@ -86,7 +86,7 @@ update-desktop-database &>/dev/null || :
 gtk-update-icon-cache %{_datadir}/icons/hicolor &>/dev/null || :
 
 %changelog
-* Sat Jun 13 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.1.0-1
+* Sat Jun 13 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.2.0-1
 - Initial RPM packaging of Turbo Recorder.
 - Installs the turborec (Python CLI/GUI) and turborecorder (Bash CLI) front-ends.
 - Ships desktop entry, scalable SVG icon, and generated 256x256 PNG icon.

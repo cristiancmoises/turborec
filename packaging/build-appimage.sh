@@ -2,7 +2,7 @@
 # =============================================================================
 #  build-appimage.sh — package Turbo Recorder as a relocatable AppImage
 #
-#  Output: dist/Turbo_Recorder-3.1.0-x86_64.AppImage
+#  Output: dist/Turbo_Recorder-3.2.0-x86_64.AppImage
 #
 #  WHAT THIS PRODUCES
 #  ------------------
@@ -32,7 +32,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 APP_NAME="turborec"
 APP_PRETTY="Turbo Recorder"
-VERSION="3.1.0"
+VERSION="3.2.0"
 MAINTAINER="Cristian Cezar Moises <ethicalhacker@riseup.net>"
 HOMEPAGE="https://github.com/cristiancmoises/turborec"
 LICENSE="GPL-3.0"
