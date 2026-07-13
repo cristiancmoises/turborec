@@ -37,7 +37,7 @@ from datetime import datetime
 from typing import Optional
 
 APP_NAME = "Turbo Recorder"
-VERSION = "3.5.0"
+VERSION = "3.6.0"
 
 # ---------------------------------------------------------------------------
 # Small terminal helpers
@@ -1729,7 +1729,11 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
     acodec = {"flac": "flac", "aac": "aac", "opus": "libopus"}.get(spec.audio_codec, "flac")
 
     def wf_cmd(target_file: str, audio_dev: Optional[str] = "__none__") -> list[str]:
-        c = [wf, "-o", output, "-c", codec, "-r", str(spec.fps), "-x", "yuv420p"]
+        # -D (no-damage) captures at a constant framerate so wf-recorder always
+        # polls its stop flag and finalizes cleanly on stop — even when the screen
+        # is static (without it a still screen can hang the stop until SIGKILL,
+        # which truncates the file). Also gives correct-speed playback.
+        c = [wf, "-o", output, "-D", "-c", codec, "-r", str(spec.fps), "-x", "yuv420p"]
         for p in cparams:
             c += ["-p", p]
         if kind == "vaapi" and drm:

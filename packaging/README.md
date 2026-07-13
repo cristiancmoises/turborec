@@ -18,7 +18,7 @@ literal. The GitHub Actions release workflow builds the Linux artifacts on
   `uninstall.sh` honouring `PREFIX` (default `/usr/local`) and `DESTDIR`:
 
   ```sh
-  tar xzf turborec-3.5.0.tar.gz && cd turborec-3.5.0
+  tar xzf turborec-3.6.0.tar.gz && cd turborec-3.6.0
   sudo ./install.sh                  # → /usr/local
   PREFIX="$HOME/.local" ./install.sh # per-user
   ```
@@ -26,7 +26,7 @@ literal. The GitHub Actions release workflow builds the Linux artifacts on
 - **`build-freebsd-pkg.sh`** → `dist/turborec-<version>.pkg`. Must run on FreeBSD
   (uses `pkg create`). Stages the tree under `${PREFIX}`, generates a plist +
   `+MANIFEST`, and emits a package installable with
-  `pkg add ./turborec-3.5.0.pkg`. Runtime prerequisites (`python3`, `ffmpeg`,
+  `pkg add ./turborec-3.6.0.pkg`. Runtime prerequisites (`python3`, `ffmpeg`,
   optional `wf-recorder`) are documented in the package description rather than
   declared as hard deps, so the file installs cleanly on any FreeBSD release
   (`pkg install python3 ffmpeg`).
@@ -42,10 +42,10 @@ that same set to the Forgejo and Codeberg releases, run:
 # downloads the tag's assets from the GitHub release, then attaches them to the
 # matching Forgejo + Codeberg releases (creating the release if needed)
 FJTOKEN=<forgejo-token> CBTOKEN=<codeberg-token> \
-    packaging/publish-release.sh v3.5.0
+    packaging/publish-release.sh v3.6.0
 
 # or attach files from a local directory instead of downloading
-FJTOKEN=… CBTOKEN=… packaging/publish-release.sh v3.5.0 dist/
+FJTOKEN=… CBTOKEN=… packaging/publish-release.sh v3.6.0 dist/
 ```
 
 Tokens are read only from the environment; the script is idempotent (it reuses an
@@ -85,7 +85,7 @@ The script:
    - `README.md`               -> `/usr/share/doc/turborec/README.md`
 2. Builds the control tree (`control` with computed `Installed-Size`,
    `md5sums`, `postinst`, `postrm`).
-3. Emits `dist/turborec_3.5.0_all.deb`.
+3. Emits `dist/turborec_3.6.0_all.deb`.
 
 ### dpkg-deb vs. portable mode
 
@@ -110,8 +110,8 @@ On RPM distributions the equivalent is `python3-tkinter`.
 
 ```bash
 # inspect members and metadata without installing
-ar t dist/turborec_3.5.0_all.deb
-mkdir -p /tmp/deb && ar x dist/turborec_3.5.0_all.deb --output /tmp/deb
+ar t dist/turborec_3.6.0_all.deb
+mkdir -p /tmp/deb && ar x dist/turborec_3.6.0_all.deb --output /tmp/deb
 tar -tvf /tmp/deb/data.tar.xz
 tar -xOf /tmp/deb/control.tar.gz ./control
 ```

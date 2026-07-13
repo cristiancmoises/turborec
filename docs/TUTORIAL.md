@@ -43,14 +43,14 @@ Hyprland, river, …) screen capture additionally needs
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.5.0_all.deb        # pulls ffmpeg, python3, python3-tk
+sudo apt install ./turborec_3.6.0_all.deb        # pulls ffmpeg, python3, python3-tk
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.5.0-1.noarch.rpm   # pulls ffmpeg, python3, python3-tkinter
+sudo dnf install ./turborec-3.6.0-1.noarch.rpm   # pulls ffmpeg, python3, python3-tkinter
 
 # Any Linux — portable AppImage (uses your host ffmpeg/python/tk)
-chmod +x Turbo_Recorder-3.5.0-x86_64.AppImage
-./Turbo_Recorder-3.5.0-x86_64.AppImage
+chmod +x Turbo_Recorder-3.6.0-x86_64.AppImage
+./Turbo_Recorder-3.6.0-x86_64.AppImage
 ```
 
 Get these from the project **Releases** page, or build them yourself with the
@@ -64,11 +64,11 @@ Python plus a POSIX shell front-end, so one archive runs everywhere.
 
 ```sh
 # FreeBSD — native package
-pkg add ./turborec-3.5.0.pkg
+pkg add ./turborec-3.6.0.pkg
 pkg install python3 ffmpeg          # runtime prerequisites (wf-recorder for Wayland)
 
 # Any Unix — portable tarball (installs to /usr/local by default)
-tar xzf turborec-3.5.0.tar.gz && cd turborec-3.5.0
+tar xzf turborec-3.6.0.tar.gz && cd turborec-3.6.0
 sudo ./install.sh                   # or: PREFIX="$HOME/.local" ./install.sh
 ```
 
@@ -101,7 +101,7 @@ guix shell   -f guix.scm -- turborec detect   # run it ad-hoc
 
 # Or the prebuilt relocatable pack from the Releases page (no Guix daemon needed
 # to run it; unpacks the /gnu/store closure + a /bin/turborec launcher)
-tar xf turborec-3.5.0-guix-x86_64.tar.gz -C /
+tar xf turborec-3.6.0-guix-x86_64.tar.gz -C /
 /bin/turborec record -m video_both
 ```
 
@@ -150,7 +150,7 @@ It is **fully self-contained** — Python, Tk **and FFmpeg are bundled inside th
 admin rights needed:
 
 ```powershell
-Turbo_Recorder-3.5.0-windows-x64.exe gui        # or: detect / record / --help
+Turbo_Recorder-3.6.0-windows-x64.exe gui        # or: detect / record / --help
 ```
 
 (The bundle carries its own FFmpeg; if you'd rather use a system FFmpeg, put it

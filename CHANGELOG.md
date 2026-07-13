@@ -5,6 +5,24 @@ All notable changes to Turbo Recorder are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] — 2026-07-13
+
+### Fixed
+- **`turborecorder` now records on Wayland.** The Bash recorder was X11-only
+  (`x11grab`), so on a Wayland/wlroots session it captured nothing and **saved no
+  file**. It now auto-detects the session and captures with **`wf-recorder`** on
+  Wayland — video-only, video + system, video + mic, and video + **mixed
+  mic&system** (via a PipeWire combined source, cleaned up on exit) — with clean
+  Ctrl-C stop (signal forwarded to wf-recorder so the file is finalized).
+- **Static-screen recordings no longer hang on stop.** Both recorders now pass
+  `-D` (no-damage / constant framerate) to `wf-recorder`, so it always polls its
+  stop flag and finalizes cleanly even when the screen isn't changing (previously
+  a still screen could stall the stop until a `SIGKILL` truncated the file).
+
+### Changed
+- `turborecorder` prints the detected session and capture backend, and selects a
+  `wf-recorder`-compatible encoder on Wayland (VAAPI on Intel/AMD, else software).
+
 ## [3.5.0] — 2026-07-13
 
 ### Added
@@ -237,6 +255,7 @@ all confirmed findings fixed:
   audio (no more hardcoded device names), full-screen capture by default, and adds
   HEVC / codec / quality / audio-codec options.
 
+[3.6.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.6.0
 [3.5.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.5.0
 [3.4.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.4.0
 [3.3.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.3.0

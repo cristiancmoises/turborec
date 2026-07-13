@@ -43,7 +43,7 @@ Two front-ends, one engine:
 | Tool | Platforms | Interface |
 |------|-----------|-----------|
 | **`turborec`** | Linux · macOS · Windows | Cross-platform **CLI + GUI** (Python, no extra deps) |
-| **`turborecorder`** | Linux (X11) | Fast, dependency-light **Bash CLI** |
+| **`turborecorder`** | Linux (X11 **&amp; Wayland**) | Fast, dependency-light **Bash CLI** |
 
 ## Documentation
 
@@ -119,7 +119,7 @@ free/open-source building blocks — no reinventing the wheel:
 - **Hardware encoders** — NVIDIA **NVENC**, Intel **Quick Sync**, **VAAPI**, AMD **AMF**, Apple **VideoToolbox**, with automatic `libx264`/`libx265` fallback.
 - **PipeWire / PulseAudio** — mic + system-audio capture and the synced combined source; **v4l2 / AVFoundation / DirectShow** for the webcam.
 - **RNNoise-style denoise** via FFmpeg **`afftdn`** — the same problem NoiseTorch solves, without the extra daemon.
-- **Python standard library + Tk** only — no pip dependencies. Two front-ends over one engine: the cross-platform `turborec` (CLI + GUI) and the lightweight `turborecorder` (Bash/X11).
+- **Python standard library + Tk** only — no pip dependencies. Two front-ends over one engine: the cross-platform `turborec` (CLI + GUI) and the lightweight `turborecorder` (Bash, X11 + Wayland).
 
 ### How it boosts your productivity
 
@@ -143,28 +143,28 @@ free/open-source building blocks — no reinventing the wheel:
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.5.0_all.deb
+sudo apt install ./turborec_3.6.0_all.deb
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.5.0-1.noarch.rpm
+sudo dnf install ./turborec-3.6.0-1.noarch.rpm
 
 # Any Linux — portable, no install
-chmod +x Turbo_Recorder-3.5.0-x86_64.AppImage
-./Turbo_Recorder-3.5.0-x86_64.AppImage
+chmod +x Turbo_Recorder-3.6.0-x86_64.AppImage
+./Turbo_Recorder-3.6.0-x86_64.AppImage
 
 # FreeBSD — native package
-pkg add ./turborec-3.5.0.pkg
+pkg add ./turborec-3.6.0.pkg
 
 # Any Unix (BSD / illumos / Linux / macOS) — portable tarball
-tar xzf turborec-3.5.0.tar.gz && cd turborec-3.5.0
+tar xzf turborec-3.6.0.tar.gz && cd turborec-3.6.0
 sudo ./install.sh            # installs to /usr/local (PREFIX=… to change)
 
 # GNU Guix — relocatable pack (any distro, unprivileged) or the package file
-tar xf turborec-3.5.0-guix-x86_64.tar.gz -C /   # unpacks /gnu/store + /bin
+tar xf turborec-3.6.0-guix-x86_64.tar.gz -C /   # unpacks /gnu/store + /bin
 guix package -f guix.scm                        # or install from the repo
 
 # Windows — self-contained app: Python, Tk AND ffmpeg bundled, nothing to install
-Turbo_Recorder-3.5.0-windows-x64.exe gui
+Turbo_Recorder-3.6.0-windows-x64.exe gui
 ```
 
 Packages install `turborec` and `turborecorder` to `/usr/bin` (`/usr/local/bin`
@@ -187,11 +187,11 @@ python3 turborec.py gui      # or: detect / record / devices
 **Build the packages yourself** — scripts live in [`packaging/`](packaging/):
 
 ```bash
-packaging/build-deb.sh        # → dist/turborec_3.5.0_all.deb  (works even without dpkg-deb)
-packaging/build-rpm.sh        # → dist/turborec-3.5.0-1.noarch.rpm
-packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.5.0-x86_64.AppImage
-packaging/build-tarball.sh    # → dist/turborec-3.5.0.tar.gz   (portable; any Unix incl. the BSDs)
-packaging/build-freebsd-pkg.sh # → dist/turborec-3.5.0.pkg      (run on FreeBSD; pkg add)
+packaging/build-deb.sh        # → dist/turborec_3.6.0_all.deb  (works even without dpkg-deb)
+packaging/build-rpm.sh        # → dist/turborec-3.6.0-1.noarch.rpm
+packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.6.0-x86_64.AppImage
+packaging/build-tarball.sh    # → dist/turborec-3.6.0.tar.gz   (portable; any Unix incl. the BSDs)
+packaging/build-freebsd-pkg.sh # → dist/turborec-3.6.0.pkg      (run on FreeBSD; pkg add)
 guix build -f guix.scm        # GNU Guix package (guix pack -RR … for a tarball)
 ```
 
@@ -384,10 +384,14 @@ it uses FFmpeg's adaptive `afftdn` denoiser plus a high-pass to remove low rumbl
 
 ## Linux Bash recorder — `turborecorder`
 
-A fast, dependency-light path for X11 systems.
+A fast, dependency-light recorder for both **X11 and Wayland**. It auto-detects
+the session: on X11 it captures with `x11grab`; on a **Wayland/wlroots** desktop
+(sway, Hyprland, river) it captures with `wf-recorder` — including video + system,
+video + mic, and video + **mixed mic&system** (via a PipeWire combined source).
 
-**Requirements:** FFmpeg (with VAAPI and/or NVENC), `xrandr`/`xdpyinfo`,
-PulseAudio or PipeWire (`pactl`).
+**Requirements:** FFmpeg (with VAAPI and/or NVENC), PulseAudio or PipeWire
+(`pactl`); on **X11** also `xrandr`/`xdpyinfo`; on **Wayland** also `wf-recorder`
+and `wlr-randr` (or `swaymsg`).
 
 ### Install
 

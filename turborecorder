@@ -298,6 +298,99 @@ video_with_both(){
 }
 
 # ---------------------------
+# Wayland (wlroots) capture via wf-recorder
+#   x11grab only sees XWayland on a Wayland session, so real desktop capture
+#   needs wf-recorder. Sets WF_CODEC / WF_PARAMS / WF_DRM / WF_ACODEC / WF_BASE.
+# ---------------------------
+is_wayland(){ [ "${XDG_SESSION_TYPE:-}" = "wayland" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }
+
+detect_wl_output(){
+  local o=""
+  if have wlr-randr; then
+    o="$(wlr-randr 2>/dev/null | awk 'NF && $0 !~ /^[[:space:]]/ {print $1; exit}')"
+  fi
+  if [ -z "$o" ] && have swaymsg; then
+    o="$(swaymsg -t get_outputs 2>/dev/null | grep -oE '"name": *"[^"]+"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
+  fi
+  printf '%s' "$o"
+}
+
+# wf-recorder can't use NVENC — VAAPI on Intel/AMD, else software libx264/x265.
+select_wf_encoder(){
+  local qi; qi="$(quality_index)"
+  WF_CODEC="libx264"; WF_PARAMS=(); WF_DRM=""
+  [ "$CODEC" = "hevc" ] && WF_CODEC="libx265"
+  if [ "$FORCE_SOFTWARE" != "1" ] && [ -n "$VAAPI_DEVICE" ] \
+     && { [ "$GPU_VENDOR" = "intel" ] || [ "$GPU_VENDOR" = "amd" ]; } \
+     && ffmpeg_has_encoder "${CODEC}_vaapi"; then
+    WF_CODEC="${CODEC}_vaapi"; WF_DRM="$VAAPI_DEVICE"
+    WF_PARAMS=( -p "qp=$(pick_from "$qi" 20 24 27 31)" )
+  else
+    WF_PARAMS=( -p "preset=$(pick_from "$qi" slow medium fast veryfast)" \
+                -p "crf=$(pick_from "$qi" 18 21 24 27)" )
+  fi
+  case "$AUDIO_CODEC" in
+    opus) WF_ACODEC="libopus" ;; aac) WF_ACODEC="aac" ;; *) WF_ACODEC="flac" ;;
+  esac
+}
+
+build_wf_base(){
+  # -D (no-damage) captures at a constant framerate so wf-recorder always polls
+  # its stop flag and exits cleanly on Ctrl-C even when the screen is static.
+  WF_BASE=( -o "$WL_OUTPUT" -D -c "$WF_CODEC" -r "$FPS" -x yuv420p "${WF_PARAMS[@]}" )
+  if [ -n "$WF_DRM" ]; then WF_BASE+=( -d "$WF_DRM" ); fi
+  return 0
+}
+
+# Run wf-recorder in the background and forward Ctrl-C to it so it finalizes the
+# file cleanly, whether the signal reaches the whole process group (a terminal
+# Ctrl-C) or just this script (e.g. `kill -INT`). Waits for it to fully exit.
+run_wf(){
+  local pid
+  wf-recorder "$@" & pid=$!
+  trap 'kill -INT "$pid" 2>/dev/null || true' INT TERM
+  while kill -0 "$pid" 2>/dev/null; do wait "$pid" 2>/dev/null || true; done
+  trap - INT TERM
+  return 0
+}
+
+wl_video_noaudio(){
+  ensure_dir "$VID_DIR"; local out; out="${VID_DIR}/video_noaudio_$(timestamp).mkv"
+  printf 'Recording (Wayland) -> %s   [Ctrl-C to stop]\n' "$out" >&2
+  run_wf "${WF_BASE[@]}" -f "$out"
+  printf 'Saved: %s\n' "$out" >&2
+}
+
+wl_video_single_audio(){ # $1 = pulse source, $2 = output file
+  ensure_dir "$VID_DIR"
+  printf 'Recording (Wayland) -> %s   [Ctrl-C to stop]\n' "$2" >&2
+  run_wf "${WF_BASE[@]}" --audio="$1" -C "$WF_ACODEC" -f "$2"
+  printf 'Saved: %s\n' "$2" >&2
+}
+
+wl_video_both(){
+  ensure_dir "$VID_DIR"; local out; out="${VID_DIR}/video_both_$(timestamp).mkv"
+  # One wf-recorder can capture only a single audio source, so mix mic + system
+  # into a PipeWire combined sink and record its monitor.
+  local sink="turborec_mix_$$" m_sink m_l1="" m_l2=""
+  m_sink="$(pactl load-module module-null-sink sink_name="$sink" \
+            sink_properties=device.description="$sink" 2>/dev/null)" \
+    || die "could not create the combined audio sink (need PipeWire/PulseAudio)."
+  [ -n "$MONITOR_SOURCE" ] && m_l1="$(pactl load-module module-loopback source="$MONITOR_SOURCE" sink="$sink" latency_msec=60 2>/dev/null || true)"
+  [ -n "$MIC_SOURCE" ]     && m_l2="$(pactl load-module module-loopback source="$MIC_SOURCE" sink="$sink" latency_msec=60 2>/dev/null || true)"
+  cleanup_mix(){
+    [ -n "$m_l2" ] && { pactl unload-module "$m_l2" 2>/dev/null || true; m_l2=""; }
+    [ -n "$m_l1" ] && { pactl unload-module "$m_l1" 2>/dev/null || true; m_l1=""; }
+    [ -n "$m_sink" ] && { pactl unload-module "$m_sink" 2>/dev/null || true; m_sink=""; }
+  }
+  trap 'cleanup_mix' EXIT
+  printf 'Recording (Wayland, mic+system) -> %s   [Ctrl-C to stop]\n' "$out" >&2
+  run_wf "${WF_BASE[@]}" --audio="${sink}.monitor" -C "$WF_ACODEC" -f "$out"
+  cleanup_mix; trap - EXIT
+  printf 'Saved: %s\n' "$out" >&2
+}
+
+# ---------------------------
 # CLI
 # ---------------------------
 print_help(){
@@ -359,9 +452,24 @@ build_x11_args
 autodetect_sources
 detect_mic_channel "$MIC_SOURCE"
 
+# On a Wayland session, x11grab only captures XWayland (nothing on a wlroots
+# desktop), so route video through wf-recorder instead.
+BACKEND="x11grab"
+if is_wayland; then
+  BACKEND="wf-recorder"
+  have wf-recorder || die "Wayland session detected but 'wf-recorder' is not installed.
+  Install:  guix install wf-recorder  ·  sudo apt install wf-recorder  ·  sudo dnf install wf-recorder"
+  WL_OUTPUT="$(detect_wl_output)"
+  [ -n "$WL_OUTPUT" ] || die "Wayland session but no output detected (install wlr-randr or swaymsg)."
+  select_wf_encoder
+  build_wf_base
+fi
+
 printf '%s\n' \
-  "Turbo Recorder — CPU:${CPU_VENDOR} GPU:${GPU_VENDOR} encoder:${VENCODER} (${ENC_KIND}, ${QUALITY})" \
-  "Capture: ${CAPTURE_RES} @ ${FPS}fps  (no upscaling)" \
+  "Turbo Recorder — CPU:${CPU_VENDOR} GPU:${GPU_VENDOR} · session:$( is_wayland && echo wayland || echo x11 ) · backend:${BACKEND}" \
+  "$( [ "$BACKEND" = wf-recorder ] \
+        && echo "Encoder: ${WF_CODEC} (${QUALITY}) · output:${WL_OUTPUT} @ ${FPS}fps" \
+        || echo "Encoder: ${VENCODER} (${ENC_KIND}, ${QUALITY}) · ${CAPTURE_RES} @ ${FPS}fps" )" \
   "Monitor: ${MONITOR_SOURCE:-<none>}" \
   "Mic:     ${MIC_SOURCE:-<none>}  PAN:${PAN}" >&2
 
@@ -381,10 +489,10 @@ case "$CHOICE" in
   1) audio_internal_only ;;
   2) audio_microphone_only ;;
   3) audio_internal_and_mic ;;
-  4) video_without_audio ;;
-  5) video_with_internal_audio ;;
-  6) video_with_microphone ;;
-  7) video_with_both ;;
+  4) if [ "$BACKEND" = wf-recorder ]; then wl_video_noaudio; else video_without_audio; fi ;;
+  5) if [ "$BACKEND" = wf-recorder ]; then wl_video_single_audio "$MONITOR_SOURCE" "${VID_DIR}/video_internal_$(timestamp).mkv"; else video_with_internal_audio; fi ;;
+  6) if [ "$BACKEND" = wf-recorder ]; then wl_video_single_audio "$MIC_SOURCE" "${VID_DIR}/video_mic_$(timestamp).mkv"; else video_with_microphone; fi ;;
+  7) if [ "$BACKEND" = wf-recorder ]; then wl_video_both; else video_with_both; fi ;;
   8) echo "Bye" >&2; exit 0 ;;
   *) die "Invalid choice" ;;
 esac
