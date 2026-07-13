@@ -111,7 +111,9 @@ jobs:
           pyinstaller --onefile --name turborec \
             --collect-submodules tkinter --hidden-import tkinter \
             turborec.py
-          VER=$(python -c "import re,sys;print(re.search(r'VERSION = \"(.*)\"',open('turborec.py').read()).group(1))")
+          # Byte-safe version read (turborec.py has UTF-8 glyphs that Windows'
+          # default cp1252 text mode can't decode).
+          VER=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' turborec.py | head -1)
           mkdir -p out
           cp dist/turborec.exe "out/Turbo_Recorder-${VER}-windows-x64.exe"
           ls -l out
