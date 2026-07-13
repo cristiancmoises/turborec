@@ -2,7 +2,7 @@
 # =============================================================================
 #  build-appimage.sh — package Turbo Recorder as a relocatable AppImage
 #
-#  Output: dist/Turbo_Recorder-3.3.0-x86_64.AppImage
+#  Output: dist/Turbo_Recorder-3.4.0-x86_64.AppImage
 #
 #  WHAT THIS PRODUCES
 #  ------------------
@@ -32,7 +32,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 APP_NAME="turborec"
 APP_PRETTY="Turbo Recorder"
-VERSION="3.3.0"
+VERSION="3.4.0"
 MAINTAINER="Cristian Cezar Moises <ethicalhacker@riseup.net>"
 HOMEPAGE="https://github.com/cristiancmoises/turborec"
 LICENSE="GPL-3.0"
@@ -59,14 +59,18 @@ SRC_DESKTOP="${SCRIPT_DIR}/${APP_NAME}.desktop"
 SRC_SVG="${SCRIPT_DIR}/${APP_NAME}.svg"
 SRC_APPRUN="${SCRIPT_DIR}/AppRun"
 
-# appimagetool (release tag is pinned so the URL is reproducible).
-APPIMAGETOOL_TAG="continuous"
+# appimagetool: pinned to an immutable VERSIONED release (not the rolling
+# "continuous" tag) so both the URL and the bytes are reproducible.
+APPIMAGETOOL_TAG="1.9.1"
 APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_TAG}/appimagetool-${ARCH}.AppImage"
-# NOTE on integrity: appimagetool's "continuous" build is rolling, so a single
-# hard-coded SHA-256 would go stale. We therefore (a) honor an externally
-# supplied APPIMAGETOOL binary, (b) print the SHA-256 of whatever we download so
-# it can be recorded/audited, and (c) let you pin one via APPIMAGETOOL_SHA256.
-APPIMAGETOOL_SHA256="${APPIMAGETOOL_SHA256:-}"
+# Integrity: the known-good SHA-256 for the x86_64 1.9.1 build is enforced by
+# default (the download is aborted on mismatch). Override APPIMAGETOOL_SHA256 for
+# a different arch/pin, or supply your own APPIMAGETOOL binary to skip the fetch.
+case "${ARCH}" in
+    x86_64) _appimagetool_default_sha="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0" ;;
+    *)      _appimagetool_default_sha="" ;;
+esac
+APPIMAGETOOL_SHA256="${APPIMAGETOOL_SHA256:-${_appimagetool_default_sha}}"
 
 # ---------------------------------------------------------------------------
 # Helpers

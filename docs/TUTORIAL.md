@@ -43,14 +43,14 @@ Hyprland, river, …) screen capture additionally needs
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.3.0_all.deb        # pulls ffmpeg, python3, python3-tk
+sudo apt install ./turborec_3.4.0_all.deb        # pulls ffmpeg, python3, python3-tk
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.3.0-1.noarch.rpm   # pulls ffmpeg, python3, python3-tkinter
+sudo dnf install ./turborec-3.4.0-1.noarch.rpm   # pulls ffmpeg, python3, python3-tkinter
 
 # Any Linux — portable AppImage (uses your host ffmpeg/python/tk)
-chmod +x Turbo_Recorder-3.3.0-x86_64.AppImage
-./Turbo_Recorder-3.3.0-x86_64.AppImage
+chmod +x Turbo_Recorder-3.4.0-x86_64.AppImage
+./Turbo_Recorder-3.4.0-x86_64.AppImage
 ```
 
 Get these from the project **Releases** page, or build them yourself with the
@@ -64,11 +64,11 @@ Python plus a POSIX shell front-end, so one archive runs everywhere.
 
 ```sh
 # FreeBSD — native package
-pkg add ./turborec-3.3.0.pkg
+pkg add ./turborec-3.4.0.pkg
 pkg install python3 ffmpeg          # runtime prerequisites (wf-recorder for Wayland)
 
 # Any Unix — portable tarball (installs to /usr/local by default)
-tar xzf turborec-3.3.0.tar.gz && cd turborec-3.3.0
+tar xzf turborec-3.4.0.tar.gz && cd turborec-3.4.0
 sudo ./install.sh                   # or: PREFIX="$HOME/.local" ./install.sh
 ```
 
@@ -101,7 +101,7 @@ guix shell   -f guix.scm -- turborec detect   # run it ad-hoc
 
 # Or the prebuilt relocatable pack from the Releases page (no Guix daemon needed
 # to run it; unpacks the /gnu/store closure + a /bin/turborec launcher)
-tar xf turborec-3.3.0-guix-x86_64.tar.gz -C /
+tar xf turborec-3.4.0-guix-x86_64.tar.gz -C /
 /bin/turborec record -m video_both
 ```
 
@@ -144,17 +144,23 @@ For system-audio capture, add a loopback device such as
 ### Windows
 
 Grab the single-file **`Turbo_Recorder-<version>-windows-x64.exe`** from the
-[Releases](https://github.com/cristiancmoises/turborec/releases) page — Python
-and Tk are bundled, so nothing else to install except **FFmpeg** on your `PATH`
-([download](https://ffmpeg.org/download.html), or `winget install Gyan.FFmpeg`):
+[Releases](https://github.com/cristiancmoises/turborec/releases) page and run it.
+It is **fully self-contained** — Python, Tk **and FFmpeg are bundled inside the
+`.exe`** — so there is nothing else to install, no PATH to configure, and no
+admin rights needed:
 
 ```powershell
-Turbo_Recorder-3.3.0-windows-x64.exe gui        # or: detect / record / --help
+Turbo_Recorder-3.4.0-windows-x64.exe gui        # or: detect / record / --help
 ```
 
+(The bundle carries its own FFmpeg; if you'd rather use a system FFmpeg, put it
+on `PATH` and pass `--ffmpeg C:\path\to\ffmpeg.exe`.) For system-audio capture,
+enable a loopback such as "Stereo Mix" or install
+[VB-CABLE](https://vb-audio.com/Cable/).
+
 Prefer running from source? Install [Python](https://www.python.org/downloads/)
-(it bundles Tk) + FFmpeg and run `python turborec.py gui`. For system audio, use
-a loopback such as "Stereo Mix" or [VB-CABLE](https://vb-audio.com/Cable/).
+(it bundles Tk) + [FFmpeg](https://ffmpeg.org/download.html) and run
+`python turborec.py gui`.
 
 ---
 

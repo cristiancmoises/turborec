@@ -30,13 +30,14 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Optional
 
 APP_NAME = "Turbo Recorder"
-VERSION = "3.3.0"
+VERSION = "3.4.0"
 
 # ---------------------------------------------------------------------------
 # Small terminal helpers
@@ -159,6 +160,30 @@ class SystemInfo:
 # ---------------------------------------------------------------------------
 # FFmpeg discovery
 # ---------------------------------------------------------------------------
+def _use_bundled_binaries() -> None:
+    """When running as a frozen (PyInstaller) build, expose the binaries shipped
+    inside the bundle — e.g. ffmpeg.exe on Windows — so the app is fully
+    self-contained and needs no separately-installed ffmpeg.
+
+    Security: for a --onefile build the bundled binaries are extracted into the
+    private, per-process ``sys._MEIPASS`` dir; that is the ONLY directory added.
+    We deliberately do NOT add ``dirname(sys.executable)`` for onefile builds —
+    that is wherever the portable .exe was dropped (often the Downloads folder),
+    and putting it on PATH would let an unrelated planted binary (e.g. a rogue
+    ``nvidia-smi.exe``) be resolved from an untrusted location. For a onedir
+    build there is no _MEIPASS and the binaries genuinely sit next to the .exe.
+    In both cases the directory is added only if it actually contains our bundled
+    ffmpeg, so no unrelated directory is ever placed on PATH.
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    bundle_dir = getattr(sys, "_MEIPASS", None) \
+        or os.path.dirname(os.path.abspath(sys.executable))
+    ffname = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    if os.path.isdir(bundle_dir) and os.path.isfile(os.path.join(bundle_dir, ffname)):
+        os.environ["PATH"] = bundle_dir + os.pathsep + os.environ.get("PATH", "")
+
+
 def find_ffmpeg() -> Optional[str]:
     return shutil.which("ffmpeg")
 
@@ -1349,6 +1374,35 @@ def _redact_cmd(argv: list, secret: Optional[str]) -> str:
     return _mask_secret(" ".join(_shquote(c) for c in argv), secret)
 
 
+def _pump_masked_stderr(stream, secret: Optional[str]) -> None:
+    """Forward a child's stderr to ours with `secret` masked. ffmpeg prints the
+    output URL (which for a stream contains the key) at info level, and error
+    lines echo it even at error level; without this the key would appear in
+    cleartext in the terminal/scrollback/redirected logs, defeating the
+    redaction applied to everything the app prints itself. We split on both '\\n'
+    and '\\r' (so '-stats' progress still renders live) and only ever emit whole
+    lines, so the secret — always contained within one line — is fully present
+    when _mask_secret runs and can never be split across a read boundary."""
+    buf = ""
+    try:
+        while True:
+            chunk = stream.read(256)
+            if not chunk:
+                break
+            buf += chunk.decode("utf-8", "replace")
+            parts = re.split(r"([\r\n])", buf)
+            buf = parts[-1]                 # keep the trailing incomplete segment
+            done = "".join(parts[:-1])
+            if done:
+                sys.stderr.write(_mask_secret(done, secret))
+                sys.stderr.flush()
+        if buf:
+            sys.stderr.write(_mask_secret(buf, secret))
+            sys.stderr.flush()
+    except Exception:
+        pass
+
+
 def _ffmpeg_audio_cmd(si: SystemInfo, spec: RecordSpec, devices: list, out_path: str) -> list[str]:
     """ffmpeg command capturing one or more audio sources (mixed) to out_path,
     applying the channel handling (--audio-channels) via _audio_src_filter."""
@@ -1484,8 +1538,13 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
     # user asks for channel handling (mono/left/right clone), route audio through
     # ffmpeg (which applies the pan) and mux it with the wf-recorder video.
     def ffmpeg_audio_plan(devices: list) -> RecordPlan:
-        atmp = os.path.join(out_dir, f".{spec.mode}_{ts}.audio.{_audio_ext(spec)}")
-        vtmp = os.path.join(out_dir, f".{spec.mode}_{ts}.video.mkv")
+        # Scratch/mux files go in a fresh private 0700 dir (not the user-chosen
+        # out_dir), so their predictable names can't be pre-planted as symlinks
+        # when out_dir is shared. Skip the mkdtemp for preview/dry-run builds so
+        # repeated GUI rebuilds don't orphan temp dirs (same guard as streaming).
+        sdir = out_dir if preview else tempfile.mkdtemp(prefix="turborec-mux.")
+        atmp = os.path.join(sdir, f"audio.{_audio_ext(spec)}")
+        vtmp = os.path.join(sdir, "video.mkv")
         mux = [si.ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
                "-i", vtmp, "-i", atmp, "-map", "0:v:0", "-map", "1:a:0",
                "-c", "copy", out_path]
@@ -1493,8 +1552,8 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
             out_path,
             [("wf-recorder (video)", wf_cmd(vtmp), "int"),
              ("ffmpeg (audio)", _ffmpeg_audio_cmd(si, spec, devices, atmp), "q")],
-            finalize=mux, cleanup=[vtmp, atmp], self_timed=False,
-            backend="wf-recorder+ffmpeg")
+            finalize=mux, cleanup=[vtmp, atmp] + ([] if preview else [sdir]),
+            self_timed=False, backend="wf-recorder+ffmpeg")
 
     devices = ([spec.monitor] if wants_sys else []) + ([spec.mic] if wants_mic else [])
     if _audio_pan(spec.audio_channels):
@@ -1579,7 +1638,14 @@ def record_plan(plan: "RecordPlan", dry_run: bool = False, countdown_secs: int =
     try:
         for _label, argv, method in plan.procs:
             stdin = subprocess.PIPE if method == "q" else subprocess.DEVNULL
-            running.append((subprocess.Popen(argv, stdin=stdin), method))
+            # For a live stream, capture the child's stderr and mask the key
+            # before echoing it — ffmpeg prints the RTMP URL at info/error level.
+            stderr = subprocess.PIPE if (plan.is_stream and plan.secret) else None
+            proc = subprocess.Popen(argv, stdin=stdin, stderr=stderr)
+            if stderr is not None:
+                threading.Thread(target=_pump_masked_stderr,
+                                 args=(proc.stderr, plan.secret), daemon=True).start()
+            running.append((proc, method))
     except OSError as e:
         for p, m in running:           # don't leak already-started processes
             _stop_proc(p, m)
@@ -1916,7 +1982,8 @@ def load_config(explicit: Optional[str] = None) -> dict:
         try:
             with open(path, "r", errors="replace") as fh:
                 data = json.load(fh)
-        except (OSError, ValueError) as e:
+        except (OSError, ValueError, RecursionError) as e:
+            # RecursionError: pathologically deep JSON. Honor "warn, never abort".
             warn(f"Ignoring config {path}: {e}")
             continue
         if not isinstance(data, dict):
@@ -3154,7 +3221,13 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         try:
             for _label, argv, method in plan.procs:
                 stdin = subprocess.PIPE if method == "q" else subprocess.DEVNULL
-                procs.append((subprocess.Popen(argv, stdin=stdin), method))
+                # Mask the stream key out of a live stream child's stderr.
+                stderr = subprocess.PIPE if (plan.is_stream and plan.secret) else None
+                proc = subprocess.Popen(argv, stdin=stdin, stderr=stderr)
+                if stderr is not None:
+                    threading.Thread(target=_pump_masked_stderr,
+                                     args=(proc.stderr, plan.secret), daemon=True).start()
+                procs.append((proc, method))
         except OSError as e:
             for p, _m in procs:
                 try:
@@ -3411,6 +3484,8 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    # Self-contained builds (Windows .exe) ship ffmpeg alongside the app.
+    _use_bundled_binaries()
     # First pass: discover --config without triggering subcommand validation,
     # so RC-file values can become argparse defaults on the real parser.
     pre = argparse.ArgumentParser(add_help=False)

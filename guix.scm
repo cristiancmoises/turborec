@@ -26,7 +26,7 @@
 (define turborec
   (package
     (name "turborec")
-    (version "3.3.0")
+    (version "3.4.0")
     (source (local-file %source-dir "turborec-checkout"
                         #:recursive? #t
                         #:select? (or (git-predicate %source-dir)

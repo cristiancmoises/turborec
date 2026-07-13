@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to build from and attach the .exe to (e.g. v3.3.0)
+        description: Release tag to build from and attach the .exe to (e.g. v3.4.0)
         required: true
-        default: v3.3.0
+        default: v3.4.0
 
 permissions:
   contents: write
@@ -31,13 +31,28 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Build a single-file .exe with PyInstaller
+      - name: Fetch + verify a pinned static FFmpeg to bundle
+        shell: bash
+        env:
+          FFMPEG_URL: https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-essentials_build.zip
+          FFMPEG_SHA256: db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec
+        run: |
+          set -eu
+          curl -L --retry 3 -o ffmpeg.zip "$FFMPEG_URL"
+          echo "${FFMPEG_SHA256}  ffmpeg.zip" | sha256sum -c -
+          7z x -y ffmpeg.zip >/dev/null
+          cp "$(find . -type f -name ffmpeg.exe  | head -1)" ffmpeg.exe
+          cp "$(find . -type f -name ffprobe.exe | head -1)" ffprobe.exe
+          ./ffmpeg.exe -version | head -1
+
+      - name: Build a self-contained .exe (ffmpeg bundled) with PyInstaller
         shell: bash
         run: |
           set -eu
-          python -m pip install --upgrade pip pyinstaller
+          python -m pip install --upgrade pip && python -m pip install "pyinstaller==6.21.0"
           pyinstaller --onefile --name turborec \
             --collect-submodules tkinter --hidden-import tkinter \
+            --add-binary "ffmpeg.exe;." --add-binary "ffprobe.exe;." \
             turborec.py
           # Byte-safe version read (turborec.py has UTF-8 glyphs that Windows'
           # default cp1252 text mode can't decode).
@@ -46,9 +61,12 @@ jobs:
           cp dist/turborec.exe "out/Turbo_Recorder-${VER}-windows-x64.exe"
           ls -l out
 
-      - name: Smoke-test the executable
+      - name: Smoke-test the executable (must find its bundled ffmpeg)
         shell: bash
-        run: ./dist/turborec.exe --version
+        run: |
+          set -eu
+          ./dist/turborec.exe --version
+          ./dist/turborec.exe detect | grep -i ffmpeg
 
       - name: Attach the .exe to the release
         uses: softprops/action-gh-release@v2

@@ -5,6 +5,43 @@ All notable changes to Turbo Recorder are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] — 2026-07-13
+
+### Added
+- **Zero-install, self-contained Windows app.** The Windows `.exe` now bundles
+  **FFmpeg** (plus Python and Tk) inside it, so users just download and run —
+  no Python, no separate FFmpeg, no `PATH` setup, no admin install. When frozen,
+  Turbo Recorder finds its bundled `ffmpeg.exe` automatically (a system FFmpeg on
+  `PATH`, or `--ffmpeg`, still overrides it). The bundling is wired into both the
+  release workflow and the on-demand `windows-asset` workflow.
+
+### Changed
+- Turbo Recorder is now developed **primary on Forgejo**
+  (`git.securityops.co/cristiancmoises/turborec`), with **GitHub** and
+  **Codeberg** as push-mirrors. Releases (with all binaries) are published on
+  Forgejo as well as GitHub.
+
+### Security
+Full adversarial security audit of the codebase and CI/release supply chain, with
+all confirmed findings fixed:
+- **Windows PATH hardening.** The self-contained build now exposes **only** the
+  bundle's own extracted directory (`sys._MEIPASS`) on `PATH`, and only if it
+  actually contains the bundled `ffmpeg` — never the folder the portable `.exe`
+  was launched from (e.g. Downloads). This closes a binary-planting vector where a
+  co-located `nvidia-smi.exe` could have been executed.
+- **Stream key no longer leaks via ffmpeg stderr.** ffmpeg prints the output RTMP
+  URL (which contains the key) at info/error level; that child stderr is now piped
+  through the same redaction as everything else, so the key never reaches the
+  terminal, scrollback, or a redirected log.
+- **Supply-chain pinning.** The bundled FFmpeg is a pinned, immutable gyan.dev
+  build verified by SHA-256 in CI; PyInstaller and appimagetool are likewise
+  pinned (appimagetool moved off the rolling `continuous` tag to a checksummed
+  versioned release).
+- **Filesystem hardening.** Wayland mux scratch files moved from the user-chosen
+  output directory into a private `0700` temp dir (removing a symlink-overwrite
+  vector on shared output dirs), and the config loader now tolerates pathologically
+  deep JSON instead of crashing.
+
 ## [3.3.0] — 2026-07-13
 
 ### Added
