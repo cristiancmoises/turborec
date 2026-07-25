@@ -152,6 +152,18 @@ publish_to() {
                -X POST -H "${auth}" \
                -F "attachment=@${f};filename=${name}" \
                "${base}/releases/${rid}/assets?name=${name}")" || code="000"
+        # Some Forgejo reverse proxies reject otherwise valid release
+        # attachments based on the multipart filename/MIME type (notably RPM,
+        # AppImage, and extensionless checksum files).  The API's `name` query
+        # parameter is the authoritative public filename, so retry a 403 using
+        # neutral transport metadata while preserving the exact remote name and
+        # every byte of the original file.
+        if [ "${code}" = "403" ]; then
+            code="$(curl -s -o /dev/null -w '%{http_code}' --http1.1 --max-time 3600 \
+                   -X POST -H "${auth}" \
+                   -F "attachment=@${f};filename=turborec-release-asset.gz;type=application/octet-stream" \
+                   "${base}/releases/${rid}/assets?name=${name}")" || code="000"
+        fi
         if [ "${code}" = "201" ]; then
             log "  + ${name}"
         else
