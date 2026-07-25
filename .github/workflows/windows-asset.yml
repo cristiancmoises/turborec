@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to build from and attach the .exe to (e.g. v3.6.0)
+        description: Release tag to build from and attach the .exe to (e.g. v3.7.0)
         required: true
-        default: v3.6.0
+        default: v3.7.0
 
 permissions:
   contents: write
@@ -66,7 +66,16 @@ jobs:
         run: |
           set -eu
           ./dist/turborec.exe --version
-          ./dist/turborec.exe detect | grep -i ffmpeg
+          ./ffmpeg.exe -hide_banner -devices 2>&1 | grep -q 'dshow'
+          ./ffmpeg.exe -hide_banner -devices 2>&1 | grep -q 'gdigrab'
+          ./ffmpeg.exe -hide_banner -loglevel error \
+            -f lavfi -i color=size=64x64:rate=1 -frames:v 1 \
+            -c:v libx264 -f null -
+          ./dist/turborec.exe detect --json > detect.json
+          ./dist/turborec.exe devices --json > devices.json
+          ./dist/turborec.exe cameras --json > cameras.json
+          ./dist/turborec.exe targets --json > targets.json
+          python -c "import json; paths=('detect.json','devices.json','cameras.json','targets.json'); data=[json.load(open(p, encoding='utf-8')) for p in paths]; assert data[3] and data[3][0]['kind'] == 'screen'"
 
       - name: Attach the .exe to the release
         uses: softprops/action-gh-release@v2

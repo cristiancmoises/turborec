@@ -1,10 +1,10 @@
 Package: turborec
-Version: 3.6.0
+Version: 3.7.0
 Section: sound
 Priority: optional
 Architecture: all
 Maintainer: Cristian Cezar Moises <ethicalhacker@riseup.net>
-Depends: ffmpeg, python3 (>= 3.8), python3-tk
+Depends: ffmpeg, python3 (>= 3.8), python3-tk, pulseaudio-utils
 Recommends: wf-recorder
 Homepage: https://github.com/cristiancmoises/turborec
 Description: State-of-the-art hardware-accelerated screen and audio recorder

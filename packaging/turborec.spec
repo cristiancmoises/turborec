@@ -1,5 +1,5 @@
 Name:           turborec
-Version:        3.6.0
+Version:        3.7.0
 Release:        1%{?dist}
 Summary:        State-of-the-art hardware-accelerated screen and audio recorder
 
@@ -16,6 +16,7 @@ BuildRequires:  desktop-file-utils
 Requires:       ffmpeg
 Requires:       python3 >= 3.8
 Requires:       python3-tkinter
+Requires:       pulseaudio-utils
 Recommends:     wf-recorder
 
 %description
@@ -56,6 +57,10 @@ install -D -m 0644 turborec-256.png \
 
 # Documentation.
 install -D -m 0644 README.md %{buildroot}%{_docdir}/%{name}/README.md
+install -D -m 0644 docs/TUTORIAL.md \
+        %{buildroot}%{_docdir}/%{name}/docs/TUTORIAL.md
+install -D -m 0644 docs/README.pt-BR.md \
+        %{buildroot}%{_docdir}/%{name}/docs/README.pt-BR.md
 
 # Validate the installed desktop entry.
 desktop-file-validate %{buildroot}%{_datadir}/applications/%{name}.desktop
@@ -63,6 +68,8 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/%{name}.desktop
 %files
 %license LICENSE
 %doc %{_docdir}/%{name}/README.md
+%doc %{_docdir}/%{name}/docs/TUTORIAL.md
+%doc %{_docdir}/%{name}/docs/README.pt-BR.md
 %{_bindir}/turborec
 %{_bindir}/turborecorder
 %{_datadir}/applications/%{name}.desktop
@@ -86,6 +93,11 @@ update-desktop-database &>/dev/null || :
 gtk-update-icon-cache %{_datadir}/icons/hicolor &>/dev/null || :
 
 %changelog
+* Fri Jul 24 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.7.0-1
+- Repair Windows DirectShow microphone/camera discovery with stable UTF-8 IDs.
+- Add native Windows monitor/window targets and correct macOS display selection.
+- Add safe automatic capture modes and cross-platform regression tests.
+
 * Mon Jul 13 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.6.0-1
 - Adaptive, resolution-aware encoder tuning for higher quality at each resolution.
 - OBS-style YouTube live streaming (RTMP/RTMPS) via a stream key.

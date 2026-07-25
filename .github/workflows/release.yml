@@ -8,10 +8,44 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  test:
+    name: Validate on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run release-gate tests
+        run: |
+          python -m py_compile turborec.py
+          python -m unittest discover -s tests -v
+          python turborec.py --version
+
+      - name: Require the tag and source version to match
+        shell: bash
+        run: |
+          set -eu
+          VERSION="$(sed -n 's/^VERSION = "\(.*\)"/\1/p' turborec.py | head -1)"
+          test "${GITHUB_REF_NAME}" = "v${VERSION}"
+
   linux:
     name: Build Linux packages + portable tarball
     runs-on: ubuntu-latest
+    needs: test
 
     steps:
       - name: Checkout repository
@@ -21,7 +55,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            dpkg-dev rpm fakeroot libfuse2 wget \
+            dpkg-dev rpm fakeroot file libfuse2 wget \
             librsvg2-bin desktop-file-utils imagemagick
 
       - name: Build packages
@@ -47,21 +81,21 @@ jobs:
           echo "Artifacts:"
           ls -l dist
 
-      - name: Publish Linux artifacts to the release
-        uses: softprops/action-gh-release@v2
+      - name: Upload Linux build artifacts
+        uses: actions/upload-artifact@v4
         with:
-          files: |
+          name: release-linux
+          path: |
             dist/*.deb
             dist/*.rpm
             dist/*.AppImage
             dist/*.tar.gz
-          fail_on_unmatched_files: true
-          generate_release_notes: true
+          if-no-files-found: error
 
   freebsd:
     name: Build FreeBSD package
     runs-on: ubuntu-latest
-    needs: linux
+    needs: test
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -82,17 +116,18 @@ jobs:
             turborec --version
             pkg delete -y turborec
 
-      - name: Publish FreeBSD artifact to the release
-        uses: softprops/action-gh-release@v2
+      - name: Upload FreeBSD build artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: |
+          name: release-freebsd
+          path: |
             dist/*.pkg
-          fail_on_unmatched_files: true
+          if-no-files-found: error
 
   windows:
     name: Build Windows executable
     runs-on: windows-latest
-    needs: linux
+    needs: test
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -140,23 +175,33 @@ jobs:
         run: |
           set -eu
           ./dist/turborec.exe --version
-          # detect must report an ffmpeg path from the bundle, with nothing on PATH.
-          ./dist/turborec.exe detect | grep -i ffmpeg
+          # The bundled build must expose every Windows capture backend.
+          ./ffmpeg.exe -hide_banner -devices 2>&1 | grep -q 'dshow'
+          ./ffmpeg.exe -hide_banner -devices 2>&1 | grep -q 'gdigrab'
+          # Exercise a real encode, not only FFmpeg discovery.
+          ./ffmpeg.exe -hide_banner -loglevel error \
+            -f lavfi -i color=size=64x64:rate=1 -frames:v 1 \
+            -c:v libx264 -f null -
+          # Machine-readable probes must stay valid even though hosted runners
+          # normally have no physical microphone or camera.
+          ./dist/turborec.exe detect --json > detect.json
+          ./dist/turborec.exe devices --json > devices.json
+          ./dist/turborec.exe cameras --json > cameras.json
+          ./dist/turborec.exe targets --json > targets.json
+          python -c "import json; paths=('detect.json','devices.json','cameras.json','targets.json'); data=[json.load(open(p, encoding='utf-8')) for p in paths]; assert data[3] and data[3][0]['kind'] == 'screen'"
 
-      - name: Publish Windows artifact to the release
-        uses: softprops/action-gh-release@v2
+      - name: Upload Windows build artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: |
+          name: release-windows
+          path: |
             out/*.exe
-          fail_on_unmatched_files: true
+          if-no-files-found: error
 
   guix:
     name: Build GNU Guix relocatable pack
     runs-on: ubuntu-latest
-    needs: linux
-    # Best-effort: Guix bootstrap in CI is heavy; never let it block the release.
-    # The canonical Guix artifact is guix.scm in the repo (`guix build -f guix.scm`).
-    continue-on-error: true
+    needs: test
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -174,9 +219,90 @@ jobs:
           cp "$PACK" "out/turborec-${VER}-guix-x86_64.tar.gz"
           ls -l out
 
-      - name: Publish Guix artifact to the release
+      - name: Upload Guix build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-guix
+          path: |
+            out/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Verify and publish the complete release
+    runs-on: ubuntu-latest
+    needs: [linux, freebsd, windows, guix]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download every platform artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify the complete asset set and create checksums
+        shell: bash
+        run: |
+          set -eu
+          VERSION="$(sed -n 's/^VERSION = "\(.*\)"/\1/p' turborec.py | head -1)"
+          EXPECTED="
+          Turbo_Recorder-${VERSION}-windows-x64.exe
+          Turbo_Recorder-${VERSION}-x86_64.AppImage
+          turborec-${VERSION}-1.noarch.rpm
+          turborec-${VERSION}-1.src.rpm
+          turborec-${VERSION}-guix-x86_64.tar.gz
+          turborec-${VERSION}.pkg
+          turborec-${VERSION}.tar.gz
+          turborec_${VERSION}_all.deb"
+          for name in ${EXPECTED}; do
+            test -s "release-assets/${name}" || {
+              echo "::error::Missing or empty release asset: ${name}"
+              exit 1
+            }
+          done
+          ACTUAL="$(find release-assets -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
+          WANTED="$(printf '%s\n' ${EXPECTED} | LC_ALL=C sort)"
+          test "${ACTUAL}" = "${WANTED}" || {
+            echo "::error::Unexpected release asset set"
+            diff -u <(printf '%s\n' "${WANTED}") <(printf '%s\n' "${ACTUAL}") || true
+            exit 1
+          }
+          (
+            cd release-assets
+            sha256sum ${EXPECTED} | LC_ALL=C sort -k2 > SHA256SUMS
+          )
+
+      - name: Publish the release atomically
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            out/*.tar.gz
+            release-assets/*
           fail_on_unmatched_files: true
+          generate_release_notes: true
+
+      - name: Verify every GitHub release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          VERSION="$(sed -n 's/^VERSION = "\(.*\)"/\1/p' turborec.py | head -1)"
+          EXPECTED="
+          SHA256SUMS
+          Turbo_Recorder-${VERSION}-windows-x64.exe
+          Turbo_Recorder-${VERSION}-x86_64.AppImage
+          turborec-${VERSION}-1.noarch.rpm
+          turborec-${VERSION}-1.src.rpm
+          turborec-${VERSION}-guix-x86_64.tar.gz
+          turborec-${VERSION}.pkg
+          turborec-${VERSION}.tar.gz
+          turborec_${VERSION}_all.deb"
+          ACTUAL="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \
+            --jq '.assets[].name' | LC_ALL=C sort)"
+          WANTED="$(printf '%s\n' ${EXPECTED} | LC_ALL=C sort)"
+          test "${ACTUAL}" = "${WANTED}" || {
+            diff -u <(printf '%s\n' "${WANTED}") <(printf '%s\n' "${ACTUAL}") || true
+            exit 1
+          }

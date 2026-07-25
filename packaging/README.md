@@ -4,9 +4,10 @@ This directory builds every distributable: the Debian `.deb`, the RPM, the
 AppImage, a portable tarball for **any Unix (including the BSDs)**, and a native
 **FreeBSD `.pkg`**.
 
-All builders use the version from `turborec.py`'s `VERSION`: `build-tarball.sh`
-and `build-freebsd-pkg.sh` derive it automatically; the others carry a matching
-literal. The GitHub Actions release workflow builds the Linux artifacts on
+`turborec.py`'s `VERSION` is the release source of truth. The tarball and
+FreeBSD builders derive it automatically; package formats that require literal
+metadata are checked against it by `tests/test_release_metadata.py`. The GitHub
+Actions release workflow builds the Linux artifacts on
 `ubuntu-latest` and the FreeBSD `.pkg` in a real FreeBSD VM
 (`vmactions/freebsd-vm`), then attaches all of them to the tagged release.
 
@@ -18,7 +19,7 @@ literal. The GitHub Actions release workflow builds the Linux artifacts on
   `uninstall.sh` honouring `PREFIX` (default `/usr/local`) and `DESTDIR`:
 
   ```sh
-  tar xzf turborec-3.6.0.tar.gz && cd turborec-3.6.0
+  tar xzf turborec-3.7.0.tar.gz && cd turborec-3.7.0
   sudo ./install.sh                  # → /usr/local
   PREFIX="$HOME/.local" ./install.sh # per-user
   ```
@@ -26,7 +27,7 @@ literal. The GitHub Actions release workflow builds the Linux artifacts on
 - **`build-freebsd-pkg.sh`** → `dist/turborec-<version>.pkg`. Must run on FreeBSD
   (uses `pkg create`). Stages the tree under `${PREFIX}`, generates a plist +
   `+MANIFEST`, and emits a package installable with
-  `pkg add ./turborec-3.6.0.pkg`. Runtime prerequisites (`python3`, `ffmpeg`,
+  `pkg add ./turborec-3.7.0.pkg`. Runtime prerequisites (`python3`, `ffmpeg`,
   optional `wf-recorder`) are documented in the package description rather than
   declared as hard deps, so the file installs cleanly on any FreeBSD release
   (`pkg install python3 ffmpeg`).
@@ -42,14 +43,15 @@ that same set to the Forgejo and Codeberg releases, run:
 # downloads the tag's assets from the GitHub release, then attaches them to the
 # matching Forgejo + Codeberg releases (creating the release if needed)
 FJTOKEN=<forgejo-token> CBTOKEN=<codeberg-token> \
-    packaging/publish-release.sh v3.6.0
+    packaging/publish-release.sh v3.7.0
 
 # or attach files from a local directory instead of downloading
-FJTOKEN=… CBTOKEN=… packaging/publish-release.sh v3.6.0 dist/
+FJTOKEN=… CBTOKEN=… packaging/publish-release.sh v3.7.0 dist/
 ```
 
-Tokens are read only from the environment; the script is idempotent (it reuses an
-existing release and skips assets already attached), so it is safe to re-run.
+Tokens are read only from the environment. The script requires all eight
+platform artifacts, mirrors any checksum file, verifies remote byte sizes, and
+fails on an incomplete upload. It is idempotent when re-run.
 
 ## Debian `.deb` layout
 
@@ -85,7 +87,7 @@ The script:
    - `README.md`               -> `/usr/share/doc/turborec/README.md`
 2. Builds the control tree (`control` with computed `Installed-Size`,
    `md5sums`, `postinst`, `postrm`).
-3. Emits `dist/turborec_3.6.0_all.deb`.
+3. Emits `dist/turborec_3.7.0_all.deb`.
 
 ### dpkg-deb vs. portable mode
 
@@ -102,16 +104,16 @@ pre-rendered `assets/turborec.png` exists, that is used instead.
 
 ## Runtime dependencies
 
-`ffmpeg`, `python3 (>= 3.8)`, and Tk. On Debian/Ubuntu Tk comes from
-`python3-tk` (the `.deb` declares `Depends: ffmpeg, python3 (>= 3.8), python3-tk`).
-On RPM distributions the equivalent is `python3-tkinter`.
+`ffmpeg`, `python3 (>= 3.8)`, Tk, and `pactl`. On Debian/Ubuntu Tk comes from
+`python3-tk`; the `.deb` also installs `pulseaudio-utils` for `pactl`. On RPM
+distributions the equivalents are `python3-tkinter` and `pulseaudio-utils`.
 
 ## Verify a built package
 
 ```bash
 # inspect members and metadata without installing
-ar t dist/turborec_3.6.0_all.deb
-mkdir -p /tmp/deb && ar x dist/turborec_3.6.0_all.deb --output /tmp/deb
+ar t dist/turborec_3.7.0_all.deb
+mkdir -p /tmp/deb && ar x dist/turborec_3.7.0_all.deb --output /tmp/deb
 tar -tvf /tmp/deb/data.tar.xz
 tar -xOf /tmp/deb/control.tar.gz ./control
 ```

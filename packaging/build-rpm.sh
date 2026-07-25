@@ -35,6 +35,7 @@ STAGE_DIR="${BUILD_DIR}/${PKG}"
 rm -rf "${BUILD_DIR}"
 mkdir -p "${RPMBUILD_DIR}"/{BUILD,BUILDROOT,RPMS,SRPMS,SOURCES,SPECS}
 mkdir -p "${STAGE_DIR}/packaging"
+mkdir -p "${STAGE_DIR}/docs"
 mkdir -p "${DIST_DIR}"
 
 # --- Assemble the source tree to be tarred. ----------------------------------
@@ -45,6 +46,9 @@ done
 
 for f in turborec.desktop turborec.svg; do
     cp -p "${SCRIPT_DIR}/${f}" "${STAGE_DIR}/packaging/${f}"
+done
+for f in TUTORIAL.md README.pt-BR.md; do
+    cp -p "${REPO_ROOT}/docs/${f}" "${STAGE_DIR}/docs/${f}"
 done
 
 # --- Create the source tarball with the expected %{name}-%{version} prefix. --

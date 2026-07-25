@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import locale
 import os
 import platform
 import re
@@ -32,12 +33,13 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Optional
 
 APP_NAME = "Turbo Recorder"
-VERSION = "3.6.0"
+VERSION = "3.7.0"
 
 # ---------------------------------------------------------------------------
 # Small terminal helpers
@@ -92,18 +94,49 @@ def die(msg: str, code: int = 1) -> "None":
     sys.exit(code)
 
 
+def _decode_command_output(data) -> str:
+    """Decode subprocess output without corrupting UTF-8 device names.
+
+    FFmpeg's Windows DirectShow backend explicitly emits UTF-8, even when the
+    active Windows ANSI code page is cp1252.  ``text=True`` therefore corrupts
+    non-ASCII microphone/camera names on many systems, and those corrupted names
+    cannot be opened again.  Other native tools may still use the locale code
+    page (or UTF-16), so decode UTF-8 first and retain safe fallbacks.
+    """
+    if not data:
+        return ""
+    if isinstance(data, str):
+        return data
+    raw = bytes(data)
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return raw.decode("utf-16", "replace")
+    # Redirected PowerShell output can be UTF-16LE without a BOM.
+    if len(raw) >= 4 and raw[1::2].count(0) > len(raw) // 6:
+        return raw.decode("utf-16-le", "replace")
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        enc = locale.getpreferredencoding(False) or "utf-8"
+        return raw.decode(enc, "replace")
+
+
 def run_cmd(cmd: list[str], timeout: float = 8.0) -> str:
-    """Run a command and return stdout+stderr text, '' on any failure."""
+    """Run a command and return decoded stdout+stderr, or ``''`` on failure.
+
+    If a slow hardware enumerator times out, keep any output it produced before
+    the timeout.  A single sluggish DirectShow driver must not erase the other
+    devices FFmpeg already listed.
+    """
     try:
         p = subprocess.run(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             timeout=timeout,
-            text=True,
-            errors="replace",
         )
-        return p.stdout or ""
+        return _decode_command_output(p.stdout)
+    except subprocess.TimeoutExpired as e:
+        return _decode_command_output(e.stdout or e.output)
     except (subprocess.SubprocessError, OSError):
         return ""
 
@@ -130,8 +163,29 @@ class CaptureTarget:
     label: str                 # human readable
     geometry: Optional[str] = None   # "WxH+X+Y" region of the desktop
     win_title: Optional[str] = None  # native window title (Windows gdigrab)
+    win_hwnd: Optional[str] = None   # native HWND (more reliable than title)
+    input_id: Optional[str] = None   # platform screen/display input identifier
     output: Optional[str] = None     # Wayland output name (wf-recorder -o)
     wl_geometry: Optional[str] = None  # wf-recorder region "X,Y WxH" within output
+
+
+def _label_choice_map(items: list) -> dict[str, object]:
+    """Build lossless GUI labels even when friendly device names collide."""
+    counts: dict[str, int] = {}
+    for item in items:
+        key = item.label.casefold()
+        counts[key] = counts.get(key, 0) + 1
+    seen: dict[str, int] = {}
+    choices: dict[str, object] = {}
+    for item in items:
+        key = item.label.casefold()
+        seen[key] = seen.get(key, 0) + 1
+        label = (item.label if counts[key] == 1
+                 else f"{item.label} [{seen[key]}]")
+        while label in choices:
+            label += " ·"
+        choices[label] = item
+    return choices
 
 
 @dataclass
@@ -353,9 +407,13 @@ def detect_screen(os_name: str, display_server: str) -> str:
         try:
             import ctypes  # noqa: PLC0415
 
+            _set_windows_dpi_awareness()
             user32 = ctypes.windll.user32  # type: ignore[attr-defined]
-            user32.SetProcessDPIAware()
-            return f"{user32.GetSystemMetrics(0)}x{user32.GetSystemMetrics(1)}"
+            # Report the complete virtual desktop, not only the primary panel.
+            w, h = user32.GetSystemMetrics(78), user32.GetSystemMetrics(79)
+            if not (w and h):
+                w, h = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+            return f"{w}x{h}"
         except Exception:  # noqa: BLE001
             pass
     return ""
@@ -368,9 +426,22 @@ def _detect_audio_linux() -> tuple[list[AudioDevice], list[AudioDevice], Optiona
     mics: list[AudioDevice] = []
     monitors: list[AudioDevice] = []
     if not shutil.which("pactl"):
-        return mics, monitors, None, None
+        # Do not invent devices: an ALSA-only/minimal host often has neither a
+        # Pulse-compatible server nor these aliases. Automatic mode must degrade
+        # to video-only instead of selecting inputs that fail at record time.
+        return [], [], None, None
     default_sink = run_cmd(["pactl", "get-default-sink"]).strip()
     default_src = run_cmd(["pactl", "get-default-source"]).strip()
+    if not default_sink or not default_src:
+        # ``get-default-*`` was added after older PulseAudio releases.  Keep
+        # compatibility with their stable ``pactl info`` output.
+        pinfo = run_cmd(["pactl", "info"])
+        if not default_sink:
+            m = re.search(r"^Default Sink:\s*(.+)$", pinfo, re.MULTILINE)
+            default_sink = m.group(1).strip() if m else ""
+        if not default_src:
+            m = re.search(r"^Default Source:\s*(.+)$", pinfo, re.MULTILINE)
+            default_src = m.group(1).strip() if m else ""
     out = run_cmd(["pactl", "list", "short", "sources"])
     for line in out.splitlines():
         cols = line.split("\t")
@@ -405,9 +476,27 @@ def _parse_avfoundation_devices(text: str) -> tuple[list[str], list[str]]:
     return video, audio
 
 
-def _detect_audio_macos(ffmpeg: str) -> tuple[list[AudioDevice], list[AudioDevice], Optional[AudioDevice], Optional[AudioDevice]]:
-    out = run_cmd([ffmpeg, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""])
-    _, audio = _parse_avfoundation_devices(out)
+_AVFOUNDATION_CACHE: dict[str, tuple[float, tuple[list[str], list[str]]]] = {}
+
+
+def _enumerate_avfoundation(
+        ffmpeg: str, refresh: bool = False) -> tuple[list[str], list[str]]:
+    key = os.path.normcase(os.path.abspath(ffmpeg))
+    cached = _AVFOUNDATION_CACHE.get(key)
+    if not refresh and cached and time.monotonic() - cached[0] < 5.0:
+        return cached[1]
+    out = run_cmd(
+        [ffmpeg, "-hide_banner", "-f", "avfoundation",
+         "-list_devices", "true", "-i", ""],
+        timeout=15.0,
+    )
+    devices = _parse_avfoundation_devices(out)
+    _AVFOUNDATION_CACHE[key] = (time.monotonic(), devices)
+    return devices
+
+
+def _detect_audio_macos(ffmpeg: str, refresh: bool = False) -> tuple[list[AudioDevice], list[AudioDevice], Optional[AudioDevice], Optional[AudioDevice]]:
+    _, audio = _enumerate_avfoundation(ffmpeg, refresh=refresh)
     mics: list[AudioDevice] = []
     monitors: list[AudioDevice] = []
     for entry in audio:
@@ -418,34 +507,168 @@ def _detect_audio_macos(ffmpeg: str) -> tuple[list[AudioDevice], list[AudioDevic
     return mics, monitors, (mics[0] if mics else None), (monitors[0] if monitors else None)
 
 
-def _detect_audio_windows(ffmpeg: str) -> tuple[list[AudioDevice], list[AudioDevice], Optional[AudioDevice], Optional[AudioDevice]]:
-    out = run_cmd([ffmpeg, "-hide_banner", "-f", "dshow", "-list_devices", "true", "-i", "dummy"])
+@dataclass
+class _DShowDevice:
+    """A DirectShow source with a stable capture id and friendly label."""
+
+    id: str
+    label: str
+    media_types: set[str] = field(default_factory=set)
+
+
+def _dshow_types(text: str) -> set[str]:
+    return {t.strip().lower() for t in text.split(",")
+            if t.strip().lower() in ("audio", "video")}
+
+
+def _dedupe_dshow(devices: list[_DShowDevice]) -> list[_DShowDevice]:
+    found: dict[str, _DShowDevice] = {}
+    order: list[str] = []
+    for dev in devices:
+        key = dev.id.casefold()
+        if key in found:
+            found[key].media_types.update(dev.media_types)
+            if found[key].label == found[key].id and dev.label != dev.id:
+                found[key].label = dev.label
+            continue
+        found[key] = dev
+        order.append(key)
+    return [found[k] for k in order]
+
+
+def _parse_dshow_sources(text: str) -> list[_DShowDevice]:
+    """Parse ``ffmpeg -sources dshow`` (FFmpeg 5+).
+
+    Depending on the FFmpeg revision, the unique ``@device_…`` identifier can
+    appear before or inside the brackets.  Detect it rather than relying on one
+    presentation order.
+    """
+    devices: list[_DShowDevice] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("* "):  # generic FFmpeg marker for the default source
+            line = line[2:].lstrip()
+        m = re.match(r"(.+?)\s+\[(.*)\]\s+\(([^()]*)\)\s*$", line)
+        if not m:
+            continue
+        first, bracketed, media = (_san(x.strip()) for x in m.groups())
+        types = _dshow_types(media)
+        if not types:
+            continue
+        if first.lower().startswith("@device_"):
+            dev_id, label = first, bracketed
+        elif bracketed.lower().startswith("@device_"):
+            dev_id, label = bracketed, first
+        else:
+            dev_id, label = first, bracketed or first
+        if dev_id and label:
+            devices.append(_DShowDevice(dev_id, label, types))
+    return _dedupe_dshow(devices)
+
+
+def _parse_dshow_list_devices(text: str) -> list[_DShowDevice]:
+    """Parse both legacy and FFmpeg 8 DirectShow device listings.
+
+    Older versions grouped quoted names below ``DirectShow video/audio
+    devices`` headings. FFmpeg 8 prints each name with inline ``(video)`` /
+    ``(audio, video)`` media types and no headings. Alternative-name lines are
+    paired with the preceding friendly name and never emitted as fake devices.
+    """
+    devices: list[_DShowDevice] = []
+    section: Optional[str] = None
+    pending: Optional[_DShowDevice] = None
+    for raw in text.splitlines():
+        low = raw.lower()
+        if "directshow video devices" in low:
+            section = "video"
+            pending = None
+            continue
+        if "directshow audio devices" in low:
+            section = "audio"
+            pending = None
+            continue
+
+        alt = re.search(r'alternative\s+name\s+"([^"]+)"', raw, re.IGNORECASE)
+        if alt:
+            if pending:
+                pending.id = _san(alt.group(1).strip())
+            continue
+
+        m = re.search(r'"([^"]+)"(?:\s+\(([^()]*)\))?\s*$', raw)
+        if not m:
+            continue
+        label = _san(m.group(1).strip())
+        types = _dshow_types(m.group(2) or "")
+        if not types and section:
+            types = {section}
+        if not label or not types:
+            continue
+        pending = _DShowDevice(label, label, types)
+        devices.append(pending)
+    return _dedupe_dshow(devices)
+
+
+_DSHOW_CACHE: dict[str, tuple[float, list[_DShowDevice]]] = {}
+
+
+def _enumerate_dshow(ffmpeg: str, refresh: bool = False) -> list[_DShowDevice]:
+    """Enumerate DirectShow once and share it between mic/camera probes."""
+    key = os.path.normcase(os.path.abspath(ffmpeg))
+    cached = _DSHOW_CACHE.get(key)
+    if not refresh and cached and time.monotonic() - cached[0] < 5.0:
+        return cached[1]
+
+    # FFmpeg's structured source listing is locale-independent and includes
+    # media types.  Retain list_devices for FFmpeg 4.x and unusual builds.
+    out = run_cmd([ffmpeg, "-hide_banner", "-sources", "dshow"], timeout=25.0)
+    devices = _parse_dshow_sources(out)
+    if not devices:
+        out = run_cmd(
+            [ffmpeg, "-hide_banner", "-f", "dshow",
+             "-list_devices", "true", "-i", "dummy"],
+            timeout=25.0,
+        )
+        devices = _parse_dshow_list_devices(out)
+    _DSHOW_CACHE[key] = (time.monotonic(), devices)
+    return devices
+
+
+def _fold_label(text: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", text.casefold())
+                   if not unicodedata.combining(c))
+
+
+def _is_windows_loopback(label: str) -> bool:
+    folded = _fold_label(label)
+    # Strong terms only: a generic word such as "virtual" can describe a
+    # virtual microphone and must not silently become the system-audio default.
+    return any(term in folded for term in (
+        "stereo mix", "mixagem estereo", "what u hear", "wave out mix",
+        "loopback", "desktop audio", "system audio", "audio do sistema",
+        "som do sistema", "virtual-audio-capturer", "cable output",
+        "voicemeeter output",
+    ))
+
+
+def _detect_audio_windows(ffmpeg: str, refresh: bool = False) -> tuple[list[AudioDevice], list[AudioDevice], Optional[AudioDevice], Optional[AudioDevice]]:
     mics: list[AudioDevice] = []
     monitors: list[AudioDevice] = []
-    audio_section = False
-    for line in out.splitlines():
-        if "DirectShow audio devices" in line:
-            audio_section = True
+    for source in _enumerate_dshow(ffmpeg, refresh=refresh):
+        if "audio" not in source.media_types:
             continue
-        if "DirectShow video devices" in line:
-            audio_section = False
-            continue
-        m = re.search(r'"([^"]+)"', line)
-        if m and audio_section:
-            name = m.group(1)
-            is_mon = any(k in name.lower() for k in ("stereo mix", "what u hear", "loopback", "virtual"))
-            dev = AudioDevice(id=name, label=name, is_monitor=is_mon)
-            (monitors if is_mon else mics).append(dev)
+        is_mon = _is_windows_loopback(source.label)
+        dev = AudioDevice(id=source.id, label=source.label, is_monitor=is_mon)
+        (monitors if is_mon else mics).append(dev)
     return mics, monitors, (mics[0] if mics else None), (monitors[0] if monitors else None)
 
 
-def detect_audio(os_name: str, ffmpeg: str):
+def detect_audio(os_name: str, ffmpeg: str, refresh: bool = False):
     if os_name == "linux":
         return _detect_audio_linux()
     if os_name == "macos":
-        return _detect_audio_macos(ffmpeg)
+        return _detect_audio_macos(ffmpeg, refresh=refresh)
     if os_name == "windows":
-        return _detect_audio_windows(ffmpeg)
+        return _detect_audio_windows(ffmpeg, refresh=refresh)
     return [], [], None, None
 
 
@@ -457,12 +680,15 @@ def _detect_monitors_x11() -> list[CaptureTarget]:
     targets: list[CaptureTarget] = []
     # e.g. " 0: +*eDP-1 2560/697x1440/392+0+0  eDP-1"
     for line in out.splitlines():
-        m = re.search(r"\b(\d+)/\d+x(\d+)/\d+\+(\d+)\+(\d+)\s+(\S+)\s*$", line)
+        m = re.search(
+            r"\b(\d+)/\d+x(\d+)/\d+([+-]\d+)([+-]\d+)\s+(\S+)\s*$",
+            line,
+        )
         if m:
             w, h, x, y, name = m.groups()
             targets.append(CaptureTarget(
                 kind="monitor", label=f"{name}  ({w}x{h})",
-                geometry=f"{w}x{h}+{x}+{y}"))
+                geometry=f"{w}x{h}{int(x):+d}{int(y):+d}"))
     return targets
 
 
@@ -489,7 +715,193 @@ def _detect_windows_x11() -> list[CaptureTarget]:
         short = (title[:48] + "…") if len(title) > 49 else title
         targets.append(CaptureTarget(
             kind="window", label=f"{short}  ({w}x{h})",
-            geometry=f"{w}x{h}+{x}+{y}", win_title=title))
+            geometry=_geometry_string(iw, ih, int(x), int(y)), win_title=title))
+    return targets
+
+
+def _geometry_string(width: int, height: int, x: int = 0, y: int = 0) -> str:
+    return f"{width}x{height}{x:+d}{y:+d}"
+
+
+def _set_windows_dpi_awareness() -> None:
+    """Use physical pixels for monitor/window coordinates when Windows permits."""
+    try:
+        import ctypes  # noqa: PLC0415
+        from ctypes import wintypes  # noqa: PLC0415
+
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        try:
+            # Per-monitor v2 (Windows 10); -4 is DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2.
+            set_context = user32.SetProcessDpiAwarenessContext
+            set_context.argtypes = [wintypes.HANDLE]
+            set_context.restype = wintypes.BOOL
+            if set_context(ctypes.c_void_p(-4)):
+                return
+        except (AttributeError, OSError):
+            pass
+        try:
+            set_awareness = ctypes.windll.shcore.SetProcessDpiAwareness  # type: ignore[attr-defined]
+            set_awareness.argtypes = [ctypes.c_int]
+            set_awareness.restype = ctypes.c_long
+            if set_awareness(2) == 0:
+                return
+        except (AttributeError, OSError):
+            pass
+        legacy = user32.SetProcessDPIAware
+        legacy.argtypes = []
+        legacy.restype = wintypes.BOOL
+        legacy()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _detect_monitors_windows() -> list[CaptureTarget]:
+    """Enumerate physical Windows monitors with virtual-desktop coordinates."""
+    if detect_os() != "windows":
+        return []
+    try:
+        import ctypes  # noqa: PLC0415
+        from ctypes import wintypes  # noqa: PLC0415
+
+        _set_windows_dpi_awareness()
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+
+        class RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", wintypes.LONG), ("top", wintypes.LONG),
+                ("right", wintypes.LONG), ("bottom", wintypes.LONG),
+            ]
+
+        class MONITORINFOEXW(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("rcMonitor", RECT),
+                ("rcWork", RECT),
+                ("dwFlags", wintypes.DWORD),
+                ("szDevice", wintypes.WCHAR * 32),
+            ]
+
+        targets: list[CaptureTarget] = []
+        callback_type = ctypes.WINFUNCTYPE(
+            wintypes.BOOL, wintypes.HANDLE, wintypes.HDC,
+            ctypes.POINTER(RECT), wintypes.LPARAM,
+        )
+        user32.GetMonitorInfoW.argtypes = [
+            wintypes.HANDLE, ctypes.POINTER(MONITORINFOEXW)]
+        user32.GetMonitorInfoW.restype = wintypes.BOOL
+        user32.EnumDisplayMonitors.argtypes = [
+            wintypes.HDC, ctypes.POINTER(RECT), callback_type,
+            wintypes.LPARAM]
+        user32.EnumDisplayMonitors.restype = wintypes.BOOL
+
+        def visit(handle, _hdc, rect_ptr, _data):
+            rect = rect_ptr.contents
+            name = f"Display {len(targets) + 1}"
+            primary = False
+            info = MONITORINFOEXW()
+            info.cbSize = ctypes.sizeof(info)
+            try:
+                if user32.GetMonitorInfoW(handle, ctypes.byref(info)):
+                    name = info.szDevice or name
+                    primary = bool(info.dwFlags & 1)
+                    rect = info.rcMonitor
+            except (AttributeError, OSError):
+                pass
+            w, h = rect.right - rect.left, rect.bottom - rect.top
+            if w > 0 and h > 0:
+                suffix = " · primary" if primary else ""
+                targets.append(CaptureTarget(
+                    kind="monitor",
+                    label=f"{_san(name)}{suffix}  ({w}x{h})",
+                    geometry=_geometry_string(w, h, rect.left, rect.top),
+                ))
+            return True
+
+        callback = callback_type(visit)
+        user32.EnumDisplayMonitors(None, None, callback, 0)
+        targets.sort(key=lambda t: ("primary" not in t.label, t.label.casefold()))
+        return targets
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _detect_windows_native() -> list[CaptureTarget]:
+    """Enumerate visible top-level windows and retain their stable HWND."""
+    if detect_os() != "windows":
+        return []
+    try:
+        import ctypes  # noqa: PLC0415
+        from ctypes import wintypes  # noqa: PLC0415
+
+        _set_windows_dpi_awareness()
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+
+        class RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", wintypes.LONG), ("top", wintypes.LONG),
+                ("right", wintypes.LONG), ("bottom", wintypes.LONG),
+            ]
+
+        targets: list[CaptureTarget] = []
+        callback_type = ctypes.WINFUNCTYPE(
+            wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsWindowVisible.restype = wintypes.BOOL
+        user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+        user32.GetWindowTextLengthW.restype = ctypes.c_int
+        user32.GetWindowTextW.argtypes = [
+            wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        user32.GetWindowTextW.restype = ctypes.c_int
+        user32.GetWindowRect.argtypes = [
+            wintypes.HWND, ctypes.POINTER(RECT)]
+        user32.GetWindowRect.restype = wintypes.BOOL
+        user32.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
+        user32.EnumWindows.restype = wintypes.BOOL
+
+        def visit(hwnd, _data):
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length <= 0 or length > 32767:
+                return True
+            buf = ctypes.create_unicode_buffer(length + 1)
+            if not user32.GetWindowTextW(hwnd, buf, len(buf)):
+                return True
+            title = _san(buf.value.strip())
+            if not title:
+                return True
+            rect = RECT()
+            if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                return True
+            w, h = rect.right - rect.left, rect.bottom - rect.top
+            if w < 64 or h < 64:
+                return True
+            short = (title[:46] + "…") if len(title) > 47 else title
+            handle_value = getattr(hwnd, "value", hwnd) or 0
+            targets.append(CaptureTarget(
+                kind="window", label=f"{short}  ({w}x{h})",
+                geometry=_geometry_string(w, h, rect.left, rect.top),
+                win_title=title, win_hwnd=f"0x{int(handle_value):x}",
+            ))
+            return True
+
+        callback = callback_type(visit)
+        user32.EnumWindows(callback, 0)
+        return targets
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _detect_displays_macos(ffmpeg: str) -> list[CaptureTarget]:
+    """Return AVFoundation's screen-capture pseudo-devices with real indices."""
+    video, _audio = _enumerate_avfoundation(ffmpeg)
+    targets: list[CaptureTarget] = []
+    for entry in video:
+        idx, _, name = entry.partition(": ")
+        if "capture screen" not in name.casefold():
+            continue
+        targets.append(CaptureTarget(
+            kind="monitor", label=_san(name), input_id=idx.strip()))
     return targets
 
 
@@ -514,7 +926,8 @@ def _detect_outputs_wayland() -> tuple[list[CaptureTarget], str]:
                     continue
                 targets.append(CaptureTarget(
                     kind="monitor", label=f"{name}  ({w}x{h})",
-                    geometry=f"{w}x{h}+{x}+{y}", output=name))
+                    geometry=_geometry_string(int(w), int(h), int(x), int(y)),
+                    output=name))
                 if o.get("focused"):
                     focused = name
         except (ValueError, TypeError):
@@ -532,19 +945,23 @@ def _detect_outputs_wayland() -> tuple[list[CaptureTarget], str]:
                     px, py = pos.split(",")
                     targets.append(CaptureTarget(
                         kind="monitor", label=f"{_san(name)}  ({size})",
-                        geometry=f"{size}+{px}+{py}", output=name))
+                        geometry=_geometry_string(
+                            *map(int, size.split("x")), int(px), int(py)),
+                        output=name))
                 name, size, pos = m.group(1), None, "0,0"
             mm = re.search(r"(\d+)x(\d+)\s+px.*current", line)
             if mm:
                 size = f"{mm.group(1)}x{mm.group(2)}"
-            mp = re.search(r"Position:\s*(\d+),(\d+)", line)
+            mp = re.search(r"Position:\s*(-?\d+),(-?\d+)", line)
             if mp:
                 pos = f"{mp.group(1)},{mp.group(2)}"
         if name and size:        # flush the last output
             px, py = pos.split(",")
             targets.append(CaptureTarget(
                 kind="monitor", label=f"{_san(name)}  ({size})",
-                geometry=f"{size}+{px}+{py}", output=name))
+                geometry=_geometry_string(
+                    *map(int, size.split("x")), int(px), int(py)),
+                output=name))
     if not focused and targets:
         focused = targets[0].output or ""
     return targets, focused
@@ -572,7 +989,8 @@ def _detect_windows_wayland() -> list[CaptureTarget]:
                 short = (title[:46] + "…") if len(title) > 47 else title
                 targets.append(CaptureTarget(
                     kind="window", label=f"{short}  ({w}x{h})",
-                    geometry=f"{w}x{h}+{x}+{y}", output=on))
+                    geometry=_geometry_string(int(w), int(h), int(x), int(y)),
+                    output=on))
         for key in ("nodes", "floating_nodes"):
             for child in node.get(key, []):
                 walk(child, on)
@@ -595,6 +1013,65 @@ def detect_capture_targets(si: SystemInfo) -> list[CaptureTarget]:
             targets += outs
         targets += _detect_windows_wayland()
         return targets
+
+    if si.os == "windows":
+        monitors = _detect_monitors_windows()
+        if monitors:
+            rects = []
+            for target in monitors:
+                m = re.fullmatch(
+                    r"(\d+)x(\d+)([+-]\d+)([+-]\d+)",
+                    target.geometry or "",
+                )
+                if m:
+                    w, h, x, y = map(int, m.groups())
+                    rects.append((x, y, x + w, y + h))
+            if rects:
+                left = min(r[0] for r in rects)
+                top = min(r[1] for r in rects)
+                right = max(r[2] for r in rects)
+                bottom = max(r[3] for r in rects)
+                w, h = right - left, bottom - top
+                screen = CaptureTarget(
+                    kind="screen",
+                    label=(f"Full desktop  ({w}x{h})" if len(monitors) > 1
+                           else f"Full screen  ({w}x{h})"),
+                    geometry=_geometry_string(w, h, left, top),
+                )
+            else:
+                screen = CaptureTarget(
+                    kind="screen",
+                    label=f"Full screen  ({si.screen})" if si.screen else "Full screen",
+                    geometry=(f"{si.screen}+0+0" if si.screen else None),
+                )
+            targets = [screen]
+            if len(monitors) > 1:
+                targets += monitors
+        else:
+            targets = [CaptureTarget(
+                kind="screen",
+                label=f"Full screen  ({si.screen})" if si.screen else "Full screen",
+                geometry=(f"{si.screen}+0+0" if si.screen else None),
+            )]
+        targets += _detect_windows_native()
+        return targets
+
+    if si.os == "macos":
+        displays = _detect_displays_macos(si.ffmpeg)
+        if displays:
+            first = displays[0]
+            targets = [CaptureTarget(
+                kind="screen", label=f"Full screen  ({first.label})",
+                input_id=first.input_id,
+            )]
+            if len(displays) > 1:
+                targets += displays
+            return targets
+        return [CaptureTarget(
+            kind="screen",
+            label=f"Full screen  ({si.screen})" if si.screen else "Full screen",
+            input_id=None,
+        )]
 
     targets: list[CaptureTarget] = [
         CaptureTarget(kind="screen",
@@ -630,14 +1107,17 @@ def probe_system(ffmpeg: Optional[str] = None) -> SystemInfo:
         si.wl_outputs, si.wl_default_output = _detect_outputs_wayland()
         if not si.screen and si.wl_outputs:
             # global desktop bounding box from output rects
-            mx = my = 0
+            rects = []
             for t in si.wl_outputs:
-                m = re.match(r"(\d+)x(\d+)\+(\d+)\+(\d+)", t.geometry or "")
-                if m:
-                    mx = max(mx, int(m.group(3)) + int(m.group(1)))
-                    my = max(my, int(m.group(4)) + int(m.group(2)))
-            if mx and my:
-                si.screen = f"{mx}x{my}"
+                g = _parse_wxhxy(t.geometry)
+                if g:
+                    w, h, x, y = g
+                    rects.append((x, y, x + w, y + h))
+            if rects:
+                si.screen = (
+                    f"{max(r[2] for r in rects) - min(r[0] for r in rects)}x"
+                    f"{max(r[3] for r in rects) - min(r[1] for r in rects)}"
+                )
     return si
 
 
@@ -684,6 +1164,16 @@ def _candidate_encoders(si: SystemInfo, codec: str) -> list[tuple[str, str]]:
             table = [(f"{c}_amf", "amf")]
         else:
             table = [(f"{c}_vaapi", "vaapi")]
+    # Hybrid Windows laptops often expose (for example) NVIDIA graphics plus
+    # an Intel iGPU. If the vendor-preferred encoder cannot initialize, probe
+    # the other advertised Windows backends before falling all the way to CPU.
+    if si.os == "windows" and si.has_gpu:
+        for candidate in (
+                (f"{c}_nvenc", "nvenc"),
+                (f"{c}_qsv", "qsv"),
+                (f"{c}_amf", "amf")):
+            if candidate not in table:
+                table.append(candidate)
     # universal fallbacks
     if si.os == "macos":
         table.append((f"{c}_videotoolbox", "videotoolbox"))
@@ -691,6 +1181,52 @@ def _candidate_encoders(si: SystemInfo, codec: str) -> list[tuple[str, str]]:
         table.append((f"{c}_vaapi", "vaapi"))
     table.append((_sw_encoder(si, c), "software"))
     return table
+
+
+_ENCODER_PROBE_CACHE: dict[tuple[str, str, str], bool] = {}
+
+
+def _hardware_encoder_usable(si: SystemInfo, name: str, kind: str) -> bool:
+    """Verify that an advertised hardware encoder can initialize on this GPU.
+
+    ``ffmpeg -encoders`` describes build capabilities, not the installed driver
+    or GPU generation. A binary can advertise AV1/NVENC/QSV/AMF and still fail
+    as soon as recording starts. Encode one synthetic frame once per process so
+    auto mode can fall through to a working backend before the user presses REC.
+    """
+    if kind == "software" or os.environ.get("TURBOREC_SKIP_ENCODER_PROBE") == "1":
+        return True
+    key = (os.path.normcase(os.path.abspath(si.ffmpeg)), name,
+           si.vaapi_device or "")
+    if key in _ENCODER_PROBE_CACHE:
+        return _ENCODER_PROBE_CACHE[key]
+
+    cmd = [si.ffmpeg, "-hide_banner", "-loglevel", "error"]
+    if kind == "vaapi":
+        if not si.vaapi_device:
+            _ENCODER_PROBE_CACHE[key] = False
+            return False
+        cmd += ["-vaapi_device", si.vaapi_device]
+    elif kind == "qsv":
+        cmd += ["-init_hw_device", "qsv=hw", "-filter_hw_device", "hw"]
+    cmd += [
+        "-f", "lavfi", "-i", "color=c=black:s=256x256:r=1",
+        "-frames:v", "1",
+    ]
+    if kind == "vaapi":
+        cmd += ["-vf", "format=nv12,hwupload"]
+    elif kind == "qsv":
+        cmd += ["-vf", "format=nv12,hwupload=extra_hw_frames=8"]
+    cmd += ["-c:v", name, "-f", "null", "-"]
+    try:
+        result = subprocess.run(
+            cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, timeout=12)
+        usable = result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        usable = False
+    _ENCODER_PROBE_CACHE[key] = usable
+    return usable
 
 
 def choose_encoder(si: SystemInfo, codec: str = "h264", force_software: bool = False,
@@ -714,6 +1250,8 @@ def choose_encoder(si: SystemInfo, codec: str = "h264", force_software: bool = F
         if enc in si.encoders:
             if backend == "gpu" and kind == "software":
                 break  # don't silently fall back to CPU when GPU was requested
+            if kind != "software" and not _hardware_encoder_usable(si, enc, kind):
+                continue
             note = "hardware accelerated" if kind != "software" else "software (no HW encoder available)"
             return EncoderChoice(enc, kind, codec, note)
     if backend == "gpu":
@@ -950,17 +1488,22 @@ def video_filter_for(enc: EncoderChoice) -> Optional[str]:
 # Capture input arguments (screen) per platform
 # ---------------------------------------------------------------------------
 def _parse_geometry(geom: Optional[str]) -> tuple[Optional[str], int, int]:
-    """Parse 'WxH+X+Y' (or 'WxH') -> (size 'WxH' or None, x, y)."""
+    """Parse ``WxH±X±Y`` (or ``WxH``) into size and signed offsets."""
     if not geom:
         return None, 0, 0
-    m = re.match(r"(\d+x\d+)(?:\+(\d+)\+(\d+))?$", geom.strip())
+    m = re.fullmatch(
+        r"(\d+x\d+)(?:([+-]\d+)([+-]\d+))?",
+        geom.strip(),
+    )
     if not m:
         return None, 0, 0
     return m.group(1), int(m.group(2) or 0), int(m.group(3) or 0)
 
 
 def screen_input_args(si: SystemInfo, fps: int, geometry: Optional[str], enc: EncoderChoice,
-                      win_title: Optional[str] = None) -> tuple[list[str], list[str]]:
+                      win_title: Optional[str] = None,
+                      win_hwnd: Optional[str] = None,
+                      screen_device: Optional[str] = None) -> tuple[list[str], list[str]]:
     """Return (pre_input_args, input_args).
 
     geometry: 'WxH+X+Y' region of the desktop (a monitor, window rect, or custom
@@ -984,15 +1527,24 @@ def screen_input_args(si: SystemInfo, fps: int, geometry: Optional[str], enc: En
         if size:
             inp += ["-video_size", size]
         display = os.environ.get("DISPLAY", ":0.0")
+        # xcbgrab's URL syntax always requires a literal '+' separator before
+        # the signed X coordinate (a left monitor becomes ':0.0+-1920,0').
         inp += ["-i", f"{display}+{ox},{oy}"]
     elif si.os == "macos":
-        # avfoundation captures a whole display by index; geometry => screen index.
-        screen_idx = (geometry or "1").split("x")[0] if geometry and "x" not in geometry else (geometry or "1")
+        # AVFoundation display indices are not stable (cameras are in the same
+        # index space), so use the actual "Capture screen N" id we enumerated.
+        if not screen_device:
+            die("No macOS screen source was detected. Grant Screen Recording "
+                "permission, reconnect displays, then run 'turborec targets'.")
+        screen_idx = screen_device
         inp += ["-f", "avfoundation", "-framerate", str(fps),
                 "-capture_cursor", "1", "-i", f"{screen_idx}:none"]
     elif si.os == "windows":
-        inp += ["-f", "gdigrab", "-framerate", str(fps), "-thread_queue_size", "1024"]
-        if win_title:
+        inp += ["-rtbufsize", "512M", "-f", "gdigrab",
+                "-framerate", str(fps), "-thread_queue_size", "1024"]
+        if win_hwnd:
+            inp += ["-i", f"hwnd={win_hwnd}"]           # stable native handle
+        elif win_title:
             inp += ["-i", f"title={win_title}"]           # native window capture
         else:
             size, ox, oy = _parse_geometry(geometry)
@@ -1013,7 +1565,8 @@ def audio_input_args(si: SystemInfo, dev: AudioDevice) -> list[str]:
     if si.os == "macos":
         return ["-f", "avfoundation", "-thread_queue_size", "1024", "-i", f"none:{dev.id}"]
     if si.os == "windows":
-        return ["-f", "dshow", "-thread_queue_size", "1024", "-i", f"audio={dev.id}"]
+        return ["-rtbufsize", "256M", "-f", "dshow",
+                "-thread_queue_size", "1024", "-i", f"audio={dev.id}"]
     return []
 
 
@@ -1036,7 +1589,8 @@ def camera_input_args(si: SystemInfo, spec: RecordSpec) -> list[str]:
         # DirectShow is strict: a hardcoded -framerate the device lacks aborts the
         # capture, so we let it negotiate its native rate (the CFR output fills any
         # shortfall). thread_queue_size keeps the overlay smooth under load.
-        return ["-f", "dshow", "-thread_queue_size", "1024", "-i", f"video={cam}"]
+        return ["-rtbufsize", "256M", "-f", "dshow",
+                "-thread_queue_size", "1024", "-i", f"video={cam}"]
     return []
 
 
@@ -1086,7 +1640,7 @@ class VideoDevice:
     label: str
 
 
-def detect_cameras(si: SystemInfo) -> list[VideoDevice]:
+def detect_cameras(si: SystemInfo, refresh: bool = False) -> list[VideoDevice]:
     """Enumerate webcams/capture devices for the overlay picker."""
     cams: list[VideoDevice] = []
     if si.os == "linux":
@@ -1106,9 +1660,7 @@ def detect_cameras(si: SystemInfo) -> list[VideoDevice]:
             if re.search(r"\d+x\d+", probe):
                 cams.append(VideoDevice(id=path, label=name or base))
     elif si.os == "macos":
-        out = run_cmd([si.ffmpeg, "-hide_banner", "-f", "avfoundation",
-                       "-list_devices", "true", "-i", ""])
-        video, _ = _parse_avfoundation_devices(out)
+        video, _ = _enumerate_avfoundation(si.ffmpeg, refresh=refresh)
         for entry in video:
             idx, _, name = entry.partition(": ")
             low = name.lower()
@@ -1116,19 +1668,9 @@ def detect_cameras(si: SystemInfo) -> list[VideoDevice]:
                 continue
             cams.append(VideoDevice(id=idx, label=name))
     elif si.os == "windows":
-        out = run_cmd([si.ffmpeg, "-hide_banner", "-f", "dshow",
-                       "-list_devices", "true", "-i", "dummy"])
-        video_section = False
-        for line in out.splitlines():
-            if "DirectShow video devices" in line:
-                video_section = True
-                continue
-            if "DirectShow audio devices" in line:
-                video_section = False
-                continue
-            m = re.search(r'"([^"]+)"', line)
-            if m and video_section:
-                cams.append(VideoDevice(id=m.group(1), label=m.group(1)))
+        for source in _enumerate_dshow(si.ffmpeg, refresh=refresh):
+            if "video" in source.media_types:
+                cams.append(VideoDevice(id=source.id, label=source.label))
     return cams
 
 
@@ -1168,6 +1710,8 @@ class RecordSpec:
     duration: Optional[float] = None   # stop after N seconds (ffmpeg -t)
     geometry: Optional[str] = None     # capture region "WxH+X+Y" (full screen if None)
     win_title: Optional[str] = None    # Windows gdigrab window title (window capture)
+    win_hwnd: Optional[str] = None     # Windows gdigrab stable HWND
+    screen_device: Optional[str] = None  # macOS AVFoundation display index
     wl_output: Optional[str] = None    # Wayland output name (wf-recorder -o)
     wl_geometry: Optional[str] = None  # Wayland output-local region "X,Y WxH"
     stream_url: Optional[str] = None   # full RTMP(S) target (ingest URL + key) => go live
@@ -1233,6 +1777,7 @@ def _audio_src_filter(spec: RecordSpec, is_mic: bool = False) -> str:
 
 
 def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
+    _validate_capture_geometry(si, spec)
     is_video = spec.mode.startswith("video")
     wants_mic = spec.mode in ("video_both", "video_mic", "audio_mic", "audio_both")
     wants_sys = spec.mode in ("video_both", "video_system", "audio_system", "audio_both")
@@ -1257,7 +1802,9 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
         enc = choose_encoder(si, "h264" if spec.stream_url else spec.codec,
                              spec.force_software, spec.backend)
         geometry = spec.geometry or spec.region
-        pre, vin = screen_input_args(si, spec.fps, geometry, enc, spec.win_title)
+        pre, vin = screen_input_args(
+            si, spec.fps, geometry, enc, spec.win_title,
+            spec.win_hwnd, spec.screen_device)
         cmd += pre + vin
         if spec.camera:                       # webcam overlay → a second video input
             cmd += camera_input_args(si, spec)
@@ -1286,6 +1833,12 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
 
     if is_video:
         enc_vf = video_filter_for(enc)  # type: ignore[arg-type]  format/hwupload for the encoder
+        capture_vf = None
+        if si.os == "macos" and geometry:
+            region = _parse_wxhxy(geometry)
+            if region:
+                rw, rh, rx, ry = region
+                capture_vf = f"crop={rw}:{rh}:{rx}:{ry}"
         # Output-resolution scaling runs in software BEFORE any hwupload, so it
         # works identically for software, NVENC, and VAAPI/QSV encoders.
         sc = _scale_chain(spec.resolution)
@@ -1293,8 +1846,10 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
             # Composite: scale the screen to the output size, scale the webcam,
             # overlay it at the chosen corner, THEN apply the encoder's format
             # (overlay is a software filter, so it must precede any hwupload).
+            screen_chain = ",".join(
+                f for f in (capture_vf, sc) if f) or "null"
             filtergraph_parts.append(
-                f"[{video_index}:v]{sc}[bg]" if sc else f"[{video_index}:v]null[bg]")
+                f"[{video_index}:v]{screen_chain}[bg]")
             filtergraph_parts.append(f"[{cam_index}:v]{_camera_overlay_size(si, spec)}[cam]")
             comp_out = "[v]" if enc_vf else "[comp]"
             filtergraph_parts.append(
@@ -1302,9 +1857,7 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
                 + (f",{enc_vf}{comp_out}" if enc_vf else comp_out))
             maps += ["-map", comp_out]
         else:
-            vf = enc_vf
-            if sc:
-                vf = f"{sc},{vf}" if vf else sc
+            vf = ",".join(f for f in (capture_vf, sc, enc_vf) if f) or None
             if vf:
                 filtergraph_parts.append(f"[{video_index}:v]{vf}[v]")
                 maps += ["-map", "[v]"]
@@ -1425,14 +1978,31 @@ def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False,
 
 
 def _parse_wxhxy(geom: Optional[str]) -> Optional[tuple[int, int, int, int]]:
-    """Parse 'WxH+X+Y' or 'WxH' (offset defaults to 0,0) -> (w,h,x,y)."""
+    """Parse ``WxH±X±Y`` or ``WxH`` into width, height and signed offsets."""
     if not geom:
         return None
-    m = re.match(r"(\d+)x(\d+)(?:\+(\d+)\+(\d+))?$", geom.strip())
+    m = re.fullmatch(
+        r"(\d+)x(\d+)(?:([+-]\d+)([+-]\d+))?",
+        geom.strip(),
+    )
     if not m:
         return None
     w, h, x, y = m.group(1), m.group(2), m.group(3) or 0, m.group(4) or 0
     return int(w), int(h), int(x), int(y)
+
+
+def _validate_capture_geometry(si: SystemInfo, spec: RecordSpec) -> None:
+    """Fail closed: a malformed region must never become full-screen capture."""
+    for label, value in (("--region", spec.region),
+                         ("capture geometry", spec.geometry)):
+        if not value:
+            continue
+        parsed = _parse_wxhxy(value)
+        if not parsed or parsed[0] <= 0 or parsed[1] <= 0:
+            die(f"{label} must use WxH or WxH+X+Y with non-zero dimensions")
+        if si.os == "macos" and (parsed[2] < 0 or parsed[3] < 0):
+            die("macOS regions must use non-negative coordinates within "
+                "the selected screen")
 
 
 def _global_to_output_region(si: SystemInfo, geom: str,
@@ -1781,9 +2351,9 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
         devices = ([spec.monitor] if wants_sys else []) + ([spec.mic] if wants_mic else [])
         target = spec.stream_url or out_path
         composecmd = _ffmpeg_compose_cmd(si, spec, fifo, devices, target)
-        # A recording's ffmpeg must exit 0 to finalize the file → stop it with 'q';
-        # a stream's push proc is stopped with SIGINT (255 exit normalized below).
-        mux_stop = "int" if spec.stream_url else "q"
+        # FFmpeg always supports its stdin ``q`` command, including on Windows
+        # where send_signal(SIGINT) is invalid without a new process group.
+        mux_stop = "q"
         label = ("ffmpeg (overlay + audio + RTMP push)" if spec.stream_url
                  else "ffmpeg (webcam overlay + audio → file)")
         return RecordPlan(
@@ -1845,6 +2415,7 @@ def _audio_ext(spec: RecordSpec) -> str:
 
 def build_plan(si: SystemInfo, spec: RecordSpec, preview: bool = False) -> RecordPlan:
     """Backend-agnostic recording plan. Wayland video -> wf-recorder; else ffmpeg."""
+    _validate_capture_geometry(si, spec)
     is_video = spec.mode.startswith("video")
     wants_mic = spec.mode in ("video_both", "video_mic", "audio_mic", "audio_both")
     wants_sys = spec.mode in ("video_both", "video_system", "audio_system", "audio_both")
@@ -1864,7 +2435,7 @@ def build_plan(si: SystemInfo, spec: RecordSpec, preview: bool = False) -> Recor
     if is_video and si.os == "linux" and si.display_server == "wayland":
         return _build_wayland_plan(si, spec, preview, out_dir, wants_mic, wants_sys)
     cmd, out_path = build_command(si, spec)
-    return RecordPlan(out_path, [("ffmpeg", cmd, "int" if streaming else "q")],
+    return RecordPlan(out_path, [("ffmpeg", cmd, "q")],
                       is_video=is_video, self_timed=not streaming, backend="ffmpeg",
                       is_stream=streaming, secret=spec.stream_secret)
 
@@ -1925,15 +2496,35 @@ def record_plan(plan: "RecordPlan", dry_run: bool = False, countdown_secs: int =
     # input-open (e.g. the webcam is busy), waiting only on wf-recorder would hang
     # forever. Polling every member surfaces an early reader failure immediately.
     procs = [p for p, _ in running]
+    stop_requested = threading.Event()
+
+    def _watch_for_q() -> None:
+        # Most terminals are line-buffered, so users may type q then Enter.
+        # This daemon reader lets the main thread continue polling every process.
+        try:
+            while not stop_requested.is_set():
+                ch = sys.stdin.read(1)
+                if not ch:
+                    return
+                if ch.casefold() == "q":
+                    stop_requested.set()
+                    return
+        except (OSError, ValueError):
+            return
+
+    if sys.stdin.isatty():
+        threading.Thread(target=_watch_for_q, daemon=True).start()
     deadline = (time.monotonic() + duration
                 if duration and duration > 0 and not plan.self_timed else None)
     try:
-        while not any(p.poll() is not None for p in procs):
+        while (not stop_requested.is_set()
+               and not any(p.poll() is not None for p in procs)):
             if deadline is not None and time.monotonic() >= deadline:
                 break
             time.sleep(0.2)
     except KeyboardInterrupt:
         pass
+    stop_requested.set()
     _stop_all(running)
     _pulse_mix_unload(pulse_ids)
 
@@ -2002,7 +2593,10 @@ def _signal_stop(proc: subprocess.Popen, method: str) -> None:
         return
     if method == "int":
         if hasattr(signal, "SIGINT"):
-            proc.send_signal(signal.SIGINT)
+            try:
+                proc.send_signal(signal.SIGINT)
+            except (OSError, ValueError):
+                pass
     else:
         try:
             if proc.stdin and not proc.stdin.closed:
@@ -2025,8 +2619,11 @@ def _stop_all(running: list) -> None:
         try:
             proc.wait(timeout=8)
         except subprocess.TimeoutExpired:
-            if method != "int" and hasattr(signal, "SIGINT"):
-                proc.send_signal(signal.SIGINT)
+            if method != "int" and os.name != "nt" and hasattr(signal, "SIGINT"):
+                try:
+                    proc.send_signal(signal.SIGINT)
+                except (OSError, ValueError):
+                    pass
             try:
                 proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
@@ -2046,7 +2643,10 @@ def _stop_proc(proc: subprocess.Popen, method: str) -> None:
         _graceful_stop(proc)
         return
     if hasattr(signal, "SIGINT"):
-        proc.send_signal(signal.SIGINT)
+        try:
+            proc.send_signal(signal.SIGINT)
+        except (OSError, ValueError):
+            pass
     try:
         proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
@@ -2068,8 +2668,11 @@ def _graceful_stop(proc: subprocess.Popen) -> None:
     try:
         proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
-        if hasattr(signal, "SIGINT"):
-            proc.send_signal(signal.SIGINT)
+        if os.name != "nt" and hasattr(signal, "SIGINT"):
+            try:
+                proc.send_signal(signal.SIGINT)
+            except (OSError, ValueError):
+                pass
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -2218,6 +2821,24 @@ MODES = (
     "audio_both", "audio_mic", "audio_system",
 )
 
+
+def _automatic_mode(si: SystemInfo) -> str:
+    """Best one-click video mode for the devices that are actually available."""
+    return _mode_for_audio(si.default_mic, si.default_monitor)
+
+
+def _mode_for_audio(
+        mic: Optional[AudioDevice],
+        monitor: Optional[AudioDevice]) -> str:
+    """Best video mode for an already-resolved mic/loopback selection."""
+    if mic and monitor:
+        return "video_both"
+    if mic:
+        return "video_mic"
+    if monitor:
+        return "video_system"
+    return "video_only"
+
 # RC keys that may appear under [record] / top level of the config file. Each
 # maps to the matching argparse dest; values become argparse defaults so an
 # explicit CLI flag always wins.
@@ -2303,7 +2924,14 @@ def _resolve_audio_devices(si: SystemInfo, args) -> tuple[Optional[AudioDevice],
         if mic is None:
             mic = AudioDevice(id=args.mic_device, label=args.mic_device)
     if getattr(args, "system_device", None):
-        mon = next((m for m in si.monitors if m.id == args.system_device or m.label == args.system_device), None)
+        system_candidates = list(si.monitors)
+        if si.os == "windows":
+            system_candidates += si.mics
+        mon = next(
+            (m for m in system_candidates
+             if m.id == args.system_device or m.label == args.system_device),
+            None,
+        )
         if mon is None:
             mon = AudioDevice(id=args.system_device, label=args.system_device, is_monitor=True)
     return mic, mon
@@ -2320,7 +2948,22 @@ def _resolve_backend(args) -> str:
 def _resolve_capture_target(si: SystemInfo, args) -> Optional[CaptureTarget]:
     """Return the selected CaptureTarget from CLI flags, or None for full screen."""
     if getattr(args, "region", None):
-        return CaptureTarget(kind="region", label="region", geometry=args.region)
+        target = CaptureTarget(
+            kind="region", label="region", geometry=args.region)
+        if si.os == "macos":
+            region = _parse_wxhxy(args.region)
+            if not region:
+                die("--region must use WxH or WxH+X+Y")
+            if region[2] < 0 or region[3] < 0:
+                die("macOS regions must use non-negative coordinates within "
+                    "the selected screen")
+            screens = detect_capture_targets(si)
+            screen = screens[0] if screens else None
+            if not screen or not screen.input_id:
+                die("No macOS screen source was detected. Grant Screen "
+                    "Recording permission and run 'turborec targets'.")
+            target.input_id = screen.input_id
+        return target
     targets = detect_capture_targets(si)
     sel = getattr(args, "monitor", None)
     if sel:
@@ -2332,9 +2975,17 @@ def _resolve_capture_target(si: SystemInfo, args) -> Optional[CaptureTarget]:
     sel = getattr(args, "window", None)
     if sel:
         for t in targets:
-            if t.kind == "window" and (sel == (t.win_title or "") or sel.lower() in t.label.lower()):
+            if t.kind == "window" and (
+                    sel == (t.win_title or "")
+                    or sel.casefold() == (t.win_hwnd or "").casefold()
+                    or sel.lower() in t.label.lower()):
                 return t
         die(f"Window '{sel}' not found. Try: turborec targets")
+    # Windows needs the virtual-desktop origin (which can be negative), and
+    # macOS needs the enumerated AVFoundation screen index. Other backends have
+    # reliable native defaults and retain the lightweight None path.
+    if targets and si.os in ("windows", "macos"):
+        return targets[0]
     return None
 
 
@@ -2356,6 +3007,8 @@ def _apply_target_to_spec(si: SystemInfo, target: Optional[CaptureTarget], spec:
     else:
         spec.geometry = target.geometry
         spec.win_title = target.win_title
+        spec.win_hwnd = target.win_hwnd
+        spec.screen_device = target.input_id
 
 
 def cmd_record(args) -> int:
@@ -2363,6 +3016,7 @@ def cmd_record(args) -> int:
     backend = _resolve_backend(args)
     target = _resolve_capture_target(si, args)
     mic, mon = _resolve_audio_devices(si, args)
+    mode = _mode_for_audio(mic, mon) if args.mode == "auto" else args.mode
     # Strip once at the source so the value embedded in the RTMP URL is byte-for-byte
     # the value stored as the redaction secret (a whitespace-padded key would otherwise
     # slip past _mask_secret's literal substring match and print in cleartext).
@@ -2372,7 +3026,7 @@ def cmd_record(args) -> int:
         die("--stream-url must be an rtmp:// or rtmps:// ingest URL")
     stream_url = _stream_target(ingest, key) if key else None
     spec = RecordSpec(
-        mode=args.mode, quality=args.quality, codec=args.codec, fps=args.fps,
+        mode=mode, quality=args.quality, codec=args.codec, fps=args.fps,
         resolution=args.resolution,
         region=args.region, out_dir=args.out or "", audio_rate=args.audio_rate,
         audio_codec=args.audio_codec, audio_channels=args.audio_channels, mic=mic, monitor=mon,
@@ -2560,8 +3214,10 @@ def build_parser(rc: Optional[dict] = None) -> argparse.ArgumentParser:
     sub.add_parser("gui", help="launch the graphical interface").set_defaults(func=cmd_gui)
 
     r = sub.add_parser("record", help="record screen and/or audio")
-    r.add_argument("-m", "--mode", choices=MODES, default=d("mode", "video_both"),
-                   help="what to capture (default: video_both)")
+    r.add_argument("-m", "--mode", choices=("auto",) + MODES,
+                   default=d("mode", "auto"),
+                   help="what to capture (default: auto — uses every available "
+                        "audio source and degrades safely)")
     r.add_argument("-q", "--quality", choices=QUALITY_LEVELS, default=d("quality", "best"),
                    help="quality preset (default: best)")
     r.add_argument("-R", "--resolution", choices=RESOLUTIONS, default=d("resolution", "native"),
@@ -2926,7 +3582,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
                     "after_refresh", "after_copy", "after_close", "after_stop"):
             _cancel_after(key)
 
-    mode_var = tk.StringVar(value="video_both")
+    mode_var = tk.StringVar(value=_automatic_mode(si))
     quality_var = tk.StringVar(value="best")
     res_var = tk.StringVar(value="native")
     codec_var = tk.StringVar(value="h264")
@@ -3029,8 +3685,8 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     def _refresh_sources(*_a):
         targets = detect_capture_targets(si)
         cap_targets["list"] = targets
-        cap_targets["map"] = {t.label: t for t in targets}
-        labels = [t.label for t in targets]
+        cap_targets["map"] = _label_choice_map(targets)
+        labels = list(cap_targets["map"])
         source_cb.configure(values=labels)
         if source_var.get() not in cap_targets["map"]:
             source_var.set(labels[0] if labels else "")
@@ -3059,14 +3715,39 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     audio_hdr_wrap.pack(fill="x", pady=(0, 8))
     section_header(audio_hdr_wrap, "Audio").pack(side="left", fill="x", expand=True)
 
+    def _system_devices():
+        choices = list(si.monitors)
+        # DirectShow has no universal marker that distinguishes localized
+        # loopback/capture-card sources from microphones. Keep automatic
+        # selection conservative, but let Windows users explicitly choose any
+        # detected audio input in the System audio field.
+        if si.os == "windows":
+            known = {d.id.casefold() for d in choices}
+            choices += [d for d in si.mics if d.id.casefold() not in known]
+        return choices
+
+    audio_choices = {"mic": {}, "system": {}}
+
     def _dev_lists():
-        mic_labels = [m.label for m in si.mics] or [_GUI_NONE]
-        mon_labels = [m.label for m in si.monitors] or [_GUI_NONE]
+        audio_choices["mic"] = _label_choice_map(si.mics)
+        audio_choices["system"] = _label_choice_map(_system_devices())
+        mic_labels = list(audio_choices["mic"]) or [_GUI_NONE]
+        mon_labels = list(audio_choices["system"])
+        if not mon_labels or (si.os == "windows" and not si.default_monitor):
+            mon_labels.insert(0, _GUI_NONE)
         return mic_labels, mon_labels
 
+    def _display_for_device(which, device, fallback):
+        if device:
+            for display, candidate in audio_choices[which].items():
+                if candidate.id == device.id:
+                    return display
+        return fallback
+
     mic_labels, mon_labels = _dev_lists()
-    mic_var.set(si.default_mic.label if si.default_mic else mic_labels[0])
-    mon_var.set(si.default_monitor.label if si.default_monitor else mon_labels[0])
+    mic_var.set(_display_for_device("mic", si.default_mic, mic_labels[0]))
+    mon_var.set(_display_for_device(
+        "system", si.default_monitor, mon_labels[0]))
 
     # refresh button (re-probe audio)
     refresh_btn = tk.Button(
@@ -3193,8 +3874,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     _cams = detect_cameras(si)
     cam_labels = ["Off"]
     cam_map = {"Off": None}
-    for c in _cams:
-        lbl = c.label if c.label not in cam_map else f"{c.label} ({os.path.basename(c.id)})"
+    for lbl, c in _label_choice_map(_cams).items():
         cam_labels.append(lbl)
         cam_map[lbl] = c.id
     cam_row = tk.Frame(inner, bg=C["bg"])
@@ -3203,6 +3883,33 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     cam_cb = _combo(cam_row, camera_var, cam_labels)
     cam_cb.configure(width=18)
     cam_cb.pack(side="left")
+    cam_refresh = tk.Button(
+        cam_row, text="⟳", font=(sans_fam, 10), bd=0, relief="flat",
+        highlightthickness=0, cursor="hand2", bg=C["bg"], fg=C["muted"],
+        activebackground=C["bg"], activeforeground=C["accent"], takefocus=0)
+    cam_refresh.pack(side="left", padx=(4, 0))
+
+    def _refresh_cameras(refresh=True):
+        if state["recording"] or state["stopping"]:
+            return
+        previous_id = cam_map.get(camera_var.get())
+        choices = _label_choice_map(detect_cameras(si, refresh=refresh))
+        cam_map.clear()
+        cam_map["Off"] = None
+        for display, device in choices.items():
+            cam_map[display] = device.id
+        labels = list(cam_map)
+        cam_cb.configure(values=labels)
+        selected = next(
+            (display for display, device_id in cam_map.items()
+             if previous_id and device_id == previous_id),
+            "Off",
+        )
+        camera_var.set(selected)
+        schedule_preview()
+
+    cam_refresh.configure(command=_refresh_cameras)
+    _hoverable(cam_refresh, C["bg"], C["bg"], C["muted"], C["accent"])
     label(cam_row, "Size", fg=C["muted"]).pack(side="left", padx=(12, 6))
     camsize_cb = _combo(cam_row, camsize_var, CAMERA_SIZES)
     camsize_cb.configure(width=8)
@@ -3389,8 +4096,8 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         _restyle_backend()
 
     # ---- build a spec from the current widgets ----------------------------
-    def find_dev(devs, lab, fallback_monitor=False):
-        d = next((x for x in devs if x.label == lab), None)
+    def find_dev(which, lab, fallback_monitor=False):
+        d = audio_choices[which].get(lab)
         if d is None and _has_dev(lab):
             d = AudioDevice(id=lab, label=lab, is_monitor=fallback_monitor)
         return d
@@ -3405,10 +4112,14 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         # right fields for X11 (geometry/win_title) or Wayland (wl_output/wl_geometry).
         region_override = region_var.get().strip() or None
         if region_override:
-            target = CaptureTarget(kind="region", label="region", geometry=region_override)
+            selected = cap_targets["map"].get(source_var.get())
+            target = CaptureTarget(
+                kind="region", label="region", geometry=region_override,
+                input_id=(selected.input_id if selected and si.os == "macos"
+                          else None),
+            )
         else:
-            t = cap_targets["map"].get(source_var.get())
-            target = t if (t and t.kind != "screen") else None
+            target = cap_targets["map"].get(source_var.get())
         key = stream_var.get().strip() or None
         spec = RecordSpec(
             mode=mode_var.get(),
@@ -3419,8 +4130,8 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             out_dir=out_var.get(),
             audio_codec=acodec_var.get(),
             audio_channels=achan_var.get(),
-            mic=find_dev(si.mics, mic_var.get()),
-            monitor=find_dev(si.monitors, mon_var.get(), fallback_monitor=True),
+            mic=find_dev("mic", mic_var.get()),
+            monitor=find_dev("system", mon_var.get(), fallback_monitor=True),
             backend=backend_var.get(),
             stream_url=(_stream_target("", key) if key else None),
             stream_secret=key,
@@ -3507,9 +4218,10 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         # poll for the capture process dying on its own → tear everything down
         # (stop the other process(es), unload the PipeWire mix, mux/cleanup)
         procs = state.get("procs") or []
-        primary = procs[0][0] if procs else None
-        if primary is not None and primary.poll() is not None and not state["stopping"]:
-            do_stop(crashed=True, code=primary.returncode or 0)
+        finished = next(
+            (proc for proc, _method in procs if proc.poll() is not None), None)
+        if finished is not None and not state["stopping"]:
+            do_stop(crashed=True, code=finished.returncode or 0)
             return
         state["after_tick"] = root.after(1000, _tick)
 
@@ -3714,7 +4426,8 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             return
         refresh_btn.configure(fg=C["accent"])
         try:
-            mics, monitors, dmic, dmon = detect_audio(si.os, si.ffmpeg)
+            mics, monitors, dmic, dmon = detect_audio(
+                si.os, si.ffmpeg, refresh=True)
             si.mics, si.monitors = mics, monitors
             si.default_mic, si.default_monitor = dmic, dmon
         except Exception:  # noqa: BLE001
@@ -3722,8 +4435,10 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         new_mic, new_mon = _dev_lists()
         mic_cb.configure(values=new_mic)
         mon_cb.configure(values=new_mon)
-        mic_var.set(si.default_mic.label if si.default_mic else new_mic[0])
-        mon_var.set(si.default_monitor.label if si.default_monitor else new_mon[0])
+        mic_var.set(_display_for_device("mic", si.default_mic, new_mic[0]))
+        mon_var.set(_display_for_device(
+            "system", si.default_monitor, new_mon[0]))
+        _refresh_cameras(refresh=False)
         _refresh_dependent()
         schedule_preview()
         _cancel_after("after_refresh")

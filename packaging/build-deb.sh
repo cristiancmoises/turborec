@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  build-deb.sh — build dist/turborec_3.6.0_all.deb
+#  build-deb.sh — build dist/turborec_3.7.0_all.deb
 #
 #  Stages the install layout from the repository and assembles a Debian
 #  package.  Uses dpkg-deb when available; otherwise falls back to a portable
@@ -17,7 +17,7 @@ set -euo pipefail
 
 # ---- package metadata -------------------------------------------------------
 PKG_NAME="turborec"
-PKG_VERSION="3.6.0"
+PKG_VERSION="3.7.0"
 PKG_ARCH="all"
 
 # ---- resolve paths ----------------------------------------------------------
@@ -112,6 +112,11 @@ chmod 0644 "${PNG_OUT}"
 # documentation
 install -m 0644 "${REPO_ROOT}/README.md" \
     "${STAGE_DIR}/usr/share/doc/${PKG_NAME}/README.md"
+install -d -m 0755 "${STAGE_DIR}/usr/share/doc/${PKG_NAME}/docs"
+install -m 0644 "${REPO_ROOT}/docs/TUTORIAL.md" \
+    "${STAGE_DIR}/usr/share/doc/${PKG_NAME}/docs/TUTORIAL.md"
+install -m 0644 "${REPO_ROOT}/docs/README.pt-BR.md" \
+    "${STAGE_DIR}/usr/share/doc/${PKG_NAME}/docs/README.pt-BR.md"
 
 # =============================================================================
 #  2. Build the control tree

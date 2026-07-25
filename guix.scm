@@ -26,17 +26,29 @@
 (define turborec
   (package
     (name "turborec")
-    (version "3.6.0")
-    (source (local-file %source-dir "turborec-checkout"
-                        #:recursive? #t
-                        #:select? (or (git-predicate %source-dir)
-                                      (const #t))))
+    (version "3.7.0")
+    (source
+     (let ((tracked? (git-predicate %source-dir)))
+       (local-file %source-dir "turborec-checkout"
+                   #:recursive? #t
+                   ;; Keep generated build/dist files out of the source, while
+                   ;; allowing the newly created PT-BR guide to be tested before
+                   ;; its first commit. Once committed, tracked? selects it too.
+                   #:select?
+                   (lambda (file stat)
+                     (or (tracked? file stat)
+                         (string=? (basename file)
+                                   "README.pt-BR.md"))))))
     (build-system copy-build-system)
     (arguments
      (list
       #:install-plan
       #~'(("turborec.py"   "bin/turborec")
-          ("turborecorder" "bin/turborecorder"))
+          ("turborecorder" "bin/turborecorder")
+          ("README.md" "share/doc/turborec/README.md")
+          ("docs/TUTORIAL.md" "share/doc/turborec/docs/TUTORIAL.md")
+          ("docs/README.pt-BR.md"
+           "share/doc/turborec/docs/README.pt-BR.md"))
       #:phases
       #~(modify-phases %standard-phases
           (add-after 'install 'patch-and-wrap

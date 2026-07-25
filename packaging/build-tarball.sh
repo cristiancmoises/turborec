@@ -4,8 +4,8 @@
 #
 #  A portable, architecture-independent binary release that installs on any
 #  Unix with a POSIX shell and Python 3: FreeBSD, OpenBSD, NetBSD, DragonFly,
-#  Linux, illumos, macOS.  Turbo Recorder is pure Python (stdlib only) plus a
-#  POSIX shell front-end, so a single tarball runs everywhere unchanged.
+#  Linux, illumos, macOS. Turbo Recorder's cross-platform engine is pure Python
+#  (stdlib only); the optional Linux-only `turborecorder` front-end uses Bash.
 #
 #  The archive expands to a self-contained tree with an install.sh /
 #  uninstall.sh pair that honours PREFIX and DESTDIR (BSD default PREFIX is
@@ -15,7 +15,7 @@
 #        turborec               (the CLI/GUI engine, run as `turborec`)
 #        turborecorder          (the Bash X11 front-end)
 #        install.sh uninstall.sh
-#        README.md CHANGELOG.md LICENSE
+#        README.md docs/TUTORIAL.md docs/README.pt-BR.md CHANGELOG.md LICENSE
 #        share/applications/turborec.desktop
 #        share/icons/hicolor/scalable/apps/turborec.svg
 #
@@ -69,6 +69,10 @@ install_file "${REPO_ROOT}/turborecorder" "${STAGE}/turborecorder" 0755
 for doc in README.md CHANGELOG.md LICENSE; do
     [ -f "${REPO_ROOT}/${doc}" ] && install_file "${REPO_ROOT}/${doc}" "${STAGE}/${doc}" 0644
 done
+for doc in TUTORIAL.md README.pt-BR.md; do
+    [ -f "${REPO_ROOT}/docs/${doc}" ] && \
+        install_file "${REPO_ROOT}/docs/${doc}" "${STAGE}/docs/${doc}" 0644
+done
 
 # desktop entry + scalable icon (used by the optional desktop integration)
 [ -f "${SCRIPT_DIR}/turborec.desktop" ] && \
@@ -109,6 +113,12 @@ chmod 0755 "${BIN}/turborec" "${BIN}/turborecorder"
 for doc in README.md CHANGELOG.md LICENSE; do
     [ -f "${HERE}/${doc}" ] && cp "${HERE}/${doc}" "${DOCS}/${doc}"
 done
+if [ -d "${HERE}/docs" ]; then
+    mkdir -p "${DOCS}/docs"
+    for doc in TUTORIAL.md README.pt-BR.md; do
+        [ -f "${HERE}/docs/${doc}" ] && cp "${HERE}/docs/${doc}" "${DOCS}/docs/${doc}"
+    done
+fi
 
 if [ -f "${HERE}/share/applications/turborec.desktop" ]; then
     mkdir -p "${APPS}"

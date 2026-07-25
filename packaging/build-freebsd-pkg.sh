@@ -54,6 +54,11 @@ for doc in README.md CHANGELOG.md LICENSE; do
     [ -f "${REPO_ROOT}/${doc}" ] && install -m 0644 "${REPO_ROOT}/${doc}" \
         "${STAGE}${PREFIX}/share/doc/turborec/${doc}"
 done
+mkdir -p "${STAGE}${PREFIX}/share/doc/turborec/docs"
+for doc in TUTORIAL.md README.pt-BR.md; do
+    [ -f "${REPO_ROOT}/docs/${doc}" ] && install -m 0644 "${REPO_ROOT}/docs/${doc}" \
+        "${STAGE}${PREFIX}/share/doc/turborec/docs/${doc}"
+done
 
 # ---- plist: every staged file, path relative to PREFIX ----------------------
 PLIST="${WORK}/pkg-plist"

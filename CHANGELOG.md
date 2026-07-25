@@ -5,6 +5,67 @@ All notable changes to Turbo Recorder are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0] — 2026-07-24
+
+### Fixed
+- **Windows microphones, webcams, and capture cards are detected again.**
+  Turbo Recorder now consumes FFmpeg 5–8's structured DirectShow source list
+  and retains a parser for older `-list_devices` output. Friendly names are
+  paired with their stable `@device_…` identifiers instead of treating
+  `Alternative name` lines as duplicate devices.
+- **Unicode Windows device names remain usable.** FFmpeg emits DirectShow names
+  as UTF-8; subprocess output is now decoded as UTF-8 before falling back to the
+  native code page, fixing names containing accents, `®`, Japanese characters,
+  and other non-ASCII text.
+- Slow DirectShow drivers no longer make every device disappear: enumeration
+  has a hardware-appropriate timeout and preserves output produced before a
+  timeout. Audio and camera discovery also share a short-lived cache instead of
+  freezing startup with repeated probes.
+- **Windows multi-monitor and window capture now matches the documentation.**
+  Native `EnumDisplayMonitors` / `EnumWindows` discovery supplies physical-pixel
+  geometry and stable `hwnd=0x…` targets. Signed offsets now work for monitors
+  positioned left of or above the primary display.
+- **macOS screen capture uses the correct AVFoundation display index.** Screen
+  pseudo-devices are enumerated explicitly instead of assuming index `1`
+  (which can be a webcam), multiple displays appear in the source picker, and
+  explicit regions are cropped from the selected real display.
+- Invalid capture regions now fail closed instead of silently recording the
+  full desktop. Signed X11/Wayland/Windows monitor coordinates are preserved.
+- FFmpeg streams stop cleanly on Windows through FFmpeg's `q` command instead of
+  an unsupported `SIGINT` call. The CLI now actually watches for `q` as its
+  on-screen instructions promise.
+
+### Changed
+- Recording mode now defaults to **`auto`**: screen + mic + system audio when
+  both exist, screen + whichever audio source is available, or video-only.
+  Explicit modes remain strict. This makes first-run recording work on ordinary
+  Windows/macOS installations where no loopback device is enabled.
+- Windows loopback recognition includes Brazilian Portuguese **Mixagem
+  estéreo** and other strong localized/virtual-cable names. The GUI also permits
+  an explicit system-audio selection from every DirectShow audio source without
+  misclassifying every virtual microphone as loopback.
+- Duplicate friendly names remain independently selectable in the GUI; the
+  stable device ID, window handle, or display ID is retained behind each label.
+- Advertised hardware encoders are validated with a cached one-frame probe.
+  Auto mode skips NVENC/QSV/VAAPI/AMF/VideoToolbox entries that the installed
+  GPU or driver cannot actually initialize and falls back to software.
+- Linux audio detection supports older PulseAudio (`pactl info`) and no longer
+  invents default devices when the Pulse/PipeWire server is unreachable.
+
+### Documentation and testing
+- Added a complete Brazilian Portuguese guide:
+  [`docs/README.pt-BR.md`](docs/README.pt-BR.md).
+- Added regression coverage for current/legacy DirectShow output, Unicode names,
+  stable IDs, signed geometry, HWND capture, macOS display indices, automatic
+  modes, encoder fallback, and graceful shutdown.
+- Push/PR tests now run on Linux, Windows, and macOS with Python 3.9 and 3.13.
+  Release builds are gated by the same three-OS test suite, and the Windows
+  package verifies `dshow`, `gdigrab`, JSON device probes, and a real H.264
+  encode before it is published.
+- Release jobs now converge on one atomic publishing gate. All eight platform
+  artifacts must exist and be non-empty; `SHA256SUMS` is generated, GitHub is
+  verified, and Forgejo/Codeberg uploads verify remote byte sizes.
+
 ## [3.6.0] — 2026-07-13
 
 ### Fixed
@@ -255,6 +316,7 @@ all confirmed findings fixed:
   audio (no more hardcoded device names), full-screen capture by default, and adds
   HEVC / codec / quality / audio-codec options.
 
+[3.7.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.7.0
 [3.6.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.6.0
 [3.5.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.5.0
 [3.4.0]: https://github.com/cristiancmoises/turborec/releases/tag/v3.4.0

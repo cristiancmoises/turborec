@@ -1,0 +1,46 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cross-platform:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ['3.9', '3.13']
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Compile and run unit tests
+        run: |
+          python -m py_compile turborec.py
+          python -m unittest discover -s tests -v
+          python turborec.py --version
+
+      - name: Validate shell entry points
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          bash -n turborecorder
+          bash -n packaging/build-deb.sh
+          bash -n packaging/build-rpm.sh
+          bash -n packaging/build-appimage.sh
+          bash -n packaging/publish-release.sh

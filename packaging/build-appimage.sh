@@ -2,7 +2,7 @@
 # =============================================================================
 #  build-appimage.sh — package Turbo Recorder as a relocatable AppImage
 #
-#  Output: dist/Turbo_Recorder-3.6.0-x86_64.AppImage
+#  Output: dist/Turbo_Recorder-3.7.0-x86_64.AppImage
 #
 #  WHAT THIS PRODUCES
 #  ------------------
@@ -32,7 +32,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 APP_NAME="turborec"
 APP_PRETTY="Turbo Recorder"
-VERSION="3.6.0"
+VERSION="3.7.0"
 MAINTAINER="Cristian Cezar Moises <ethicalhacker@riseup.net>"
 HOMEPAGE="https://github.com/cristiancmoises/turborec"
 LICENSE="GPL-3.0"
@@ -55,6 +55,8 @@ OUTPUT="${DIST_DIR}/${APP_PRETTY// /_}-${VERSION}-${ARCH}.AppImage"
 SRC_PY="${REPO_ROOT}/turborec.py"
 SRC_BASH="${REPO_ROOT}/turborecorder"
 SRC_README="${REPO_ROOT}/README.md"
+SRC_TUTORIAL="${REPO_ROOT}/docs/TUTORIAL.md"
+SRC_PTBR="${REPO_ROOT}/docs/README.pt-BR.md"
 SRC_DESKTOP="${SCRIPT_DIR}/${APP_NAME}.desktop"
 SRC_SVG="${SCRIPT_DIR}/${APP_NAME}.svg"
 SRC_APPRUN="${SCRIPT_DIR}/AppRun"
@@ -94,6 +96,8 @@ log "license:    ${LICENSE}"
 need_file "${SRC_PY}"
 need_file "${SRC_BASH}"
 need_file "${SRC_README}"
+need_file "${SRC_TUTORIAL}"
+need_file "${SRC_PTBR}"
 need_file "${SRC_DESKTOP}"
 need_file "${SRC_SVG}"
 need_file "${SRC_APPRUN}"
@@ -157,6 +161,11 @@ install -m 0644 "${SRC_DESKTOP}" \
 
 log "installing documentation"
 install -m 0644 "${SRC_README}" "${APPDIR}/usr/share/doc/${APP_NAME}/README.md"
+install -d -m 0755 "${APPDIR}/usr/share/doc/${APP_NAME}/docs"
+install -m 0644 "${SRC_TUTORIAL}" \
+    "${APPDIR}/usr/share/doc/${APP_NAME}/docs/TUTORIAL.md"
+install -m 0644 "${SRC_PTBR}" \
+    "${APPDIR}/usr/share/doc/${APP_NAME}/docs/README.pt-BR.md"
 
 log "installing scalable icon"
 install -m 0644 "${SRC_SVG}" \

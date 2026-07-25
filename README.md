@@ -11,7 +11,7 @@
 
 <img src="docs/turborec-gui.png" alt="Turbo Recorder — dark, hardware-accelerated screen recorder GUI" width="860">
 
-📺 **[Watch a sample recording](https://youtu.be/mlf531Da9Qo?si=RTaSB9dJ4NSbGsOm)** &nbsp;·&nbsp; 🪞 also mirrored on [Forgejo](https://git.securityops.co/securityops/turborec)
+📺 **[Watch a sample recording](https://youtu.be/mlf531Da9Qo?si=RTaSB9dJ4NSbGsOm)** &nbsp;·&nbsp; 🪞 also mirrored on [Forgejo](https://git.securityops.co/cristiancmoises/turborec)
 
 </div>
 
@@ -24,6 +24,8 @@ builds a **real-time, correct-speed** FFmpeg pipeline and records.
 ### ✨ Highlights
 
 - 🎯 **Zero config** — auto-detects OS, CPU, GPU, encoder, screen, mic & system audio
+- 🧩 **Safe automatic mode** — uses mic + system audio when available and
+  gracefully falls back to mic, loopback, or video-only when a source is absent
 - ⚡ **Hardware accelerated** — NVENC · Quick Sync · VAAPI · AMF · VideoToolbox, with automatic CPU fallback
 - 🎞️ **Real-time, correct-speed capture** — constant frame rate, so recordings never play back in slow motion
 - 🌊 **Wayland _and_ X11** — wlroots (sway/Hyprland/river) capture via `wf-recorder`, with perfectly A/V-synced mic+system audio
@@ -35,7 +37,9 @@ builds a **real-time, correct-speed** FFmpeg pipeline and records.
 - 🎥 **Webcam overlay (picture-in-picture)** — overlay your camera on the recording *or* stream, with your choice of device, size and corner (`--camera`)
 - 🔇 **Built-in noise suppression** — NoiseTorch-style mic denoise (`--denoise light/medium/strong`), no extra app or virtual device needed
 - 🧠 **Adaptive quality** — presets scale with the pixel rate: best-quality at 1080p, fast enough to stay real-time at 4K
-- 🪟 **Zero-install Windows app** — a single `.exe` with Python, Tk **and FFmpeg bundled in**: download, double-click, record
+- 🪟 **Reliable Windows capture** — Unicode microphones/cameras, stable DirectShow
+  device IDs, multi-monitor layouts, and native window handles
+- 📦 **Zero-install Windows app** — a single `.exe` with Python, Tk **and FFmpeg bundled in**: download, double-click, record
 - 🖤 **Beautiful dark GUI _and_ a powerful CLI** — packaged as `.deb` / `.rpm` / AppImage / FreeBSD `.pkg` / Guix pack / Windows `.exe` / portable tarball
 
 Two front-ends, one engine:
@@ -50,6 +54,8 @@ Two front-ends, one engine:
 - 📖 **[Complete User Guide / Tutorial](docs/TUTORIAL.md)** — install, GUI & CLI
   walkthroughs, capture modes, monitor/window capture, CPU vs GPU, audio, timed
   recording, a recipe cookbook, quality tips, troubleshooting and FAQ.
+- 🇧🇷 **[Documentação completa em português do Brasil](docs/README.pt-BR.md)** —
+  instalação, permissões do Windows, dispositivos, exemplos e diagnóstico.
 - 📝 **[Changelog](CHANGELOG.md)** — what changed in each release.
 
 New here? Start with the [60-second quick start](docs/TUTORIAL.md#2-60-second-quick-start).
@@ -143,34 +149,35 @@ free/open-source building blocks — no reinventing the wheel:
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.6.0_all.deb
+sudo apt install ./turborec_3.7.0_all.deb
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.6.0-1.noarch.rpm
+sudo dnf install ./turborec-3.7.0-1.noarch.rpm
 
 # Any Linux — portable, no install
-chmod +x Turbo_Recorder-3.6.0-x86_64.AppImage
-./Turbo_Recorder-3.6.0-x86_64.AppImage
+chmod +x Turbo_Recorder-3.7.0-x86_64.AppImage
+./Turbo_Recorder-3.7.0-x86_64.AppImage
 
 # FreeBSD — native package
-pkg add ./turborec-3.6.0.pkg
+pkg add ./turborec-3.7.0.pkg
 
 # Any Unix (BSD / illumos / Linux / macOS) — portable tarball
-tar xzf turborec-3.6.0.tar.gz && cd turborec-3.6.0
+tar xzf turborec-3.7.0.tar.gz && cd turborec-3.7.0
 sudo ./install.sh            # installs to /usr/local (PREFIX=… to change)
 
 # GNU Guix — relocatable pack (any distro, unprivileged) or the package file
-tar xf turborec-3.6.0-guix-x86_64.tar.gz -C /   # unpacks /gnu/store + /bin
+tar xf turborec-3.7.0-guix-x86_64.tar.gz -C /   # unpacks /gnu/store + /bin
 guix package -f guix.scm                        # or install from the repo
 
 # Windows — self-contained app: Python, Tk AND ffmpeg bundled, nothing to install
-Turbo_Recorder-3.6.0-windows-x64.exe gui
+Turbo_Recorder-3.7.0-windows-x64.exe gui
 ```
 
 Packages install `turborec` and `turborecorder` to `/usr/bin` (`/usr/local/bin`
 for the BSD/tarball route), plus a desktop launcher and icon. Runtime needs:
 `ffmpeg`, `python3` (≥ 3.8), `python3-tk` (`python3-tkinter` on Fedora) for the
-GUI, and — **on a Wayland session** —
+GUI, and `pactl` (`pulseaudio-utils`) for automatic Linux/FreeBSD audio
+discovery. On a **Wayland session**, install
 [`wf-recorder`](https://github.com/ammen99/wf-recorder) for screen capture
 (`sudo apt install wf-recorder` · `sudo dnf install wf-recorder` ·
 `guix install wf-recorder`). On **FreeBSD**: `pkg install python3 ffmpeg`
@@ -187,16 +194,17 @@ python3 turborec.py gui      # or: detect / record / devices
 **Build the packages yourself** — scripts live in [`packaging/`](packaging/):
 
 ```bash
-packaging/build-deb.sh        # → dist/turborec_3.6.0_all.deb  (works even without dpkg-deb)
-packaging/build-rpm.sh        # → dist/turborec-3.6.0-1.noarch.rpm
-packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.6.0-x86_64.AppImage
-packaging/build-tarball.sh    # → dist/turborec-3.6.0.tar.gz   (portable; any Unix incl. the BSDs)
-packaging/build-freebsd-pkg.sh # → dist/turborec-3.6.0.pkg      (run on FreeBSD; pkg add)
+packaging/build-deb.sh        # → dist/turborec_3.7.0_all.deb  (works even without dpkg-deb)
+packaging/build-rpm.sh        # → dist/turborec-3.7.0-1.noarch.rpm
+packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.7.0-x86_64.AppImage
+packaging/build-tarball.sh    # → dist/turborec-3.7.0.tar.gz   (portable; any Unix incl. the BSDs)
+packaging/build-freebsd-pkg.sh # → dist/turborec-3.7.0.pkg      (run on FreeBSD; pkg add)
 guix build -f guix.scm        # GNU Guix package (guix pack -RR … for a tarball)
 ```
 
-> Every release ships **`.deb`, `.rpm`, AppImage, a portable tarball, a FreeBSD
-> `.pkg`, a GNU Guix relocatable pack, and a Windows `.exe`** — built by GitHub
+> Every release ships **`.deb`, binary/source `.rpm`, AppImage, a portable
+> tarball, a FreeBSD `.pkg`, a GNU Guix relocatable pack, a Windows `.exe`, and
+> `SHA256SUMS`** — built and verified by GitHub
 > Actions on each `v*` tag. The **Windows `.exe` is fully self-contained** —
 > Python, Tk **and FFmpeg are bundled inside it**, so users just download and run
 > (no Python, no FFmpeg, no PATH setup, no admin install).
@@ -229,7 +237,8 @@ Both front-ends auto-detect and configure:
   - **AMD** → AMF on Windows, VAAPI on Linux
   - **Apple** → VideoToolbox
   - **No GPU?** → high-quality software `libx264` / `libx265` automatically
-- **Screen resolution** — captured at native size (no upscaling)
+- **Screen and capture targets** — native resolution, monitors and windows;
+  signed virtual-desktop coordinates on Windows/Linux and real display IDs on macOS
 - **Microphone** and **system-audio (loopback/monitor)** sources
 
 ## Quality
@@ -263,7 +272,8 @@ python3 turborec.py detect
 # Launch the graphical interface
 python3 turborec.py gui
 
-# Record screen + microphone + system audio at best quality (default)
+# Record at best quality; automatic mode uses every available audio source
+# and safely falls back if a mic or loopback device is unavailable
 python3 turborec.py record
 
 # Pick a mode / quality / fps / codec
@@ -313,7 +323,7 @@ python3 turborec.py record --dry-run
 ```
 
 Subcommands: `detect` (`--json`), `record`, `gui`, `devices`, `encoders`, `targets`.
-Modes: `video_both`, `video_mic`, `video_system`, `video_only`,
+Modes: `auto` (default), `video_both`, `video_mic`, `video_system`, `video_only`,
 `audio_both`, `audio_mic`, `audio_system`.
 
 Stop a recording with **`q`** or **Ctrl-C** (the file is finalized cleanly), or

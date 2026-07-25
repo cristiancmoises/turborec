@@ -43,14 +43,14 @@ Hyprland, river, …) screen capture additionally needs
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.6.0_all.deb        # pulls ffmpeg, python3, python3-tk
+sudo apt install ./turborec_3.7.0_all.deb        # pulls ffmpeg, python3, python3-tk
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.6.0-1.noarch.rpm   # pulls ffmpeg, python3, python3-tkinter
+sudo dnf install ./turborec-3.7.0-1.noarch.rpm   # pulls ffmpeg, python3, python3-tkinter
 
 # Any Linux — portable AppImage (uses your host ffmpeg/python/tk)
-chmod +x Turbo_Recorder-3.6.0-x86_64.AppImage
-./Turbo_Recorder-3.6.0-x86_64.AppImage
+chmod +x Turbo_Recorder-3.7.0-x86_64.AppImage
+./Turbo_Recorder-3.7.0-x86_64.AppImage
 ```
 
 Get these from the project **Releases** page, or build them yourself with the
@@ -64,11 +64,11 @@ Python plus a POSIX shell front-end, so one archive runs everywhere.
 
 ```sh
 # FreeBSD — native package
-pkg add ./turborec-3.6.0.pkg
+pkg add ./turborec-3.7.0.pkg
 pkg install python3 ffmpeg          # runtime prerequisites (wf-recorder for Wayland)
 
 # Any Unix — portable tarball (installs to /usr/local by default)
-tar xzf turborec-3.6.0.tar.gz && cd turborec-3.6.0
+tar xzf turborec-3.7.0.tar.gz && cd turborec-3.7.0
 sudo ./install.sh                   # or: PREFIX="$HOME/.local" ./install.sh
 ```
 
@@ -101,7 +101,7 @@ guix shell   -f guix.scm -- turborec detect   # run it ad-hoc
 
 # Or the prebuilt relocatable pack from the Releases page (no Guix daemon needed
 # to run it; unpacks the /gnu/store closure + a /bin/turborec launcher)
-tar xf turborec-3.6.0-guix-x86_64.tar.gz -C /
+tar xf turborec-3.7.0-guix-x86_64.tar.gz -C /
 /bin/turborec record -m video_both
 ```
 
@@ -150,12 +150,16 @@ It is **fully self-contained** — Python, Tk **and FFmpeg are bundled inside th
 admin rights needed:
 
 ```powershell
-Turbo_Recorder-3.6.0-windows-x64.exe gui        # or: detect / record / --help
+Turbo_Recorder-3.7.0-windows-x64.exe gui        # or: detect / record / --help
 ```
 
 (The bundle carries its own FFmpeg; if you'd rather use a system FFmpeg, put it
-on `PATH` and pass `--ffmpeg C:\path\to\ffmpeg.exe`.) For system-audio capture,
-enable a loopback such as "Stereo Mix" or install
+on `PATH` and pass `--ffmpeg C:\path\to\ffmpeg.exe`.) Version 3.7 keeps Unicode
+microphone/camera labels intact, records through stable DirectShow IDs, and
+lists native monitors/windows even with negative multi-monitor coordinates.
+Allow **Microphone** and **Camera** access for desktop apps under Windows
+**Settings → Privacy & security**. For system-audio capture, enable a loopback
+such as "Stereo Mix" / "Mixagem estéreo" or install
 [VB-CABLE](https://vb-audio.com/Cable/).
 
 Prefer running from source? Install [Python](https://www.python.org/downloads/)
@@ -169,11 +173,11 @@ Prefer running from source? Install [Python](https://www.python.org/downloads/)
 ```bash
 turborec detect        # see what was auto-detected (OS, CPU, GPU, encoder, screen, devices)
 turborec gui           # open the graphical app — pick options, press ● START, press ■ STOP
-turborec record        # CLI: screen + microphone + system audio, best quality
+turborec record        # CLI: automatic audio selection, best quality
 ```
 
 Recordings go to `~/Videos` (video) or `~/Audio` (audio) with timestamped names
-like `video_both_2026-06-13_14-22-09.mkv`. Stop a CLI recording with **`q`** or
+like `video_mic_2026-07-24_14-22-09.mkv`. Stop a CLI recording with **`q`** or
 **Ctrl-C** — the file is finalized cleanly.
 
 ---
@@ -259,7 +263,7 @@ Most-used `record` options:
 
 | Option | Meaning | Default |
 |---|---|---|
-| `-m, --mode` | what to capture (see [modes](#6-capture-modes)) | `video_both` |
+| `-m, --mode` | what to capture (see [modes](#6-capture-modes)) | `auto` |
 | `-q, --quality` | `best` · `high` · `balanced` · `compact` | `best` |
 | `-c, --codec` | `h264` · `hevc` · `av1` | `h264` |
 | `-f, --fps` | frames per second | `60` |
@@ -289,7 +293,8 @@ Global: `--ffmpeg PATH`, `--config FILE`, `--version`.
 
 | Mode | Captures |
 |---|---|
-| `video_both` | screen + microphone + system audio *(default)* |
+| `auto` | best video mode supported by detected audio devices *(default)* |
+| `video_both` | screen + microphone + system audio |
 | `video_mic` | screen + microphone |
 | `video_system` | screen + system audio |
 | `video_only` | screen, no audio |
