@@ -82,7 +82,7 @@ jobs:
           ls -l dist
 
       - name: Upload Linux build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-linux
           path: |
@@ -117,7 +117,7 @@ jobs:
             pkg delete -y turborec
 
       - name: Upload FreeBSD build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-freebsd
           path: |
@@ -191,7 +191,7 @@ jobs:
           python -c "import json; paths=('detect.json','devices.json','cameras.json','targets.json'); data=[json.load(open(p, encoding='utf-8')) for p in paths]; assert data[3] and data[3][0]['kind'] == 'screen'"
 
       - name: Upload Windows build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-windows
           path: |
@@ -220,7 +220,7 @@ jobs:
           ls -l out
 
       - name: Upload Guix build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-guix
           path: |
