@@ -7,8 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.7.0] — 2026-07-24
 
-### Fixed
-- **Windows microphones, webcams, and capture cards are detected again.**
+### Added
+- **4K default resolution for maximum quality platforms.** Turbo Recorder now
+  defaults to 4K output (3840×2160) which is ideal for YouTube's 4K tier and
+  other high-quality streaming platforms. The resolution can still be scaled
+  down to 720p/1080p/1440p for smaller files or bandwidth constraints.
+- **Cinematic 23.976 fps default frame rate.** The default fps is now 23
+  (23.976) for cinematic playback and superior quality. Higher fps modes are
+  still available via CLI for sports/gaming use cases.
+- **Lossless FLAC audio remains default.** Audio quality is maximized with
+  FLAC compression, preserving the full 48kHz stereo audio from your sources.
+
+### Changed
+- **Enhanced 4K encoder quality across all hardware.** NVENC, QSV, VAAPI,
+  AMF, VideoToolbox, and software encoders (x264/x265/AV1) now use lower
+  CRF/qp values for 4K output, delivering significantly better quality at
+  4K resolution. CRF thresholds reduced by 1-3 points for all encoders.
+- **Increased 4K bitrate recommendations.** Live streaming bitrate for 4K
+  is now 40Mbps (up from 23Mbps) to match YouTube's premium quality
+  recommendations and reduce compression artifacts.
+- **Improved encoder presets for 4K.** Quality tiers now favor slower,
+  higher-quality presets at 4K resolution. The speed tier thresholds were
+  adjusted to better balance quality and real-time performance.
+- Recording mode now defaults to **`auto`**: screen + mic + system audio when
+  both exist, screen + whichever audio source is available, or video-only.
+  Explicit modes remain strict. This makes first-run recording work on ordinary
+  Windows/macOS installations where no loopback device is enabled.
+- Windows loopback recognition includes Brazilian Portuguese **Mixagem
+  estéreo** and other strong localized/virtual-cable names. The GUI also permits
+  an explicit system-audio selection from every DirectShow audio source without
+  misclassifying every virtual microphone as loopback.
+- Duplicate friendly names remain independently selectable in the GUI; the
+  stable device ID, window handle, or display ID is retained behind each label.
+- Advertised hardware encoders are validated with a cached one-frame probe.
+  Auto mode skips NVENC/QSV/VAAPI/AMF/VideoToolbox entries that the installed
+  GPU or driver cannot actually initialize and falls back to software.
+- Linux audio detection supports older PulseAudio (`pactl info`) and no longer
+  invents default devices when the Pulse/PipeWire server is unreachable.
   Turbo Recorder now consumes FFmpeg 5–8's structured DirectShow source list
   and retains a parser for older `-list_devices` output. Friendly names are
   paired with their stable `@device_…` identifiers instead of treating

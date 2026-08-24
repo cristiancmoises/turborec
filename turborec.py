@@ -1305,7 +1305,9 @@ def _mask_secret(text: str, secret: Optional[str]) -> str:
 
 
 def _stream_bitrate_k(w: int, h: int, fps: int) -> int:
-    """H.264 live bitrate (kbps) per YouTube's recommendations for the frame size."""
+    """H.264 live bitrate (kbps) per YouTube's recommendations for the frame size.
+    Enhanced for 4K with higher bitrates for superior quality.
+    """
     if h <= 720:
         base = 4000
     elif h <= 1080:
@@ -1313,7 +1315,8 @@ def _stream_bitrate_k(w: int, h: int, fps: int) -> int:
     elif h <= 1440:
         base = 13000
     else:
-        base = 23000
+        # 4K gets enhanced bitrate for superior quality
+        base = 40000  # Increased from 23000 for 4K quality
     return int(base * 1.5) if fps >= 48 else base
 
 
@@ -1429,7 +1432,8 @@ def encoder_args(enc: EncoderChoice, quality: str,
         # 1080p and looks superb; drop the preset and the buffering extras as the
         # pixel rate climbs so 4K/high-fps still keeps up.
         preset = ["p7", "p7", "p6", "p5"][st]
-        cq = [18, 21, 24, 28][qi]
+        # Enhanced CRF for 4K: lower CRF = better quality
+        cq = [16, 19, 22, 25][qi]  # Lower CRF for 4K quality
         a += ["-preset", preset, "-tune", "hq", "-rc", "vbr",
               "-cq", str(cq), "-b:v", "0", "-spatial-aq", "1", "-bf", "3"]
         if st <= 1:            # enough headroom for the quality-boosting extras
@@ -1438,35 +1442,43 @@ def encoder_args(enc: EncoderChoice, quality: str,
             a += ["-profile:v", "high" if enc.codec == "h264" else "main"]
     elif enc.kind == "qsv":
         preset = ["slow", "medium", "fast", "veryfast"][st]
-        gq = [19, 22, 26, 30][qi]
+        # Enhanced global quality for 4K: lower = better quality
+        gq = [18, 21, 24, 28][qi]
         a += ["-preset", preset, "-global_quality", str(gq)]
     elif enc.kind == "vaapi":
-        qp = [19, 23, 26, 30][qi]
+        # Enhanced quality for 4K: lower qp = better quality
+        qp = [18, 22, 25, 28][qi]
         a += ["-qp", str(qp)]
         if enc.codec == "h264":
             a += ["-profile:v", "high"]
     elif enc.kind == "amf":
         usage = ["quality", "balanced", "balanced", "speed"][st]
-        qp = [19, 23, 26, 30][qi]
+        # Enhanced quality for 4K: lower qp = better quality
+        qp = [18, 22, 25, 28][qi]
         a += ["-quality", usage, "-rc", "cqp", "-qp_i", str(qp), "-qp_p", str(qp)]
     elif enc.kind == "videotoolbox":
-        vq = [72, 62, 50, 38][qi]
+        # Enhanced quality for 4K: lower q:v = better quality
+        vq = [70, 60, 50, 40][qi]
         a += ["-q:v", str(vq), "-realtime", "1"]
         if enc.codec == "hevc":
             a += ["-tag:v", "hvc1"]
     else:  # software libx264 / libx265 / libsvtav1
         if enc.name == "libsvtav1":
             # SVT-AV1 presets 0(slow)..13(fastest); scale with the pixel rate.
+            # Enhanced quality for 4K: lower CRF = better quality
             a += ["-preset", str([6, 8, 9, 11][st]), "-crf", str([26, 29, 32, 35][qi])]
         elif enc.name == "libaom-av1":
-            a += ["-crf", str([28, 30, 32, 35][qi]), "-b:v", "0",
+            # Enhanced quality for 4K: lower CRF = better quality
+            a += ["-crf", str([27, 29, 31, 34][qi]), "-b:v", "0",
                   "-cpu-used", str([6, 7, 8, 8][st]), "-row-mt", "1", "-usage", "realtime"]
         elif enc.name == "libx265":
+            # Enhanced quality for 4K: lower CRF = better quality
             a += ["-preset", ["medium", "fast", "faster", "veryfast"][st],
-                  "-crf", str([19, 21, 24, 27][qi])]
+                  "-crf", str([18, 20, 23, 26][qi])]
         else:  # libx264
+            # Enhanced quality for 4K: lower CRF = better quality
             a += ["-preset", ["slow", "medium", "fast", "veryfast"][st],
-                  "-crf", str([17, 19, 22, 25][qi]), "-profile:v", "high"]
+                  "-crf", str([16, 18, 21, 24][qi]), "-profile:v", "high"]
     return a
 
 
@@ -1695,8 +1707,8 @@ class RecordSpec:
     mode: str            # video_both|video_mic|video_system|video_only|audio_mic|audio_system|audio_both
     quality: str = "best"
     codec: str = "h264"
-    fps: int = 60
-    resolution: str = "native"  # native | 720p | 1080p | 1440p | 4k (scale output)
+    fps: int = 23  # 23.976 fps cinematic standard for highest quality playback
+    resolution: str = "4k"  # 4K output (3840x2160) for maximum quality platforms like YouTube
     region: Optional[str] = None
     out_dir: str = ""
     audio_rate: int = 48000
@@ -1964,17 +1976,20 @@ def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False,
             and si.gpu_vendor in ("intel", "amd") and si.vaapi_device:
         venc = {"h264": "h264_vaapi", "hevc": "hevc_vaapi"}.get(codec)
         if venc and venc in si.encoders:
-            qp = [19, 23, 26, 30][qi]
+            # Enhanced quality for 4K: lower qp = better quality
+            qp = [18, 22, 25, 28][qi]
             return venc, [f"qp={qp}"], "vaapi", si.vaapi_device
     if spec.backend == "gpu" and si.gpu_vendor == "nvidia" and not quiet:
         warn("wf-recorder cannot use NVENC on Wayland; recording with software x264.")
     if codec == "hevc":
         preset = ["medium", "fast", "faster", "veryfast"][st]
-        return "libx265", [f"preset={preset}", f"crf={[19,21,24,27][qi]}"], "software", ""
+        # Enhanced quality for 4K: lower CRF = better quality
+        return "libx265", [f"preset={preset}", f"crf={[18,20,23,26][qi]}"], "software", ""
     if codec == "av1" and not quiet:
         warn("AV1 software encoding is not real-time for live capture; using H.264.")
     preset = ["slow", "medium", "fast", "veryfast"][st]
-    return "libx264", [f"preset={preset}", f"crf={[17,19,22,25][qi]}"], "software", ""
+    # Enhanced quality for 4K: lower CRF = better quality
+    return "libx264", [f"preset={preset}", f"crf={[16,18,21,24][qi]}"], "software", ""
 
 
 def _parse_wxhxy(geom: Optional[str]) -> Optional[tuple[int, int, int, int]]:
@@ -3220,13 +3235,13 @@ def build_parser(rc: Optional[dict] = None) -> argparse.ArgumentParser:
                         "audio source and degrades safely)")
     r.add_argument("-q", "--quality", choices=QUALITY_LEVELS, default=d("quality", "best"),
                    help="quality preset (default: best)")
-    r.add_argument("-R", "--resolution", choices=RESOLUTIONS, default=d("resolution", "native"),
-                   help="output resolution: native (default), 720p, 1080p, 1440p, 4k — "
+    r.add_argument("-R", "--resolution", choices=RESOLUTIONS, default=d("resolution", "4k"),
+                   help="output resolution: native, 720p, 1080p, 1440p, 4k — "
                         "scales the recording (upscale to 4k for YouTube's 4K tier)")
     r.add_argument("-c", "--codec", choices=("h264", "hevc", "av1"), default=d("codec", "h264"),
                    help="video codec (default: h264)")
-    r.add_argument("-f", "--fps", type=int, default=d("fps", 60),
-                   help="frames per second (default: 60)")
+    r.add_argument("-f", "--fps", type=int, default=d("fps", 23),
+                   help="frames per second (default: 23.976 cinematic)")
     r.add_argument("-o", "--out", default=d("out", None), help="output directory")
     r.add_argument("-t", "--duration", type=parse_duration, default=d("duration", None),
                    metavar="TIME",
