@@ -56,7 +56,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             dpkg-dev rpm fakeroot file libfuse2 wget \
-            librsvg2-bin desktop-file-utils imagemagick
+            librsvg2-bin desktop-file-utils imagemagick \
+            nsis p7zip-full
 
       - name: Build packages
         env:
@@ -68,6 +69,7 @@ jobs:
           packaging/build-deb.sh
           packaging/build-rpm.sh
           packaging/build-appimage.sh
+          packaging/build-windows.sh
           # Architecture-independent tarball — installs on any Unix (incl. the BSDs).
           packaging/build-tarball.sh
 
@@ -76,7 +78,8 @@ jobs:
           mkdir -p dist
           # Exclude the downloaded appimagetool itself (it is an *.AppImage too).
           find . -path ./dist -prune -o \
-            \( -name '*.deb' -o -name '*.rpm' -o -iname '*.AppImage' \) \
+            \( -name '*.deb' -o -name '*.rpm' -o -iname '*.AppImage' \
+               -o -iname '*-windows-x64-setup.exe' \) \
             ! -iname 'appimagetool*' -type f -print -exec cp -f {} dist/ \;
           echo "Artifacts:"
           ls -l dist
@@ -89,6 +92,7 @@ jobs:
             dist/*.deb
             dist/*.rpm
             dist/*.AppImage
+            dist/*-windows-x64-setup.exe
             dist/*.tar.gz
           if-no-files-found: error
 
@@ -249,6 +253,7 @@ jobs:
           VERSION="$(sed -n 's/^VERSION = "\(.*\)"/\1/p' turborec.py | head -1)"
           EXPECTED="
           Turbo_Recorder-${VERSION}-windows-x64.exe
+          Turbo_Recorder-${VERSION}-windows-x64-setup.exe
           Turbo_Recorder-${VERSION}-x86_64.AppImage
           turborec-${VERSION}-1.noarch.rpm
           turborec-${VERSION}-1.src.rpm
@@ -292,6 +297,7 @@ jobs:
           EXPECTED="
           SHA256SUMS
           Turbo_Recorder-${VERSION}-windows-x64.exe
+          Turbo_Recorder-${VERSION}-windows-x64-setup.exe
           Turbo_Recorder-${VERSION}-x86_64.AppImage
           turborec-${VERSION}-1.noarch.rpm
           turborec-${VERSION}-1.src.rpm

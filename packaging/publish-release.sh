@@ -75,6 +75,7 @@ log "found ${#ASSETS[@]} asset(s) to publish for ${TAG}"
 # other non-binary release files are allowed and mirrored too.
 EXPECTED=(
     "Turbo_Recorder-${VERSION}-windows-x64.exe"
+    "Turbo_Recorder-${VERSION}-windows-x64-setup.exe"
     "Turbo_Recorder-${VERSION}-x86_64.AppImage"
     "turborec-${VERSION}-1.noarch.rpm"
     "turborec-${VERSION}-1.src.rpm"
