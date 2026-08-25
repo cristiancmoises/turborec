@@ -62,8 +62,17 @@ cp -p "${SPEC}" "${RPMBUILD_DIR}/SPECS/"
 # (rsvg-convert, desktop-file-validate) are installed via the host's package
 # manager, but on a non-RPM build host the RPM database doesn't know that.
 # Runtime "Requires:" in the package metadata are unaffected.
+#
+# FHS path roots: force the standard /usr layout. Some distros (e.g. Guix)
+# ship rpm with _prefix pointing at a store directory, which would bake
+# store paths into the package; overriding to /usr (a no-op on Fedora/RHEL)
+# keeps the produced RPM distro-agnostic.
 rpmbuild \
     --define "_topdir ${RPMBUILD_DIR}" \
+    --define "_prefix /usr" \
+    --define "_exec_prefix /usr" \
+    --define "_sysconfdir /etc" \
+    --define "_localstatedir /var" \
     --nodeps \
     -ba "${RPMBUILD_DIR}/SPECS/$(basename "${SPEC}")"
 

@@ -1,6 +1,6 @@
 # Release Notes - Turbo Recorder v3.7.0
 
-**Release Date:** 2026-07-24  
+**Release Date:** 2026-08-25  
 **Version:** 3.7.0  
 **Type:** Major release with 4K defaults and quality enhancements
 
@@ -89,16 +89,36 @@ tar -xzf turborec-3.7.0.tar.gz
 ./turborec-3.7.0/turborec
 ```
 
+### RPM (Fedora/RHEL/openSUSE)
+```bash
+sudo dnf install ./turborec-3.7.0-1.noarch.rpm
+```
+
+### Windows (NSIS installer)
+```cmd
+Turbo_Recorder-3.7.0-windows-x64-setup.exe
+```
+Requires Python 3.8+ (with Tk) on the target machine.
+
+### GNU Guix pack (any GNU/Linux)
+```bash
+tar -xzf turborec-3.7.0-guix-x86_64.tar.gz
+./bin/turborec --help
+```
+
 ## Package Availability
 
 | Format | Status | Size |
 |--------|--------|------|
 | Debian (.deb) | ✅ Available | 100KB |
 | Portable tarball | ✅ Available | 109KB |
-| AppImage | ❌ Requires tooling | - |
-| RPM | ❌ Requires tooling | - |
-| Windows installer | ❌ Requires tooling | - |
-| macOS DMG | ❌ Requires tooling | - |
+| AppImage | ✅ Available | 1.05MB |
+| RPM (+ source RPM) | ✅ Available | 135KB + 117KB |
+| Windows installer (NSIS) | ✅ Available | 74.6MB |
+| GNU Guix relocatable pack | ✅ Available | 480MB |
+| Windows zero-install .exe | ⏳ GitHub Actions (on tag push) | - |
+| FreeBSD .pkg | ⏳ GitHub Actions (VM) | - |
+| macOS DMG | ➖ Not part of release asset set | - |
 
 ## Technical Details
 
