@@ -43,14 +43,14 @@ Hyprland, river, …) screen capture additionally needs
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.7.0_all.deb        # pulls ffmpeg, python3, python3-tk
+sudo apt install ./turborec_3.7.1_all.deb        # pulls ffmpeg, python3, python3-tk
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.7.0-1.noarch.rpm   # pulls ffmpeg, python3, python3-tkinter
+sudo dnf install ./turborec-3.7.1-1.noarch.rpm   # pulls ffmpeg, python3, python3-tkinter
 
 # Any Linux — portable AppImage (uses your host ffmpeg/python/tk)
-chmod +x Turbo_Recorder-3.7.0-x86_64.AppImage
-./Turbo_Recorder-3.7.0-x86_64.AppImage
+chmod +x Turbo_Recorder-3.7.1-x86_64.AppImage
+./Turbo_Recorder-3.7.1-x86_64.AppImage
 ```
 
 Get these from the project **Releases** page, or build them yourself with the
@@ -64,11 +64,11 @@ Python plus a POSIX shell front-end, so one archive runs everywhere.
 
 ```sh
 # FreeBSD — native package
-pkg add ./turborec-3.7.0.pkg
+pkg add ./turborec-3.7.1.pkg
 pkg install python3 ffmpeg          # runtime prerequisites (wf-recorder for Wayland)
 
 # Any Unix — portable tarball (installs to /usr/local by default)
-tar xzf turborec-3.7.0.tar.gz && cd turborec-3.7.0
+tar xzf turborec-3.7.1.tar.gz && cd turborec-3.7.1
 sudo ./install.sh                   # or: PREFIX="$HOME/.local" ./install.sh
 ```
 
@@ -101,7 +101,7 @@ guix shell   -f guix.scm -- turborec detect   # run it ad-hoc
 
 # Or the prebuilt relocatable pack from the Releases page (no Guix daemon needed
 # to run it; unpacks the /gnu/store closure + a /bin/turborec launcher)
-tar xf turborec-3.7.0-guix-x86_64.tar.gz -C /
+tar xf turborec-3.7.1-guix-x86_64.tar.gz -C /
 /bin/turborec record -m video_both
 ```
 
@@ -150,7 +150,7 @@ It is **fully self-contained** — Python, Tk **and FFmpeg are bundled inside th
 admin rights needed:
 
 ```powershell
-Turbo_Recorder-3.7.0-windows-x64.exe gui        # or: detect / record / --help
+Turbo_Recorder-3.7.1-windows-x64.exe gui        # or: detect / record / --help
 ```
 
 (The bundle carries its own FFmpeg; if you'd rather use a system FFmpeg, put it
@@ -275,7 +275,7 @@ Most-used `record` options:
 | `--audio-codec` | `flac` · `aac` · `opus` | `flac` |
 | `--audio-rate` | audio sample rate | `48000` |
 | `--mic-device` / `--system-device` | pick devices by id/name | auto |
-| `-t, --duration` | auto-stop (e.g. `90`, `5m`, `1m30s`, `2h`, `HH:MM:SS`) | — |
+| `-t, --duration` | auto-stop (e.g. `90`, `5m`, `1m30s`, `2h`, `1h30`, `HH:MM:SS`) | — |
 | `--countdown N` | wait N seconds before starting | `0` |
 | `--open` | open the file when done | off |
 | `--dry-run` | print the FFmpeg command and exit | off |
@@ -513,7 +513,7 @@ bitrate follows the frame size.
 
 ```bash
 turborec record -t 30                 # stop after 30 seconds
-turborec record -t 5m                 # 5 minutes  (also 1m30s, 2h, 00:05:00)
+turborec record -t 5m                 # 5 minutes  (also 1m30s, 2h, 1h30, 00:05:00)
 turborec record --countdown 3         # 3-2-1 before it starts
 turborec record -t 1m --open          # record 1 min, then open the file
 ```

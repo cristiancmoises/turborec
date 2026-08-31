@@ -12,15 +12,15 @@
 #
 #  Usage:
 #     FJTOKEN=<forgejo-token> CBTOKEN=<codeberg-token> \
-#         packaging/publish-release.sh v3.7.0 [asset-dir]
+#         packaging/publish-release.sh v3.7.1 [asset-dir]
 #
-#   - <tag>       the release tag, e.g. v3.7.0 (must already be pushed).
+#   - <tag>       the release tag, e.g. v3.7.1 (must already be pushed).
 #   - [asset-dir] a directory of files to attach. If omitted, the assets are
 #                 downloaded from the GitHub release for <tag> using `gh`.
 #
 #  Tokens are read ONLY from the environment (never hard-coded / never printed):
-#     FJTOKEN — Forgejo API token (git.securityops.co). Skips Forgejo if unset.
-#     CBTOKEN — Codeberg API token.                     Skips Codeberg if unset.
+#     FJTOKEN — Forgejo API token (git.securityops.com.br). Skips Forgejo if unset.
+#     CBTOKEN — Codeberg API token.                        Skips Codeberg if unset.
 #
 #  Idempotent: reuses an existing release for the tag and skips any asset already
 #  attached with the same byte size, so it is safe to re-run. Missing binaries,
@@ -32,7 +32,9 @@
 set -euo pipefail
 
 # ---- forge coordinates (this project's actual setup) ------------------------
-FORGEJO_API="https://git.securityops.co/api/v1"
+# git.securityops.co is retired (its account requires a password change, which
+# blocks API auth); the live Forgejo instance is git.securityops.com.br.
+FORGEJO_API="https://git.securityops.com.br/api/v1"
 FORGEJO_OWNER="cristiancmoises"
 CODEBERG_API="https://codeberg.org/api/v1"
 CODEBERG_OWNER="berkeley"
@@ -50,7 +52,7 @@ TAG="${1:-}"
 [ -n "${TAG}" ] || die "usage: FJTOKEN=… CBTOKEN=… $0 <tag> [asset-dir]"
 VERSION="${TAG#v}"
 [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-    || die "tag must look like v3.7.0 (got: ${TAG})"
+    || die "tag must look like v3.7.1 (got: ${TAG})"
 ASSET_DIR="${2:-}"
 
 # ---- gather the assets ------------------------------------------------------

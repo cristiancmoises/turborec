@@ -39,7 +39,7 @@ from datetime import datetime
 from typing import Optional
 
 APP_NAME = "Turbo Recorder"
-VERSION = "3.7.0"
+VERSION = "3.7.1"
 
 # ---------------------------------------------------------------------------
 # Small terminal helpers
@@ -1888,7 +1888,6 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
             labels.append(f"[{lbl}]")
         if len(labels) == 1:
             maps += ["-map", labels[0]]
-            audio_out_label = labels[0]
         else:
             mix = "".join(labels) + f"amix=inputs={len(labels)}:duration=longest:dropout_transition=2:normalize=0[aout]"
             filtergraph_parts.append(mix)
@@ -2909,7 +2908,12 @@ def load_config(explicit: Optional[str] = None) -> dict:
 
 
 def parse_duration(text: str) -> float:
-    """Parse '90', '90s', '5m', '1h30m', '00:01:30' → seconds (float)."""
+    """Parse '90', '90s', '5m', '1h30m', '1h30', '00:01:30' → seconds (float).
+
+    A trailing bare number means seconds ("90"), except directly after an
+    hour component with no other unit, where it is the common "1h30" shorthand
+    for 1 hour 30 minutes (not 1 hour + 30 seconds).
+    """
     text = text.strip().lower()
     if not text:
         raise argparse.ArgumentTypeError("empty duration")
@@ -2923,11 +2927,21 @@ def parse_duration(text: str) -> float:
         for n in nums:
             secs = secs * 60 + n
         return secs
-    m = re.fullmatch(r"(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s?)?", text)
+    m = re.fullmatch(
+        r"(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?"
+        r"(\d+(?:\.\d+)?)?",
+        text,
+    )
     if not m or not any(m.groups()):
         raise argparse.ArgumentTypeError(
             f"bad duration '{text}' (use 90, 90s, 5m, 1h30m or HH:MM:SS)")
-    h, mi, s = (float(g) if g else 0.0 for g in m.groups())
+    h, mi, s = (float(g) if g else 0.0 for g in m.groups()[:3])
+    bare = m.group(4)
+    if bare is not None:
+        if m.group(1) is not None and m.group(2) is None and m.group(3) is None:
+            mi += float(bare)   # "1h30" → 1h 30m (hour-minute shorthand)
+        else:
+            s += float(bare)    # "90", "1m30", "1h30s" → seconds
     return h * 3600 + mi * 60 + s
 
 

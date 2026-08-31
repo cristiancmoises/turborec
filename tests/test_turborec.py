@@ -1,3 +1,4 @@
+import argparse
 import io
 import subprocess
 import sys
@@ -262,6 +263,36 @@ class DefaultsAndShutdownTests(unittest.TestCase):
                 side_effect=lambda _si, name, _kind: name == "h264_qsv"):
             choice = tr.choose_encoder(si, "h264")
         self.assertEqual((choice.name, choice.kind), ("h264_qsv", "qsv"))
+
+
+class DurationParsingTests(unittest.TestCase):
+    def test_bare_number_is_seconds(self):
+        self.assertEqual(tr.parse_duration("90"), 90.0)
+        self.assertEqual(tr.parse_duration("0"), 0.0)
+
+    def test_unit_suffixes(self):
+        self.assertEqual(tr.parse_duration("90s"), 90.0)
+        self.assertEqual(tr.parse_duration("5m"), 300.0)
+        self.assertEqual(tr.parse_duration("1.5h"), 5400.0)
+
+    def test_compound_hms(self):
+        self.assertEqual(tr.parse_duration("1h30m"), 5400.0)
+        self.assertEqual(tr.parse_duration("1h30m45s"), 5445.0)
+        self.assertEqual(tr.parse_duration("1h30s"), 3630.0)
+
+    def test_hour_minute_shorthand(self):
+        # "1h30" is the common shorthand for 1h30m, not 1h + 30s.
+        self.assertEqual(tr.parse_duration("1h30"), 5400.0)
+        self.assertEqual(tr.parse_duration("2h15"), 8100.0)
+
+    def test_clock_format(self):
+        self.assertEqual(tr.parse_duration("00:01:30"), 90.0)
+        self.assertEqual(tr.parse_duration("1:30"), 90.0)
+
+    def test_bad_durations_raise(self):
+        for bad in ("", "abc", "-5m", "1h2h"):
+            with self.assertRaises(argparse.ArgumentTypeError):
+                tr.parse_duration(bad)
 
 
 if __name__ == "__main__":

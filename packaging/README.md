@@ -19,7 +19,7 @@ Actions release workflow builds the Linux artifacts on
   `uninstall.sh` honouring `PREFIX` (default `/usr/local`) and `DESTDIR`:
 
   ```sh
-  tar xzf turborec-3.7.0.tar.gz && cd turborec-3.7.0
+  tar xzf turborec-3.7.1.tar.gz && cd turborec-3.7.1
   sudo ./install.sh                  # → /usr/local
   PREFIX="$HOME/.local" ./install.sh # per-user
   ```
@@ -27,14 +27,14 @@ Actions release workflow builds the Linux artifacts on
 - **`build-freebsd-pkg.sh`** → `dist/turborec-<version>.pkg`. Must run on FreeBSD
   (uses `pkg create`). Stages the tree under `${PREFIX}`, generates a plist +
   `+MANIFEST`, and emits a package installable with
-  `pkg add ./turborec-3.7.0.pkg`. Runtime prerequisites (`python3`, `ffmpeg`,
+  `pkg add ./turborec-3.7.1.pkg`. Runtime prerequisites (`python3`, `ffmpeg`,
   optional `wf-recorder`) are documented in the package description rather than
   declared as hard deps, so the file installs cleanly on any FreeBSD release
   (`pkg install python3 ffmpeg`).
 
 ## Publishing release binaries to Forgejo + Codeberg
 
-Forgejo (`git.securityops.co`) is the primary repo; GitHub and Codeberg are
+Forgejo (`git.securityops.com.br`) is the primary repo; GitHub and Codeberg are
 push-mirrors. Push-mirrors replicate git refs (branches/tags) but **not** release
 objects or their binaries. GitHub builds its binaries via `release.yml`; to attach
 that same set to the Forgejo and Codeberg releases, run:
@@ -43,10 +43,10 @@ that same set to the Forgejo and Codeberg releases, run:
 # downloads the tag's assets from the GitHub release, then attaches them to the
 # matching Forgejo + Codeberg releases (creating the release if needed)
 FJTOKEN=<forgejo-token> CBTOKEN=<codeberg-token> \
-    packaging/publish-release.sh v3.7.0
+    packaging/publish-release.sh v3.7.1
 
 # or attach files from a local directory instead of downloading
-FJTOKEN=… CBTOKEN=… packaging/publish-release.sh v3.7.0 dist/
+FJTOKEN=… CBTOKEN=… packaging/publish-release.sh v3.7.1 dist/
 ```
 
 Tokens are read only from the environment. The script requires all eight
@@ -87,7 +87,7 @@ The script:
    - `README.md`               -> `/usr/share/doc/turborec/README.md`
 2. Builds the control tree (`control` with computed `Installed-Size`,
    `md5sums`, `postinst`, `postrm`).
-3. Emits `dist/turborec_3.7.0_all.deb`.
+3. Emits `dist/turborec_3.7.1_all.deb`.
 
 ### dpkg-deb vs. portable mode
 
@@ -112,8 +112,8 @@ distributions the equivalents are `python3-tkinter` and `pulseaudio-utils`.
 
 ```bash
 # inspect members and metadata without installing
-ar t dist/turborec_3.7.0_all.deb
-mkdir -p /tmp/deb && ar x dist/turborec_3.7.0_all.deb --output /tmp/deb
+ar t dist/turborec_3.7.1_all.deb
+mkdir -p /tmp/deb && ar x dist/turborec_3.7.1_all.deb --output /tmp/deb
 tar -tvf /tmp/deb/data.tar.xz
 tar -xOf /tmp/deb/control.tar.gz ./control
 ```

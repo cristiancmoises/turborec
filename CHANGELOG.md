@@ -5,6 +5,14 @@ All notable changes to Turbo Recorder are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.1] — 2026-08-31
+
+### Fixed
+- `--duration` now parses `1h30` as the natural shorthand for 1 hour 30
+  minutes instead of 1 hour + 30 seconds. Bare trailing numbers still mean
+  seconds (`90`, `1m30`, `1h30s`), and all documented forms (`90`, `90s`,
+  `5m`, `1h30m`, `HH:MM:SS`) are unchanged.
+
 ## [3.7.0] — 2026-07-24
 
 ### Added

@@ -11,7 +11,7 @@ on:
       tag:
         description: Release tag to build from and attach the .exe to (e.g. v3.7.0)
         required: true
-        default: v3.7.0
+        default: v3.7.1
 
 permissions:
   contents: write

@@ -4,7 +4,7 @@ O **Turbo Recorder** grava a tela, o microfone e o áudio do sistema com o
 FFmpeg. Ele detecta o sistema operacional, a tela, os dispositivos de áudio, a
 GPU e os codificadores disponíveis e oferece duas interfaces:
 
-Este guia corresponde ao **Turbo Recorder 3.7.0**.
+Este guia corresponde ao **Turbo Recorder 3.7.1**.
 
 - `turborec`: interface gráfica e linha de comando para Windows, macOS, Linux e
   FreeBSD;
@@ -399,7 +399,7 @@ Opções importantes:
 | `--backend` | `auto`, `gpu`, `cpu` | `auto` |
 | `--audio-codec` | `flac`, `aac`, `opus` | `flac` |
 | `--audio-channels` | `stereo`, `mono`, `left`, `right` | `stereo` |
-| `-t, --duration` | `90s`, `5m`, `1h30m`, `HH:MM:SS` | sem limite |
+| `-t, --duration` | `90s`, `5m`, `1h30m`, `1h30`, `HH:MM:SS` | sem limite |
 
 Execute `turborec record --help` para ver todas as opções.
 

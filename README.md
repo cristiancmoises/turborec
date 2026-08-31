@@ -11,7 +11,7 @@
 
 <img src="docs/turborec-gui.png" alt="Turbo Recorder — dark, hardware-accelerated screen recorder GUI" width="860">
 
-📺 **[Watch a sample recording](https://youtu.be/mlf531Da9Qo?si=RTaSB9dJ4NSbGsOm)** &nbsp;·&nbsp; 🪞 also mirrored on [Forgejo](https://git.securityops.co/cristiancmoises/turborec)
+📺 **[Watch a sample recording](https://youtu.be/mlf531Da9Qo?si=RTaSB9dJ4NSbGsOm)** &nbsp;·&nbsp; 🪞 also mirrored on [Forgejo](https://git.securityops.com.br/cristiancmoises/turborec)
 
 </div>
 
@@ -149,28 +149,28 @@ free/open-source building blocks — no reinventing the wheel:
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.7.0_all.deb
+sudo apt install ./turborec_3.7.1_all.deb
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.7.0-1.noarch.rpm
+sudo dnf install ./turborec-3.7.1-1.noarch.rpm
 
 # Any Linux — portable, no install
-chmod +x Turbo_Recorder-3.7.0-x86_64.AppImage
-./Turbo_Recorder-3.7.0-x86_64.AppImage
+chmod +x Turbo_Recorder-3.7.1-x86_64.AppImage
+./Turbo_Recorder-3.7.1-x86_64.AppImage
 
 # FreeBSD — native package
-pkg add ./turborec-3.7.0.pkg
+pkg add ./turborec-3.7.1.pkg
 
 # Any Unix (BSD / illumos / Linux / macOS) — portable tarball
-tar xzf turborec-3.7.0.tar.gz && cd turborec-3.7.0
+tar xzf turborec-3.7.1.tar.gz && cd turborec-3.7.1
 sudo ./install.sh            # installs to /usr/local (PREFIX=… to change)
 
 # GNU Guix — relocatable pack (any distro, unprivileged) or the package file
-tar xf turborec-3.7.0-guix-x86_64.tar.gz -C /   # unpacks /gnu/store + /bin
+tar xf turborec-3.7.1-guix-x86_64.tar.gz -C /   # unpacks /gnu/store + /bin
 guix package -f guix.scm                        # or install from the repo
 
 # Windows — self-contained app: Python, Tk AND ffmpeg bundled, nothing to install
-Turbo_Recorder-3.7.0-windows-x64.exe gui
+Turbo_Recorder-3.7.1-windows-x64.exe gui
 ```
 
 Packages install `turborec` and `turborecorder` to `/usr/bin` (`/usr/local/bin`
@@ -194,11 +194,11 @@ python3 turborec.py gui      # or: detect / record / devices
 **Build the packages yourself** — scripts live in [`packaging/`](packaging/):
 
 ```bash
-packaging/build-deb.sh        # → dist/turborec_3.7.0_all.deb  (works even without dpkg-deb)
-packaging/build-rpm.sh        # → dist/turborec-3.7.0-1.noarch.rpm
-packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.7.0-x86_64.AppImage
-packaging/build-tarball.sh    # → dist/turborec-3.7.0.tar.gz   (portable; any Unix incl. the BSDs)
-packaging/build-freebsd-pkg.sh # → dist/turborec-3.7.0.pkg      (run on FreeBSD; pkg add)
+packaging/build-deb.sh        # → dist/turborec_3.7.1_all.deb  (works even without dpkg-deb)
+packaging/build-rpm.sh        # → dist/turborec-3.7.1-1.noarch.rpm
+packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.7.1-x86_64.AppImage
+packaging/build-tarball.sh    # → dist/turborec-3.7.1.tar.gz   (portable; any Unix incl. the BSDs)
+packaging/build-freebsd-pkg.sh # → dist/turborec-3.7.1.pkg      (run on FreeBSD; pkg add)
 guix build -f guix.scm        # GNU Guix package (guix pack -RR … for a tarball)
 ```
 
@@ -327,7 +327,8 @@ Modes: `auto` (default), `video_both`, `video_mic`, `video_system`, `video_only`
 `audio_both`, `audio_mic`, `audio_system`.
 
 Stop a recording with **`q`** or **Ctrl-C** (the file is finalized cleanly), or
-use `-t/--duration` for a fixed length. Everything is overridable
+use `-t/--duration` for a fixed length — `90`, `90s`, `5m`, `1h30m`, the `1h30`
+shorthand for 1h 30m, or `HH:MM:SS`. Everything is overridable
 (`--mic-device`, `--system-device`, `--region`, `--software`, `--open`,
 `--countdown`, …) and defaults can be saved in a JSON config (`--config`, or
 `$TURBOREC_CONFIG` / `~/.config/turborec/config.json`). Run

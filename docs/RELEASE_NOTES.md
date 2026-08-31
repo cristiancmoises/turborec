@@ -1,108 +1,66 @@
-# Release Notes - Turbo Recorder v3.7.0
+# Release Notes - Turbo Recorder v3.7.1
 
-**Release Date:** 2026-08-25  
-**Version:** 3.7.0  
-**Type:** Major release with 4K defaults and quality enhancements
+**Release Date:** 2026-08-31  
+**Version:** 3.7.1  
+**Type:** Patch release — timed-recording fix
 
 ## Summary
 
-Turbo Recorder v3.7.0 introduces 4K resolution as the default output, cinematic 23.976 fps frame rate, and lossless FLAC audio as the standard configuration. All encoder backends have been optimized for 4K quality with reduced CRF/qp thresholds.
+Turbo Recorder v3.7.1 fixes the `--duration` parser: `1h30` is now read as
+the natural shorthand for **1 hour 30 minutes**, instead of the previous
+1 hour + 30 seconds. All other duration forms are unchanged.
 
-## New Features
+## What's Fixed
 
-### 4K Default Resolution
-- **3840×2160** is now the default resolution for maximum quality
-- Ideal for YouTube's 4K tier and high-quality streaming platforms
-- Resolution can still be scaled down to 720p/1080p/1440p for bandwidth constraints
+### `--duration` hour-minute shorthand
+- `turborec record -t 1h30` now records for **90 minutes** (was 1 h 30 s).
+- `2h15` → 2 h 15 min; `1h30m`, `1h30m45s`, `1h30s` keep their exact meanings.
+- Bare trailing numbers still mean seconds: `90`, `1m30`, `1h30s`.
+- Clock format (`HH:MM:SS`, `MM:SS`) and the documented forms `90s`, `5m`,
+  `1h30m` are byte-for-byte unchanged; invalid input is still rejected.
 
-### Cinematic Frame Rate
-- **23.976 fps** default for cinematic playback
-- Superior quality for film-like content
-- Higher fps modes still available via CLI for sports/gaming
+## Also in this release
 
-### Lossless Audio
-- **FLAC** remains the default audio codec
-- Full 48kHz stereo audio preserved
-- Lossless compression with excellent quality
-
-## Quality Improvements
-
-### Encoder Optimizations
-- **NVENC:** CRF values [16, 19, 22, 25] for 4K
-- **QSV:** Global quality [18, 21, 24, 28] for 4K
-- **libx264:** CRF [16, 18, 21, 24] for 4K
-- **libx265:** CRF [16, 18, 21, 24] for 4K
-- **libsvtav1:** qp [16, 18, 21, 24] for 4K
-- **libaom-av1:** qp [16, 18, 21, 24] for 4K
-
-### Bitrate Recommendations
-- **4K live streaming:** 40 Mbps base bitrate
-- Matches YouTube's premium quality recommendations
-- Reduces compression artifacts at high resolution
-
-### Recording Mode
-- Defaults to **auto** mode
-- Captures screen + mic + system audio when all sources exist
-- Falls back to available sources (screen + mic, screen + system, or video-only)
-- Makes first-run recording work on ordinary installations
-
-## Platform Improvements
-
-### Windows
-- Extended loopback recognition with localized names (e.g., Brazilian Portuguese "Mixagem estéreo")
-- GUI allows explicit system-audio selection from every DirectShow source
-- Unicode device names now usable with UTF-8 decoding
-- Faster enumeration with timeouts for slow DirectShow drivers
-- Improved multi-monitor and window capture with signed geometry
-
-### macOS
-- Correct AVFoundation display index for screen capture
-- Multiple displays appear in source picker
-- Explicit regions cropped from selected display
-- Invalid regions fail closed
-
-### Linux/Wayland
-- PipeWire combined source for A/V sync (null sink + two loopbacks)
-- Graceful fallback to two-process capture if combined source unavailable
-- Older PulseAudio support via `pactl info`
-- No orphaned processes or leaked temp files
-
-## Documentation Updates
-
-- Added complete Brazilian Portuguese guide: [`docs/README.pt-BR.md`](docs/README.pt-BR.md)
-- Enhanced regression coverage for all platform-specific features
-- Updated installation and usage documentation
+- The Forgejo mirror moved to its live instance:
+  [`git.securityops.com.br/cristiancmoises/turborec`](https://git.securityops.com.br/cristiancmoises/turborec)
+  (the former `git.securityops.co` account requires a password change and no
+  longer accepts API authentication).
+- Documentation and package metadata updated to v3.7.1 (README, guides,
+  DEB/RPM/Guix/AppImage/NSIS packaging, release workflow defaults).
+- Added regression tests covering every `--duration` form.
 
 ## Installation
 
 ### Debian/Ubuntu
 ```bash
-sudo dpkg -i turborec_3.7.0_all.deb
-# Or from tarball:
-sudo tar -xzf turborec-3.7.0.tar.gz
-sudo ./turborec-3.7.0/install.sh
-```
-
-### Portable
-```bash
-tar -xzf turborec-3.7.0.tar.gz
-./turborec-3.7.0/turborec
+sudo dpkg -i turborec_3.7.1_all.deb
 ```
 
 ### RPM (Fedora/RHEL/openSUSE)
 ```bash
-sudo dnf install ./turborec-3.7.0-1.noarch.rpm
+sudo dnf install ./turborec-3.7.1-1.noarch.rpm
+```
+
+### AppImage
+```bash
+chmod +x Turbo_Recorder-3.7.1-x86_64.AppImage
+./Turbo_Recorder-3.7.1-x86_64.AppImage
+```
+
+### Portable tarball
+```bash
+tar -xzf turborec-3.7.1.tar.gz && cd turborec-3.7.1
+./turborec --help
 ```
 
 ### Windows (NSIS installer)
 ```cmd
-Turbo_Recorder-3.7.0-windows-x64-setup.exe
+Turbo_Recorder-3.7.1-windows-x64-setup.exe
 ```
-Requires Python 3.8+ (with Tk) on the target machine.
 
 ### GNU Guix pack (any GNU/Linux)
 ```bash
-tar -xzf turborec-3.7.0-guix-x86_64.tar.gz
+tar -xzf turborec-3.7.1-guix-x86_64.tar.gz
 ./bin/turborec --help
 ```
 
@@ -110,12 +68,12 @@ tar -xzf turborec-3.7.0-guix-x86_64.tar.gz
 
 | Format | Status | Size |
 |--------|--------|------|
-| Debian (.deb) | ✅ Available | 100KB |
-| Portable tarball | ✅ Available | 109KB |
-| AppImage | ✅ Available | 1.05MB |
-| RPM (+ source RPM) | ✅ Available | 135KB + 117KB |
-| Windows installer (NSIS) | ✅ Available | 74.6MB |
-| GNU Guix relocatable pack | ✅ Available | 480MB |
+| Debian (.deb) | ✅ Available | ~100KB |
+| Portable tarball | ✅ Available | ~110KB |
+| AppImage | ✅ Available | ~1MB |
+| RPM (+ source RPM) | ✅ Available | ~135KB + ~117KB |
+| Windows installer (NSIS) | ✅ Available | ~75MB |
+| GNU Guix relocatable pack | ✅ Available | ~480MB |
 | Windows zero-install .exe | ⏳ GitHub Actions (on tag push) | - |
 | FreeBSD .pkg | ⏳ GitHub Actions (VM) | - |
 | macOS DMG | ➖ Not part of release asset set | - |
