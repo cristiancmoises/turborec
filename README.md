@@ -39,7 +39,7 @@ builds a **real-time, correct-speed** FFmpeg pipeline and records.
 - 🧠 **Adaptive quality** — presets scale with the pixel rate: best-quality at 1080p, fast enough to stay real-time at 4K
 - 🪟 **Reliable Windows capture** — Unicode microphones/cameras, stable DirectShow
   device IDs, multi-monitor layouts, and native window handles
-- 📦 **Zero-install Windows app** — a single `.exe` with Python, Tk **and FFmpeg bundled in**: download, double-click, record
+- 📦 **Zero-install Windows app** — a single `.exe` with Python, Tk **and FFmpeg bundled in**: download, double-click, record. The classic **setup.exe installer bundles Python 3.12, Tk and FFmpeg too**, so it needs nothing pre-installed either
 - 🖤 **Beautiful dark GUI _and_ a powerful CLI** — packaged as `.deb` / `.rpm` / AppImage / FreeBSD `.pkg` / Guix pack / Windows `.exe` / portable tarball
 
 Two front-ends, one engine:
@@ -81,7 +81,7 @@ scene-compositing studio you configure by hand (OBS).
 | Cross-platform (Linux · macOS · Windows · **BSD**) | ✅ | ⚠️ no BSD | ✅ | ⚠️ Linux | ❌ Linux |
 | Lossless audio (FLAC) | ✅ | ⚠️ | ✅ | ⚠️ | ❌ |
 | Install footprint | **1 file + ffmpeg** | large | very large | small | small |
-| Self-contained Windows `.exe` (ffmpeg bundled) | ✅ | ⚠️ installer | ⚠️ installer | ⚠️ | ❌ |
+| Self-contained Windows app (`.exe` and setup installer bundle Python + Tk + FFmpeg) | ✅ | ⚠️ installer | ⚠️ installer | ⚠️ | ❌ |
 | Video editing / timeline | ❌ *(records only)* | ❌ | ✅ | ❌ | ❌ |
 
 <sub>✅ built-in · ⚠️ partial / manual / plugin · ➖ not applicable · ❌ not available. Comparison reflects typical out-of-the-box use.</sub>
@@ -149,28 +149,30 @@ free/open-source building blocks — no reinventing the wheel:
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.7.1_all.deb
+sudo apt install ./turborec_3.8.0_all.deb
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.7.1-1.noarch.rpm
+sudo dnf install ./turborec-3.8.0-1.noarch.rpm
 
 # Any Linux — portable, no install
-chmod +x Turbo_Recorder-3.7.1-x86_64.AppImage
-./Turbo_Recorder-3.7.1-x86_64.AppImage
+chmod +x Turbo_Recorder-3.8.0-x86_64.AppImage
+./Turbo_Recorder-3.8.0-x86_64.AppImage
 
 # FreeBSD — native package
-pkg add ./turborec-3.7.1.pkg
+pkg add ./turborec-3.8.0.pkg
 
 # Any Unix (BSD / illumos / Linux / macOS) — portable tarball
-tar xzf turborec-3.7.1.tar.gz && cd turborec-3.7.1
+tar xzf turborec-3.8.0.tar.gz && cd turborec-3.8.0
 sudo ./install.sh            # installs to /usr/local (PREFIX=… to change)
 
 # GNU Guix — relocatable pack (any distro, unprivileged) or the package file
-tar xf turborec-3.7.1-guix-x86_64.tar.gz -C /   # unpacks /gnu/store + /bin
+tar xf turborec-3.8.0-guix-x86_64.tar.gz -C /   # unpacks /gnu/store + /bin
 guix package -f guix.scm                        # or install from the repo
 
-# Windows — self-contained app: Python, Tk AND ffmpeg bundled, nothing to install
-Turbo_Recorder-3.7.1-windows-x64.exe gui
+# Windows — self-contained: Python, Tk AND ffmpeg bundled, nothing to install
+Turbo_Recorder-3.8.0-windows-x64.exe gui          # zero-install portable app
+Turbo_Recorder-3.8.0-windows-x64-setup.exe        # classic installer (also bundles
+                                                  #   Python 3.12 + Tk + FFmpeg)
 ```
 
 Packages install `turborec` and `turborecorder` to `/usr/bin` (`/usr/local/bin`
@@ -194,20 +196,21 @@ python3 turborec.py gui      # or: detect / record / devices
 **Build the packages yourself** — scripts live in [`packaging/`](packaging/):
 
 ```bash
-packaging/build-deb.sh        # → dist/turborec_3.7.1_all.deb  (works even without dpkg-deb)
-packaging/build-rpm.sh        # → dist/turborec-3.7.1-1.noarch.rpm
-packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.7.1-x86_64.AppImage
-packaging/build-tarball.sh    # → dist/turborec-3.7.1.tar.gz   (portable; any Unix incl. the BSDs)
-packaging/build-freebsd-pkg.sh # → dist/turborec-3.7.1.pkg      (run on FreeBSD; pkg add)
+packaging/build-deb.sh        # → dist/turborec_3.8.0_all.deb  (works even without dpkg-deb)
+packaging/build-rpm.sh        # → dist/turborec-3.8.0-1.noarch.rpm
+packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.8.0-x86_64.AppImage
+packaging/build-tarball.sh    # → dist/turborec-3.8.0.tar.gz   (portable; any Unix incl. the BSDs)
+packaging/build-freebsd-pkg.sh # → dist/turborec-3.8.0.pkg      (run on FreeBSD; pkg add)
 guix build -f guix.scm        # GNU Guix package (guix pack -RR … for a tarball)
 ```
 
 > Every release ships **`.deb`, binary/source `.rpm`, AppImage, a portable
-> tarball, a FreeBSD `.pkg`, a GNU Guix relocatable pack, a Windows `.exe`, and
-> `SHA256SUMS`** — built and verified by GitHub
-> Actions on each `v*` tag. The **Windows `.exe` is fully self-contained** —
-> Python, Tk **and FFmpeg are bundled inside it**, so users just download and run
-> (no Python, no FFmpeg, no PATH setup, no admin install).
+> tarball, a FreeBSD `.pkg`, a GNU Guix relocatable pack, a Windows `.exe`, a
+> Windows **setup.exe installer**, and `SHA256SUMS`** — built and verified by GitHub
+> Actions on each `v*` tag. Both Windows artifacts are **fully self-contained** —
+> Python, Tk **and FFmpeg are bundled** (the `.exe` inside the binary, the
+> installer via a silently-installed Python 3.12), so users just download and run
+> (no Python, no FFmpeg, no PATH setup, no admin install for the `.exe`).
 
 ## The GUI
 

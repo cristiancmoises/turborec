@@ -5,6 +5,25 @@ All notable changes to Turbo Recorder are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.0] — 2026-08-31
+
+### Added
+- **Self-contained Windows installer.** `Turbo_Recorder-…-windows-x64-setup.exe`
+  now bundles the pinned **Python 3.12 installer (with Tk)** alongside FFmpeg and
+  the app. During install it silently installs Python per-user (Tk, pip, `py`
+  launcher, PATH prepended) **only when** no Python 3.8+ with Tk is already
+  present, so the target machine needs **no prerequisites** — matching the
+  zero-install `.exe`. The uninstaller removes the app but never uninstalls the
+  shared Python. The Python installer is pinned (python.org 3.12.10, SHA-256
+  verified, matches the published MD5) and cached/verified the same way as the
+  pinned FFmpeg build.
+
+### Fixed
+- `packaging/build-windows.sh`: fixed the shellcheck SC2015 `A && B || C`
+  pattern flagged by the lint gate.
+- `--duration` keeps the v3.7.1 behavior: `1h30` is 1 hour 30 minutes; bare
+  trailing numbers still mean seconds.
+
 ## [3.7.1] — 2026-08-31
 
 ### Fixed

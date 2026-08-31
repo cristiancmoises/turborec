@@ -39,7 +39,7 @@ from datetime import datetime
 from typing import Optional
 
 APP_NAME = "Turbo Recorder"
-VERSION = "3.7.1"
+VERSION = "3.8.0"
 
 # ---------------------------------------------------------------------------
 # Small terminal helpers

@@ -4,7 +4,7 @@ O **Turbo Recorder** grava a tela, o microfone e o áudio do sistema com o
 FFmpeg. Ele detecta o sistema operacional, a tela, os dispositivos de áudio, a
 GPU e os codificadores disponíveis e oferece duas interfaces:
 
-Este guia corresponde ao **Turbo Recorder 3.7.1**.
+Este guia corresponde ao **Turbo Recorder 3.8.0**.
 
 - `turborec`: interface gráfica e linha de comando para Windows, macOS, Linux e
   FreeBSD;
@@ -39,13 +39,13 @@ Documentos relacionados:
 
 | Sistema | Captura de tela | Áudio e câmera | Observações |
 |---|---|---|---|
-| Windows 10/11 x64 | GDI (`gdigrab`) | DirectShow | O `.exe` x64 inclui Python, Tk e FFmpeg |
+| Windows 10/11 x64 | GDI (`gdigrab`) | DirectShow | O `.exe` e o instalador (`setup.exe`) x64 incluem Python, Tk e FFmpeg |
 | macOS | AVFoundation | AVFoundation | É necessário autorizar tela, microfone e câmera |
 | Linux X11 | `x11grab` | PulseAudio/PipeWire e V4L2 | `wmctrl` é opcional para listar janelas |
 | Linux Wayland/wlroots | `wf-recorder` | PipeWire/PulseAudio e V4L2 | Compatível com sway, Hyprland, river e outros compositores wlroots |
 | FreeBSD | caminho Unix/X11 | PulseAudio e dispositivos expostos ao FFmpeg | Python, FFmpeg e, para a GUI, Tk devem ser instalados separadamente |
 
-Requisitos quando não se usa o executável autossuficiente do Windows:
+Requisitos quando não se usa o executável/instalador autossuficiente do Windows:
 
 - Python 3.8 ou mais recente;
 - FFmpeg disponível no `PATH`;
@@ -69,6 +69,12 @@ Baixe os artefatos somente na
 Baixe `Turbo_Recorder-VERSÃO-windows-x64.exe`. O arquivo já contém Python, Tk e
 FFmpeg, não exige instalação administrativa e pode ser aberto com dois cliques.
 Sem argumentos, ele abre a interface gráfica.
+
+Alternativa: o instalador clássico `Turbo_Recorder-VERSÃO-windows-x64-setup.exe`
+também é autossuficiente — ele inclui o Python 3.12 (com Tk), o FFmpeg e o
+aplicativo; instala o Python silenciosamente apenas se não houver um Python 3.8+
+com Tk no sistema, cria atalhos no Menu Iniciar e aparece em **Configurações →
+Aplicativos** para desinstalação.
 
 Para usar a CLI no PowerShell, você pode renomear o arquivo baixado:
 

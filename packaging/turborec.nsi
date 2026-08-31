@@ -1,21 +1,26 @@
 ; =============================================================================
 ;  turborec.nsi — Turbo Recorder Windows installer (NSIS 3.x)
 ;
-;  Build with:  makensis /DVERSION=3.7.0 packaging/turborec.nsi
+;  Build with:  makensis /DVERSION=x.y.z /DPYTHON_INSTALLER=..\build\python-... \
+;                   packaging/turborec.nsi
 ;
 ;  What gets installed:
 ;    * turborec.py            - the cross-platform Python CLI + GUI engine
 ;    * ffmpeg.exe/ffprobe.exe - Windows static FFmpeg build (pinned 8.1.2),
 ;                               placed on PATH only for the launched app
+;    * python-3.12.10-amd64.exe - pinned Python 3.12 installer; run silently
+;                               during install UNLESS a Python 3.8+ (with Tk)
+;                               is already present, so the app is fully
+;                               self-contained (no prerequisites on the host)
 ;    * README.md, LICENSE, CHANGELOG.md, docs/ (TUTORIAL, RELEASE_NOTES,
 ;      README.pt-BR)
 ;    * turborec.ico           - application icon
 ;    * turborec.cmd           - console launcher (CLI)
 ;    * turborec-gui.cmd       - GUI launcher (pythonw, no console window)
 ;
-;  Requires Python 3.8+ (with Tk) on the target machine; the installer
-;  checks for it and warns without aborting, mirroring the .deb/.rpm
-;  dependency policy (python3-tkinter is a runtime dependency there too).
+;  The bundled Python is installed per-user (InstallAllUsers=0, with Tk and
+;  the py launcher, PATH prepended) and is NEVER removed by the uninstaller —
+;  it may be shared with other applications.
 ; =============================================================================
 
 !include "MUI2.nsh"
@@ -23,7 +28,12 @@
 
 ; ---- version (overridable: /DVERSION=x.y.z) ---------------------------------
 !ifndef VERSION
-  !define VERSION "3.7.0"
+  !define VERSION "3.8.0"
+!endif
+
+; ---- bundled Python installer (overridable: /DPYTHON_INSTALLER=path) --------
+!ifndef PYTHON_INSTALLER
+  !define PYTHON_INSTALLER "..\build\python-3.12.10-amd64.exe"
 !endif
 
 ; ---- metadata ----------------------------------------------------------------
@@ -59,6 +69,7 @@ Section "Install" SecMain
   File "..\turborec.py"
   File "..\build\win-bundle\ffmpeg.exe"
   File "..\build\win-bundle\ffprobe.exe"
+  File "${PYTHON_INSTALLER}"
   File "turborec.ico"
 
   ; Launchers.
@@ -73,8 +84,9 @@ Section "Install" SecMain
   File "..\docs\RELEASE_NOTES.md"
   File "..\docs\README.pt-BR.md"
 
-  ; Warn (but do not abort) if no usable Python 3.8+ is found.
-  Call DetectPython
+  ; Ensure a usable Python 3.8+ (with Tk): install the bundled Python 3.12
+  ; silently when none is found.
+  Call EnsurePython
 
   ; Start-menu entries (GUI + CLI).
   CreateDirectory "$SMPROGRAMS\Turbo Recorder"
@@ -118,6 +130,9 @@ Section "Uninstall"
   Delete "$INSTDIR\turborec.py"
   Delete "$INSTDIR\ffmpeg.exe"
   Delete "$INSTDIR\ffprobe.exe"
+  ; Remove the bundled Python installer we shipped, but NEVER uninstall the
+  ; installed Python itself (it may be shared with other applications).
+  Delete "$INSTDIR\python-3.12.10-amd64.exe"
   Delete "$INSTDIR\turborec.ico"
   Delete "$INSTDIR\turborec.cmd"
   Delete "$INSTDIR\turborec-gui.cmd"
@@ -134,27 +149,35 @@ Section "Uninstall"
   DeleteRegKey HKLM "Software\Turbo Recorder"
 SectionEnd
 
-; ---- Python detection (warning only) -----------------------------------------
-Function DetectPython
-  ; Look for the py launcher and the classic python.exe registry entries.
+; ---- ensure a usable Python (3.8+, with Tk) -----------------------------------
+; Exit code 0 from `py -3` means a compatible Python with Tk already exists
+; (python.org installs and the Microsoft Store build both register with the py
+; launcher). Otherwise run the bundled Python 3.12 installer silently per-user
+; (with Tk, pip, the py launcher, and PATH prepended), then re-check. Warn —
+; without aborting — only if Python is still unusable afterwards.
+Function EnsurePython
+  nsExec::ExecToStack '"py" -3 -c "import tkinter,sys;sys.exit(0 if sys.version_info>=(3,8) else 1)"'
+  Pop $0  ; exit code: 0 = usable Python already present
+  ${If} $0 == 0
+    Goto PythonReady
+  ${EndIf}
+
   ClearErrors
-  ReadRegStr $0 HKLM "SOFTWARE\Python\PythonCore" ""
-  ${If} ${Errors}
-    ClearErrors
-    ReadRegStr $0 HKCU "SOFTWARE\Python\PythonCore" ""
+  ExecWait '"$INSTDIR\python-3.12.10-amd64.exe" /quiet InstallAllUsers=0 PrependPath=1 Include_tcltk=1 Include_pip=1 Include_launcher=1 Include_test=0 Include_doc=0 Shortcuts=0' $1
+
+  nsExec::ExecToStack '"py" -3 -c "import tkinter,sys;sys.exit(0 if sys.version_info>=(3,8) else 1)"'
+  Pop $0
+  ${If} $0 == 0
+    Goto PythonReady
   ${EndIf}
-  ${If} ${Errors}
-    ; Fall back to PATH lookup.
-    nsExec::ExecToStack '"py" -3 -c "import sys"'
-    Pop $1  ; return code
-    ${If} $1 != 0
-      MessageBox MB_ICONINFORMATION|MB_OK \
-        "Python 3.8 or newer (with Tk) was not detected on this system.$\n$\n\
-         Turbo Recorder is a Python application; install Python from$\n\
-         https://www.python.org/downloads/ (check 'Install launcher for all$\n\
-         users' and 'Add python.exe to PATH') and re-run this installer, or$\n\
-         run 'turborec' with any existing Python 3.8+ on PATH.$\n$\n\
-         The files are installed and you can proceed either way."
-    ${EndIf}
-  ${EndIf}
+
+  MessageBox MB_ICONINFORMATION|MB_OK \
+    "Python 3.8 or newer (with Tk) could not be detected after installing the$\n$\n\
+     bundled Python 3.12. Turbo Recorder is a Python application; open a new$\n$\n\
+     terminal and run 'py -3 turborec.py' from the install folder, or install$\n$\n\
+     Python from https://www.python.org/downloads/ (check 'Add python.exe to$\n$\n\
+     PATH') and re-run this installer.$\n$\n\
+     The files are installed and you can proceed either way."
+
+PythonReady:
 FunctionEnd

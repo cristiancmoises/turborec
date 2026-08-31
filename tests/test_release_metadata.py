@@ -23,6 +23,23 @@ class ReleaseMetadataTests(unittest.TestCase):
                 text = (ROOT / relative).read_text(encoding="utf-8")
                 self.assertRegex(text, pattern)
 
+    def test_windows_installer_bundles_pinned_python(self):
+        script = (ROOT / "packaging/build-windows.sh").read_text(encoding="utf-8")
+        # A pinned python.org installer with a SHA-256 verification step.
+        self.assertRegex(
+            script,
+            r"PYTHON_URL=\"https://www\.python\.org/ftp/python/3\.12\.\d+/"
+            r"python-3\.12\.\d+-amd64\.exe\"",
+        )
+        self.assertRegex(script, r"PYTHON_SHA256=\"[0-9a-f]{64}\"")
+        self.assertIn("sha256sum -c", script)
+        nsi = (ROOT / "packaging/turborec.nsi").read_text(encoding="utf-8")
+        # The installer ships the bundled Python and installs it when missing.
+        self.assertIn("${PYTHON_INSTALLER}", nsi)
+        self.assertIn("File \"${PYTHON_INSTALLER}\"", nsi)
+        self.assertIn("Function EnsurePython", nsi)
+        self.assertIn("Include_tcltk=1", nsi)
+
     def test_release_workflow_default_matches_version(self):
         workflow = (ROOT / ".github/workflows/windows-asset.yml").read_text(
             encoding="utf-8")

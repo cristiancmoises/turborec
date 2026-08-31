@@ -1,5 +1,5 @@
 Name:           turborec
-Version:        3.7.1
+Version:        3.8.0
 Release:        1%{?dist}
 Summary:        State-of-the-art hardware-accelerated screen and audio recorder
 
@@ -93,6 +93,12 @@ update-desktop-database &>/dev/null || :
 gtk-update-icon-cache %{_datadir}/icons/hicolor &>/dev/null || :
 
 %changelog
+* Mon Aug 31 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.8.0-1
+- Windows setup.exe installer now bundles Python 3.12 (with Tk) + FFmpeg and
+  installs Python silently only when a Python 3.8+ with Tk is not present;
+  the target machine needs no prerequisites.
+- Fixed a shellcheck finding (SC2015) in build-windows.sh.
+
 * Mon Aug 31 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.7.1-1
 - --duration now parses "1h30" as 1 hour 30 minutes (hour-minute shorthand).
 - Bare trailing numbers still mean seconds (90, 1m30, 1h30s); all documented
