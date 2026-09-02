@@ -39,7 +39,7 @@ from datetime import datetime
 from typing import Optional
 
 APP_NAME = "Turbo Recorder"
-VERSION = "3.8.0"
+VERSION = "3.8.1"
 
 # ---------------------------------------------------------------------------
 # Small terminal helpers
@@ -1693,6 +1693,21 @@ def timestamp() -> str:
     return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
 
+def _unique_output_path(out_dir: str, stem: str, ext: str) -> str:
+    """Pick an output path that does not exist yet.
+
+    The timestamp is second-granularity and ffmpeg runs with ``-y``, so a
+    second recording started in the same second would silently overwrite the
+    first (data loss). Append ``_1``, ``_2``, … until the name is free.
+    """
+    path = os.path.join(out_dir, f"{stem}.{ext}")
+    n = 1
+    while os.path.exists(path):
+        path = os.path.join(out_dir, f"{stem}_{n}.{ext}")
+        n += 1
+    return path
+
+
 def ensure_dir(path: str) -> None:
     if os.path.exists(path) and not os.path.isdir(path):
         die(f"Not a directory: {path}")
@@ -1924,8 +1939,7 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
         return cmd, spec.stream_url            # type: ignore[return-value]
 
     container = spec.container if is_video else ("flac" if spec.audio_codec == "flac" else ("opus" if spec.audio_codec == "opus" else "m4a"))
-    name = f"{spec.mode}_{timestamp()}.{container}"
-    out_path = os.path.join(out_dir, name)
+    out_path = _unique_output_path(out_dir, f"{spec.mode}_{timestamp()}", container)
     cmd.append(out_path)
     return cmd, out_path
 
@@ -2308,7 +2322,7 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
         codec, cparams, kind, drm = wf_codec(si, spec, quiet=True, force_software=True)
     container = spec.container or "mkv"
     ts = timestamp()
-    out_path = os.path.join(out_dir, f"{spec.mode}_{ts}.{container}")
+    out_path = _unique_output_path(out_dir, f"{spec.mode}_{ts}", container)
 
     acodec = {"flac": "flac", "aac": "aac", "opus": "libopus"}.get(spec.audio_codec, "flac")
 

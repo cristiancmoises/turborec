@@ -5,6 +5,28 @@ All notable changes to Turbo Recorder are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.1] — 2026-08-31
+
+### Fixed
+- **Same-second recordings no longer overwrite each other.** `ffmpeg` runs
+  with `-y` and the output timestamp is second-granularity, so a second
+  recording started within the same second as the previous one silently
+  replaced the first file. Output names now get a `_1`, `_2`, … suffix when a
+  file with the timestamped name already exists (both the FFmpeg and the
+  Wayland/wf-recorder paths).
+- **Release publishing is guarded against stale mirrors.** `publish-release.sh`
+  now verifies that each forge's git tag ref exists and matches the local tag
+  before creating/reusing a release, and refuses to publish on a mismatch —
+  the same failure mode observed when a stale force-mirror deleted the
+  v3.7.1/v3.8.0 tags and reverted `main` on GitHub (and Codeberg's
+  pull-mirror) after both releases.
+
+### Changed
+- GitHub Actions upgraded off the deprecated Node-20 runtimes:
+  `actions/checkout@v4` → `@v6`, `actions/upload-artifact@v4` → `@v5`,
+  `actions/download-artifact@v4` → `@v5` (v4/v5 artifact formats are
+  incompatible, so upload and download move together).
+
 ## [3.8.0] — 2026-08-31
 
 ### Added

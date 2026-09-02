@@ -1,88 +1,69 @@
-# Release Notes - Turbo Recorder v3.8.0
+# Release Notes - Turbo Recorder v3.8.1
 
 **Release Date:** 2026-08-31  
-**Version:** 3.8.0  
-**Type:** Minor release — self-contained Windows installer
+**Version:** 3.8.1  
+**Type:** Patch release — data-loss fix and release-pipeline hardening
 
 ## Summary
 
-Turbo Recorder v3.8.0 makes the classic Windows installer (`setup.exe`) fully
-self-contained: it now **bundles Python 3.12 (with Tk)**, FFmpeg and the app,
-so the target machine needs nothing pre-installed — the same guarantee the
-zero-install `.exe` already offered.
+Turbo Recorder v3.8.1 fixes a silent data-loss edge case (two recordings
+started in the same second could overwrite each other) and hardens the
+release pipeline against the stale-mirror failure observed after v3.8.0.
 
-## What's New
+## What's Fixed
 
-### Self-contained Windows installer
-- `Turbo_Recorder-<version>-windows-x64-setup.exe` now bundles the pinned
-  python.org **Python 3.12.10 installer** (SHA-256 verified, matches the MD5
-  published on python.org) plus the pinned FFmpeg 8.1.2 build.
-- During install, Python is installed **silently, per-user** (with Tk, pip,
-  the `py` launcher and PATH prepended) **only if** no Python 3.8+ with Tk is
-  already detected — existing installations are never touched.
-- The installer still creates Start-Menu/Desktop shortcuts and an
-  Add/Remove Programs entry; the uninstaller removes the app but **never**
-  uninstalls the shared Python.
-- Installer size grows to ~101 MB (was ~75 MB) to carry Python.
+### Same-second recordings never overwrite each other
+- The output timestamp is second-granularity and `ffmpeg` runs with `-y`, so
+  starting a second recording within the same second as the previous one
+  silently replaced the first file.
+- Output paths are now collision-safe: `…_2026-08-31_14-20-33.mkv` becomes
+  `…_2026-08-31_14-20-33_1.mkv`, `_2.mkv`, … when the name is already taken
+  (FFmpeg and Wayland/wf-recorder paths both fixed).
 
-### Quality / maintenance
-- Fixed the shellcheck SC2015 lint finding in `build-windows.sh`.
-- Packaging metadata and all user guides updated to v3.8.0; the Windows docs
-  now describe both the portable `.exe` and the self-contained installer.
+### Release pipeline hardening (stale-mirror defense)
+- After v3.8.0, a stale force-mirror (the retired `git.securityops.co`
+  instance) deleted the v3.7.1/v3.8.0 tags and reverted `main` on GitHub —
+  and Codeberg's pull-mirror followed. The refs were restored via the API.
+- `packaging/publish-release.sh` now **verifies each forge's git tag ref
+  against the local tag** before creating or reusing a release and refuses
+  to publish on a missing/mismatched ref, so a wiped tag can no longer anchor
+  a release on an old commit silently.
+- **Action needed from the repo owner:** disable or refresh the
+  `git.securityops.co` push-mirror (its account is password-locked, so it
+  cannot be fixed via API). Until then the drift may recur — the preflight
+  makes it loud instead of silent.
+
+### CI modernization
+- GitHub Actions moved off the deprecated Node-20 runtimes:
+  `actions/checkout@v4` → `@v6`, `actions/upload-artifact@v4` → `@v5`,
+  `actions/download-artifact@v4` → `@v5` (upload and download move together
+  because the v4/v5 artifact formats are incompatible).
 
 ## Installation
 
-### Windows — installer (self-contained, no prerequisites)
-```cmd
-Turbo_Recorder-3.8.0-windows-x64-setup.exe
-```
+All packages are unchanged in layout; see the v3.8.0 notes for the
+self-contained Windows installer (Python 3.12 bundled).
 
-### Windows — zero-install portable app (unchanged)
-```powershell
-Turbo_Recorder-3.8.0-windows-x64.exe gui
-```
-
-### Debian/Ubuntu
 ```bash
-sudo dpkg -i turborec_3.8.0_all.deb
-```
-
-### RPM (Fedora/RHEL/openSUSE)
-```bash
-sudo dnf install ./turborec-3.8.0-1.noarch.rpm
-```
-
-### AppImage
-```bash
-chmod +x Turbo_Recorder-3.8.0-x86_64.AppImage
-./Turbo_Recorder-3.8.0-x86_64.AppImage
-```
-
-### Portable tarball
-```bash
-tar -xzf turborec-3.8.0.tar.gz && cd turborec-3.8.0
-./turborec --help
-```
-
-### GNU Guix pack (any GNU/Linux)
-```bash
-tar -xzf turborec-3.8.0-guix-x86_64.tar.gz
-./bin/turborec --help
+# Debian/Ubuntu
+sudo dpkg -i turborec_3.8.1_all.deb
+# RPM
+sudo dnf install ./turborec-3.8.1-1.noarch.rpm
+# AppImage
+chmod +x Turbo_Recorder-3.8.1-x86_64.AppImage && ./Turbo_Recorder-3.8.1-x86_64.AppImage
+# Windows
+Turbo_Recorder-3.8.1-windows-x64-setup.exe   # or the portable .exe
 ```
 
 ## Package Availability
 
-| Format | Status | Size |
-|--------|--------|------|
-| Debian (.deb) | ✅ Available | ~100KB |
-| Portable tarball | ✅ Available | ~110KB |
-| AppImage | ✅ Available | ~1MB |
-| RPM (+ source RPM) | ✅ Available | ~135KB + ~117KB |
-| Windows installer (NSIS, Python bundled) | ✅ Available | ~101MB |
-| GNU Guix relocatable pack | ✅ Available | ~480MB |
-| Windows zero-install .exe | ✅ Available | ~85MB |
-| FreeBSD .pkg | ✅ Available | ~100KB |
-| macOS DMG | ➖ Not part of release asset set | - |
+| Format | Status |
+|--------|--------|
+| Debian (.deb) / RPM (+ source RPM) | ✅ |
+| AppImage / portable tarball | ✅ |
+| Windows installer (Python bundled) / zero-install .exe | ✅ |
+| GNU Guix relocatable pack / FreeBSD .pkg | ✅ |
+| macOS DMG | ➖ Not part of release asset set |
 
 ## Technical Details
 

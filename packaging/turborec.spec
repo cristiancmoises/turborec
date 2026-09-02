@@ -1,5 +1,5 @@
 Name:           turborec
-Version:        3.8.0
+Version:        3.8.1
 Release:        1%{?dist}
 Summary:        State-of-the-art hardware-accelerated screen and audio recorder
 
@@ -93,6 +93,13 @@ update-desktop-database &>/dev/null || :
 gtk-update-icon-cache %{_datadir}/icons/hicolor &>/dev/null || :
 
 %changelog
+* Mon Aug 31 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.8.1-1
+- Recordings started in the same second no longer silently overwrite each
+  other (ffmpeg -y): output filenames get a _1, _2, ... suffix on collision.
+- publish-release.sh verifies each forge's git tag ref matches the local tag
+  before publishing, defending against stale force-mirrors that delete tags.
+- CI actions upgraded to Node-24 runtimes (checkout v6, artifacts v5).
+
 * Mon Aug 31 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.8.0-1
 - Windows setup.exe installer now bundles Python 3.12 (with Tk) + FFmpeg and
   installs Python silently only when a Python 3.8+ with Tk is not present;

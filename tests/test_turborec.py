@@ -1,7 +1,9 @@
 import argparse
 import io
+import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -293,6 +295,36 @@ class DurationParsingTests(unittest.TestCase):
         for bad in ("", "abc", "-5m", "1h2h"):
             with self.assertRaises(argparse.ArgumentTypeError):
                 tr.parse_duration(bad)
+
+
+class OutputNamingTests(unittest.TestCase):
+    def test_same_second_recordings_do_not_overwrite(self):
+        # ffmpeg runs with -y and the timestamp is second-granularity, so a
+        # quick second recording must never silently overwrite the first
+        # (the first recording's file already exists on disk by then).
+        with tempfile.TemporaryDirectory() as d:
+            stem = "video_only_2026-08-31_12-00-00"
+            p1 = tr._unique_output_path(d, stem, "mkv")
+            with open(p1, "w"):  # first recording's file exists
+                pass
+            p2 = tr._unique_output_path(d, stem, "mkv")
+            self.assertEqual(os.path.basename(p2), f"{stem}_1.mkv")
+            with open(p2, "w"):
+                pass
+            p3 = tr._unique_output_path(d, stem, "mkv")
+            self.assertEqual(os.path.basename(p3), f"{stem}_2.mkv")
+
+    def test_build_command_output_path_uses_timestamp_stem(self):
+        si = tr.SystemInfo(
+            os="linux", display_server="x11", screen="1920x1080",
+            encoders={"libx264"}, ffmpeg="ffmpeg")
+        spec = tr.RecordSpec(mode="video_only", out_dir="/nonexistent-unused")
+        with mock.patch.object(tr, "ensure_dir"):
+            _cmd, out = tr.build_command(si, spec)
+        self.assertRegex(
+            out,
+            r"/nonexistent-unused/video_only_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.mkv",
+        )
 
 
 if __name__ == "__main__":

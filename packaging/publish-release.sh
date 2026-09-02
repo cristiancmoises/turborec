@@ -12,9 +12,9 @@
 #
 #  Usage:
 #     FJTOKEN=<forgejo-token> CBTOKEN=<codeberg-token> \
-#         packaging/publish-release.sh v3.8.0 [asset-dir]
+#         packaging/publish-release.sh v3.8.1 [asset-dir]
 #
-#   - <tag>       the release tag, e.g. v3.8.0 (must already be pushed).
+#   - <tag>       the release tag, e.g. v3.8.1 (must already be pushed).
 #   - [asset-dir] a directory of files to attach. If omitted, the assets are
 #                 downloaded from the GitHub release for <tag> using `gh`.
 #
@@ -52,7 +52,7 @@ TAG="${1:-}"
 [ -n "${TAG}" ] || die "usage: FJTOKEN=… CBTOKEN=… $0 <tag> [asset-dir]"
 VERSION="${TAG#v}"
 [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-    || die "tag must look like v3.8.0 (got: ${TAG})"
+    || die "tag must look like v3.8.1 (got: ${TAG})"
 ASSET_DIR="${2:-}"
 
 # ---- gather the assets ------------------------------------------------------
@@ -106,6 +106,29 @@ publish_to() {
     local auth="Authorization: token ${token}"
 
     log "── ${label} ────────────────────────────────────────────"
+
+    # Preflight: the forge's git tag ref must exist AND match the local tag.
+    # A stale force-mirror can delete or re-anchor newer tags (observed with
+    # git.securityops.co wiping main + v3.7.1/v3.8.1 off GitHub); publishing
+    # against the wrong ref would anchor the release on an old commit. Skip
+    # the check when run outside the repository (no local tag to compare).
+    local local_sha=""
+    if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
+        local_sha="$(git rev-parse "refs/tags/${TAG}")"
+    fi
+    if [ -n "${local_sha}" ]; then
+        local remote_sha=""
+        remote_sha="$(curl -fsS -H "${auth}" "${base}/git/refs/tags/${TAG}" 2>/dev/null \
+            | python3 -c 'import sys,json
+d=json.load(sys.stdin)
+print(d.get("object",{}).get("sha",""))' 2>/dev/null || true)"
+        if [ -z "${remote_sha}" ] || [ "${remote_sha}" != "${local_sha}" ]; then
+            log "${label}: tag ${TAG} is missing or mismatched on the forge"
+            log "  remote=${remote_sha:-missing}  local=${local_sha}  (stale mirror?) — refusing to publish"
+            return 1
+        fi
+        log "${label}: tag ${TAG} ref verified (${local_sha})"
+    fi
 
     # Reuse an existing release for the tag, else create one.
     local rid
