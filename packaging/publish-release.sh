@@ -121,6 +121,8 @@ publish_to() {
         remote_sha="$(curl -fsS -H "${auth}" "${base}/git/refs/tags/${TAG}" 2>/dev/null \
             | python3 -c 'import sys,json
 d=json.load(sys.stdin)
+if isinstance(d, list):        # Gitea returns a one-element array here
+    d = d[0] if d else {}
 print(d.get("object",{}).get("sha",""))' 2>/dev/null || true)"
         if [ -z "${remote_sha}" ] || [ "${remote_sha}" != "${local_sha}" ]; then
             log "${label}: tag ${TAG} is missing or mismatched on the forge"
