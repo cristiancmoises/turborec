@@ -12,8 +12,7 @@
 ;                               during install UNLESS a Python 3.8+ (with Tk)
 ;                               is already present, so the app is fully
 ;                               self-contained (no prerequisites on the host)
-;    * README.md, LICENSE, CHANGELOG.md, docs/ (TUTORIAL, RELEASE_NOTES,
-;      README.pt-BR)
+;    * README.md, LICENSE, CHANGELOG.md, docs/ (TUTORIAL, README.pt-BR)
 ;    * turborec.ico           - application icon
 ;    * turborec.cmd           - console launcher (CLI)
 ;    * turborec-gui.cmd       - GUI launcher (pythonw, no console window)
@@ -28,7 +27,7 @@
 
 ; ---- version (overridable: /DVERSION=x.y.z) ---------------------------------
 !ifndef VERSION
-  !define VERSION "3.8.0"
+  !define VERSION "3.9.0"
 !endif
 
 ; ---- bundled Python installer (overridable: /DPYTHON_INSTALLER=path) --------
@@ -81,7 +80,6 @@ Section "Install" SecMain
   File "..\LICENSE"
   File "..\CHANGELOG.md"
   File "..\docs\TUTORIAL.md"
-  File "..\docs\RELEASE_NOTES.md"
   File "..\docs\README.pt-BR.md"
 
   ; Ensure a usable Python 3.8+ (with Tk): install the bundled Python 3.12
@@ -140,7 +138,6 @@ Section "Uninstall"
   Delete "$INSTDIR\LICENSE"
   Delete "$INSTDIR\CHANGELOG.md"
   Delete "$INSTDIR\TUTORIAL.md"
-  Delete "$INSTDIR\RELEASE_NOTES.md"
   Delete "$INSTDIR\README.pt-BR.md"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"

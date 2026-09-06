@@ -5,6 +5,36 @@ All notable changes to Turbo Recorder are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.0] — 2026-09-06
+
+### Changed
+- **Quality-first defaults everywhere.** A new GUI or CLI session now starts at
+  `best` quality, **23 fps**, and **4K (3840×2160)** output. The same defaults
+  apply to `RecordSpec`, command-line parsing, the GUI controls, previews, and
+  configuration fallback behavior; explicit user settings still win.
+- **Automatic best-codec selection.** `-c auto` is now the default. Turbo
+  Recorder runtime-probes candidates and prefers usable hardware **AV1**, then
+  hardware **HEVC**, then hardware **H.264**, with software H.264 as the safe,
+  real-time-compatible fallback. `-c h264|hevc|av1` remains available for an
+  explicit choice, and RTMP/RTMPS streaming continues to force H.264.
+
+### Documentation
+- Updated the English README, complete user guide, packaging guide, and the
+  full Brazilian Portuguese documentation for the 3.9.0 profile and artifact
+  names.
+- Clarified that the default is the literal integer **23 fps**, not 23.976 fps,
+  and documented when to choose native resolution, 30/60 fps, or an explicit
+  compatibility codec.
+- Added the production website source, refreshed its release/download content,
+  and added a same-origin favicon, screenshot, sitemap, and prominent PT-BR
+  documentation route while retaining a zero-JavaScript, tracker-free design.
+- Updated GitHub Actions to the current `actions/setup-python@v6` runtime.
+
+### Removed
+- Removed the stale, version-specific `docs/RELEASE_NOTES.md`; the changelog and
+  automatically generated forge release notes remain the release-history
+  sources of truth.
+
 ## [3.8.1] — 2026-08-31
 
 ### Fixed
@@ -61,9 +91,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   defaults to 4K output (3840×2160) which is ideal for YouTube's 4K tier and
   other high-quality streaming platforms. The resolution can still be scaled
   down to 720p/1080p/1440p for smaller files or bandwidth constraints.
-- **Cinematic 23.976 fps default frame rate.** The default fps is now 23
-  (23.976) for cinematic playback and superior quality. Higher fps modes are
-  still available via CLI for sports/gaming use cases.
+- **23 fps default frame rate.** The default is the literal integer 23 fps for
+  high quality per frame and lower encoding load. Higher fps modes remain
+  available via CLI for sports/gaming use cases.
 - **Lossless FLAC audio remains default.** Audio quality is maximized with
   FLAC compression, preserving the full 48kHz stereo audio from your sources.
 

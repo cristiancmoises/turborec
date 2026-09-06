@@ -17,6 +17,8 @@ class ReleaseMetadataTests(unittest.TestCase):
             "packaging/turborec.spec": rf"(?m)^Version:\s+{version}$",
             "packaging/debian/control": rf"(?m)^Version:\s+{version}$",
             "guix.scm": rf'\(version "{version}"\)',
+            "packaging/turborec.nsi": rf'!define VERSION "{version}"',
+            "website/index.html": rf"Turbo Recorder {version}",
         }
         for relative, pattern in checks.items():
             with self.subTest(file=relative):
@@ -44,6 +46,14 @@ class ReleaseMetadataTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/windows-asset.yml").read_text(
             encoding="utf-8")
         self.assertIn(f"default: v{turborec.VERSION}", workflow)
+
+    def test_website_static_assets_exist(self):
+        for relative in (
+            "website/favicon.ico",
+            "website/sitemap.xml",
+            "website/turborec-gui.png",
+        ):
+            self.assertTrue((ROOT / relative).is_file(), relative)
 
     def test_user_guides_are_packaged(self):
         for relative in ("docs/TUTORIAL.md", "docs/README.pt-BR.md"):

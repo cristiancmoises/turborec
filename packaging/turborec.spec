@@ -1,5 +1,5 @@
 Name:           turborec
-Version:        3.8.1
+Version:        3.9.0
 Release:        1%{?dist}
 Summary:        State-of-the-art hardware-accelerated screen and audio recorder
 
@@ -93,6 +93,13 @@ update-desktop-database &>/dev/null || :
 gtk-update-icon-cache %{_datadir}/icons/hicolor &>/dev/null || :
 
 %changelog
+* Sun Sep 06 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.9.0-1
+- Default the GUI, CLI, and configuration model to best quality, automatic
+  codec selection, 23 fps, and 4K output.
+- Prefer usable hardware AV1, then HEVC and H.264, with a real-time software
+  H.264 fallback; keep RTMP streaming on compatible H.264.
+- Keep English and Brazilian Portuguese documentation synchronized.
+
 * Mon Aug 31 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.8.1-1
 - Recordings started in the same second no longer silently overwrite each
   other (ffmpeg -y): output filenames get a _1, _2, ... suffix on collision.

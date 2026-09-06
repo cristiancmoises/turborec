@@ -39,7 +39,7 @@ from datetime import datetime
 from typing import Optional
 
 APP_NAME = "Turbo Recorder"
-VERSION = "3.8.1"
+VERSION = "3.9.0"
 
 # ---------------------------------------------------------------------------
 # Small terminal helpers
@@ -1229,12 +1229,42 @@ def _hardware_encoder_usable(si: SystemInfo, name: str, kind: str) -> bool:
     return usable
 
 
-def choose_encoder(si: SystemInfo, codec: str = "h264", force_software: bool = False,
+def choose_encoder(si: SystemInfo, codec: str = "auto", force_software: bool = False,
                    backend: str = "auto") -> EncoderChoice:
-    """Pick the video encoder. backend: auto | gpu | cpu (force_software == cpu)."""
+    """Pick the video encoder. backend: auto | gpu | cpu (force_software == cpu).
+
+    ``codec=auto`` is deliberately quality-first without sacrificing a usable
+    default: prefer a *working hardware* AV1 encoder, then HEVC, then H.264.
+    Software AV1/HEVC are skipped because 4K live capture can easily outrun
+    them; libx264 is the deterministic real-time compatibility fallback.
+    Explicit codec selections retain their existing behavior.
+    """
     codec = codec.lower()
     if force_software:
         backend = "cpu"
+
+    if codec == "auto":
+        if backend != "cpu":
+            for candidate_codec in ("av1", "hevc", "h264"):
+                for enc, kind in _candidate_encoders(si, candidate_codec):
+                    if kind == "software":
+                        continue
+                    if enc in si.encoders and _hardware_encoder_usable(si, enc, kind):
+                        return EncoderChoice(
+                            enc, kind, candidate_codec,
+                            f"automatic {candidate_codec.upper()} hardware encoding",
+                        )
+        if "libx264" in si.encoders:
+            if backend == "gpu":
+                warn("No usable hardware AV1/HEVC/H.264 encoder available — "
+                     "falling back to CPU (libx264).")
+            return EncoderChoice(
+                "libx264", "software", "h264",
+                "automatic H.264 software fallback",
+            )
+        die("No usable hardware AV1/HEVC/H.264 encoder or libx264 fallback "
+            "is available in this FFmpeg build.")
+
     sw_name = _sw_encoder(si, codec)
 
     if backend == "cpu":
@@ -1265,6 +1295,11 @@ def choose_encoder(si: SystemInfo, codec: str = "h264", force_software: bool = F
 # Quality presets -> encoder-specific arguments
 # ---------------------------------------------------------------------------
 QUALITY_LEVELS = ("best", "high", "balanced", "compact")
+VIDEO_CODECS = ("auto", "h264", "hevc", "av1")
+DEFAULT_QUALITY = "best"
+DEFAULT_CODEC = "auto"
+DEFAULT_FPS = 23
+DEFAULT_RESOLUTION = "4k"
 
 # Output resolution presets ("native" = capture size, no scaling). Upscaling to
 # 4k is deliberate and useful: platforms like YouTube pick their quality tier
@@ -1720,10 +1755,10 @@ def ensure_dir(path: str) -> None:
 @dataclass
 class RecordSpec:
     mode: str            # video_both|video_mic|video_system|video_only|audio_mic|audio_system|audio_both
-    quality: str = "best"
-    codec: str = "h264"
-    fps: int = 23  # 23.976 fps cinematic standard for highest quality playback
-    resolution: str = "4k"  # 4K output (3840x2160) for maximum quality platforms like YouTube
+    quality: str = DEFAULT_QUALITY
+    codec: str = DEFAULT_CODEC
+    fps: int = DEFAULT_FPS
+    resolution: str = DEFAULT_RESOLUTION
     region: Optional[str] = None
     out_dir: str = ""
     audio_rate: int = 48000
@@ -1985,13 +2020,27 @@ def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False,
     if qi >= 2:
         st = min(3, st + 1)
     codec = spec.codec
+    # wf-recorder cannot use NVENC/QSV/AMF.  Its quality-first automatic mode
+    # therefore checks the usable VAAPI codecs in the same order as FFmpeg and
+    # otherwise takes the predictable real-time libx264 fallback.
+    auto_codec = codec == "auto"
+    if auto_codec:
+        codec = "h264"
     if not force_software and spec.backend != "cpu" \
             and si.gpu_vendor in ("intel", "amd") and si.vaapi_device:
-        venc = {"h264": "h264_vaapi", "hevc": "hevc_vaapi"}.get(codec)
-        if venc and venc in si.encoders:
-            # Enhanced quality for 4K: lower qp = better quality
-            qp = [18, 22, 25, 28][qi]
-            return venc, [f"qp={qp}"], "vaapi", si.vaapi_device
+        if auto_codec:
+            candidates = ("av1_vaapi", "hevc_vaapi", "h264_vaapi")
+            for venc in candidates:
+                if venc in si.encoders \
+                        and _hardware_encoder_usable(si, venc, "vaapi"):
+                    qp = [18, 22, 25, 28][qi]
+                    return venc, [f"qp={qp}"], "vaapi", si.vaapi_device
+        else:
+            venc = {"h264": "h264_vaapi", "hevc": "hevc_vaapi"}.get(codec)
+            if venc and venc in si.encoders:
+                # Enhanced quality for 4K: lower qp = better quality
+                qp = [18, 22, 25, 28][qi]
+                return venc, [f"qp={qp}"], "vaapi", si.vaapi_device
     if spec.backend == "gpu" and si.gpu_vendor == "nvidia" and not quiet:
         warn("wf-recorder cannot use NVENC on Wayland; recording with software x264.")
     if codec == "hevc":
@@ -3261,15 +3310,19 @@ def build_parser(rc: Optional[dict] = None) -> argparse.ArgumentParser:
                    default=d("mode", "auto"),
                    help="what to capture (default: auto — uses every available "
                         "audio source and degrades safely)")
-    r.add_argument("-q", "--quality", choices=QUALITY_LEVELS, default=d("quality", "best"),
+    r.add_argument("-q", "--quality", choices=QUALITY_LEVELS,
+                   default=d("quality", DEFAULT_QUALITY),
                    help="quality preset (default: best)")
-    r.add_argument("-R", "--resolution", choices=RESOLUTIONS, default=d("resolution", "4k"),
+    r.add_argument("-R", "--resolution", choices=RESOLUTIONS,
+                   default=d("resolution", DEFAULT_RESOLUTION),
                    help="output resolution: native, 720p, 1080p, 1440p, 4k — "
                         "scales the recording (upscale to 4k for YouTube's 4K tier)")
-    r.add_argument("-c", "--codec", choices=("h264", "hevc", "av1"), default=d("codec", "h264"),
-                   help="video codec (default: h264)")
-    r.add_argument("-f", "--fps", type=int, default=d("fps", 23),
-                   help="frames per second (default: 23.976 cinematic)")
+    r.add_argument("-c", "--codec", choices=VIDEO_CODECS,
+                   default=d("codec", DEFAULT_CODEC),
+                   help="video codec (default: auto — hardware AV1, HEVC, H.264; "
+                        "then software H.264)")
+    r.add_argument("-f", "--fps", type=int, default=d("fps", DEFAULT_FPS),
+                   help="frames per second (default: 23)")
     r.add_argument("-o", "--out", default=d("out", None), help="output directory")
     r.add_argument("-t", "--duration", type=parse_duration, default=d("duration", None),
                    metavar="TIME",
@@ -3626,10 +3679,10 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             _cancel_after(key)
 
     mode_var = tk.StringVar(value=_automatic_mode(si))
-    quality_var = tk.StringVar(value="best")
-    res_var = tk.StringVar(value="native")
-    codec_var = tk.StringVar(value="h264")
-    fps_var = tk.StringVar(value="60")
+    quality_var = tk.StringVar(value=DEFAULT_QUALITY)
+    res_var = tk.StringVar(value=DEFAULT_RESOLUTION)
+    codec_var = tk.StringVar(value=DEFAULT_CODEC)
+    fps_var = tk.StringVar(value=str(DEFAULT_FPS))
     acodec_var = tk.StringVar(value="flac")
     achan_var = tk.StringVar(value="stereo")
     denoise_var = tk.StringVar(value="off")
@@ -3697,7 +3750,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     quality_cb = _combo(grid, quality_var, QUALITY_LEVELS)
     quality_cb.grid(row=0, column=1, sticky="ew", padx=(0, 14), pady=4)
     label(grid, "Codec", fg=C["muted"]).grid(row=0, column=2, sticky="w", padx=(0, 8), pady=4)
-    codec_cb = _combo(grid, codec_var, ("h264", "hevc", "av1"))
+    codec_cb = _combo(grid, codec_var, VIDEO_CODECS)
     codec_cb.grid(row=0, column=3, sticky="ew", padx=(0, 14), pady=4)
     label(grid, "FPS", fg=C["muted"]).grid(row=0, column=4, sticky="w", padx=(0, 8), pady=4)
     fps_cb = _combo(grid, fps_var, ("23", "24", "30", "48", "60", "120"))
@@ -4149,7 +4202,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         try:
             fps = int(fps_var.get())
         except ValueError:
-            fps = 60
+            fps = DEFAULT_FPS
         # Capture target: explicit Region overrides the Source picker; otherwise a
         # monitor/window target; "screen" => full. _apply_target_to_spec fills the
         # right fields for X11 (geometry/win_title) or Wayland (wl_output/wl_geometry).

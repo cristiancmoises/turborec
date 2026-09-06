@@ -30,7 +30,7 @@ Actions release workflow builds the Linux artifacts on
   `uninstall.sh` honouring `PREFIX` (default `/usr/local`) and `DESTDIR`:
 
   ```sh
-  tar xzf turborec-3.8.1.tar.gz && cd turborec-3.8.1
+  tar xzf turborec-3.9.0.tar.gz && cd turborec-3.9.0
   sudo ./install.sh                  # → /usr/local
   PREFIX="$HOME/.local" ./install.sh # per-user
   ```
@@ -38,7 +38,7 @@ Actions release workflow builds the Linux artifacts on
 - **`build-freebsd-pkg.sh`** → `dist/turborec-<version>.pkg`. Must run on FreeBSD
   (uses `pkg create`). Stages the tree under `${PREFIX}`, generates a plist +
   `+MANIFEST`, and emits a package installable with
-  `pkg add ./turborec-3.8.1.pkg`. Runtime prerequisites (`python3`, `ffmpeg`,
+  `pkg add ./turborec-3.9.0.pkg`. Runtime prerequisites (`python3`, `ffmpeg`,
   optional `wf-recorder`) are documented in the package description rather than
   declared as hard deps, so the file installs cleanly on any FreeBSD release
   (`pkg install python3 ffmpeg`).
@@ -46,23 +46,25 @@ Actions release workflow builds the Linux artifacts on
 ## Publishing release binaries to Forgejo + Codeberg
 
 Forgejo (`git.securityops.com.br`) is the primary repo; GitHub and Codeberg are
-push-mirrors. Push-mirrors replicate git refs (branches/tags) but **not** release
-objects or their binaries. GitHub builds its binaries via `release.yml`; to attach
-that same set to the Forgejo and Codeberg releases, run:
+independent Git remotes synchronized deliberately during a release. Git pushes
+replicate branches and tags but **not** release objects or their binaries.
+GitHub builds its binaries via `release.yml`; to attach that same verified set
+to the Forgejo and Codeberg releases, run:
 
 ```sh
 # downloads the tag's assets from the GitHub release, then attaches them to the
 # matching Forgejo + Codeberg releases (creating the release if needed)
 FJTOKEN=<forgejo-token> CBTOKEN=<codeberg-token> \
-    packaging/publish-release.sh v3.8.1
+    packaging/publish-release.sh v3.9.0
 
 # or attach files from a local directory instead of downloading
-FJTOKEN=… CBTOKEN=… packaging/publish-release.sh v3.8.1 dist/
+FJTOKEN=… CBTOKEN=… packaging/publish-release.sh v3.9.0 dist/
 ```
 
-Tokens are read only from the environment. The script requires all eight
-platform artifacts, mirrors any checksum file, verifies remote byte sizes, and
-fails on an incomplete upload. It is idempotent when re-run.
+Tokens are read only from the environment. The script requires all **nine
+platform artifacts** (including both Windows executables and both RPMs), mirrors
+`SHA256SUMS`, verifies remote byte sizes, and fails on an incomplete upload. It
+is idempotent when re-run.
 
 ## Debian `.deb` layout
 
@@ -98,7 +100,7 @@ The script:
    - `README.md`               -> `/usr/share/doc/turborec/README.md`
 2. Builds the control tree (`control` with computed `Installed-Size`,
    `md5sums`, `postinst`, `postrm`).
-3. Emits `dist/turborec_3.8.1_all.deb`.
+3. Emits `dist/turborec_3.9.0_all.deb`.
 
 ### dpkg-deb vs. portable mode
 
@@ -123,8 +125,8 @@ distributions the equivalents are `python3-tkinter` and `pulseaudio-utils`.
 
 ```bash
 # inspect members and metadata without installing
-ar t dist/turborec_3.8.1_all.deb
-mkdir -p /tmp/deb && ar x dist/turborec_3.8.1_all.deb --output /tmp/deb
+ar t dist/turborec_3.9.0_all.deb
+mkdir -p /tmp/deb && ar x dist/turborec_3.9.0_all.deb --output /tmp/deb
 tar -tvf /tmp/deb/data.tar.xz
 tar -xOf /tmp/deb/control.tar.gz ./control
 ```

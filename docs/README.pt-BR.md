@@ -4,7 +4,7 @@ O **Turbo Recorder** grava a tela, o microfone e o áudio do sistema com o
 FFmpeg. Ele detecta o sistema operacional, a tela, os dispositivos de áudio, a
 GPU e os codificadores disponíveis e oferece duas interfaces:
 
-Este guia corresponde ao **Turbo Recorder 3.8.1**.
+Este guia corresponde ao **Turbo Recorder 3.9.0**.
 
 - `turborec`: interface gráfica e linha de comando para Windows, macOS, Linux e
   FreeBSD;
@@ -15,8 +15,16 @@ Para começar, use `turborec`. Esta página usa nomes de arquivos sem fixar uma
 versão; substitua `*` ou `VERSÃO` pelo número mostrado na
 [página de lançamentos (Releases)](https://github.com/cristiancmoises/turborec/releases/latest).
 
+Ao abrir o aplicativo, o perfil inicial já prioriza qualidade: **Qualidade
+Best**, **Codec Auto**, **23 fps** e saída **4K (3840×2160)**. No modo Auto, o
+Turbo Recorder escolhe o primeiro codificador por hardware realmente utilizável
+nesta ordem: **AV1 → HEVC/H.265 → H.264**. Se nenhum deles funcionar, usa H.264
+por software, que é a alternativa mais segura e compatível. Todos esses valores
+podem ser alterados pela GUI, CLI ou configuração JSON.
+
 Documentos relacionados:
 
+- [site oficial do Turbo Recorder](https://turborec.securityops.co)
 - [README principal em inglês](../README.md)
 - [tutorial completo em inglês](TUTORIAL.md)
 - [histórico de alterações](../CHANGELOG.md)
@@ -303,7 +311,8 @@ Na GUI:
 1. escolha o modo de captura;
 2. escolha uma fonte em **Source** e atualize a lista após conectar dispositivos
    ou abrir novas janelas;
-3. mantenha **Encoder: Auto** no primeiro teste;
+3. para o perfil recomendado, mantenha **Best · Auto · 23 fps · 4K** e
+   **Encoder: Auto**;
 4. confirme o microfone e o áudio do sistema;
 5. escolha a pasta de saída;
 6. clique em **Start** e, ao terminar, em **Stop**.
@@ -398,9 +407,9 @@ Opções importantes:
 | Opção | Valores ou exemplo | Padrão |
 |---|---|---|
 | `-q, --quality` | `best`, `high`, `balanced`, `compact` | `best` |
-| `-R, --resolution` | `native`, `720p`, `1080p`, `1440p`, `4k` | `native` |
-| `-c, --codec` | `h264`, `hevc`, `av1` | `h264` |
-| `-f, --fps` | `23`, `30`, `60` ou outro inteiro | `60` |
+| `-R, --resolution` | `native`, `720p`, `1080p`, `1440p`, `4k` | `4k` |
+| `-c, --codec` | `auto`, `h264`, `hevc`, `av1` | `auto` |
+| `-f, --fps` | `23`, `30`, `60` ou outro inteiro | `23` |
 | `-o, --out` | pasta de saída | `~/Videos` ou `~/Audio` |
 | `--backend` | `auto`, `gpu`, `cpu` | `auto` |
 | `--audio-codec` | `flac`, `aac`, `opus` | `flac` |
@@ -417,6 +426,10 @@ Para YouTube ou outro destino RTMP/RTMPS:
 turborec record -m video_both --stream "SUA_CHAVE"
 turborec record --stream "SUA_CHAVE" --stream-url rtmps://servidor/aplicacao
 ```
+
+Em transmissões, o Turbo Recorder sempre usa H.264, AAC, taxa constante e
+intervalo de quadro-chave adequado ao RTMP, mesmo que `Codec Auto`, HEVC ou AV1
+esteja selecionado para gravações locais.
 
 A aplicação oculta a chave das prévias e mensagens, mas qualquer segredo
 informado na linha de comando pode permanecer no histórico do shell e ficar
@@ -695,19 +708,25 @@ turborec record -m video_mic --backend auto -q high -f 30
 turborec record -m video_mic --cpu -q balanced -f 30
 ```
 
-Use `turborec encoders` para confirmar o codificador escolhido. `--gpu` força
-hardware e pode falhar quando o driver ou o FFmpeg não oferecem o codificador;
-`--cpu` é o caminho de compatibilidade.
+Use `turborec encoders` para confirmar o codificador escolhido. `--gpu` solicita
+hardware explicitamente e avisa antes de usar a alternativa segura por software
+quando nenhum candidato funciona; `--cpu` força o caminho por software.
 
 ## Qualidade, desempenho e compatibilidade
 
+- O perfil inicial é **Best + Auto + 23 fps + 4K**. Ele privilegia a qualidade
+  sem exigir que a pessoa conheça o hardware da máquina.
+- Em `-c auto`, a preferência é **AV1 por hardware → HEVC por hardware → H.264
+  por hardware → H.264 por software**. A seleção considera testes reais do
+  codificador, não apenas o nome mostrado pelo FFmpeg.
 - **H.264** é a opção mais compatível para reprodução e edição.
 - **HEVC/H.265** e **AV1** podem produzir arquivos menores, mas exigem suporte no
   hardware, no FFmpeg e no reprodutor.
-- **30 fps** é uma boa escolha para aulas, apresentações e demonstrações;
+- **23 fps** é o padrão de alta qualidade e reduz o trabalho do codificador;
+  **30 fps** é uma boa escolha para aulas, apresentações e demonstrações;
   **60 fps** é mais indicado para movimento rápido e exige mais processamento.
-- `-R native` preserva a resolução da captura. `-R 4k` pode ser útil para a
-  camada de alta qualidade do YouTube, mas aumenta bastante a carga.
+- `-R 4k` é o padrão e produz um quadro exato de 3840×2160, ampliando a origem
+  quando necessário. `-R native` preserva a resolução capturada e reduz a carga.
 - FLAC é o padrão e não perde qualidade; AAC e Opus geram arquivos menores.
 - MKV tolera melhor interrupções durante a gravação do que contêineres menos
   resilientes.
@@ -733,11 +752,11 @@ Exemplo:
 
 ```json
 {
-  "mode": "video_mic",
-  "quality": "high",
-  "codec": "h264",
-  "fps": 30,
-  "resolution": "native",
+  "mode": "auto",
+  "quality": "best",
+  "codec": "auto",
+  "fps": 23,
+  "resolution": "4k",
   "backend": "auto",
   "audio_codec": "flac",
   "denoise": "medium"

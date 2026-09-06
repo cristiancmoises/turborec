@@ -43,14 +43,14 @@ Hyprland, river, …) screen capture additionally needs
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.8.1_all.deb        # pulls ffmpeg, python3, python3-tk
+sudo apt install ./turborec_3.9.0_all.deb        # pulls ffmpeg, python3, python3-tk
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.8.1-1.noarch.rpm   # pulls ffmpeg, python3, python3-tkinter
+sudo dnf install ./turborec-3.9.0-1.noarch.rpm   # pulls ffmpeg, python3, python3-tkinter
 
 # Any Linux — portable AppImage (uses your host ffmpeg/python/tk)
-chmod +x Turbo_Recorder-3.8.1-x86_64.AppImage
-./Turbo_Recorder-3.8.1-x86_64.AppImage
+chmod +x Turbo_Recorder-3.9.0-x86_64.AppImage
+./Turbo_Recorder-3.9.0-x86_64.AppImage
 ```
 
 Get these from the project **Releases** page, or build them yourself with the
@@ -64,11 +64,11 @@ Python plus a POSIX shell front-end, so one archive runs everywhere.
 
 ```sh
 # FreeBSD — native package
-pkg add ./turborec-3.8.1.pkg
+pkg add ./turborec-3.9.0.pkg
 pkg install python3 ffmpeg          # runtime prerequisites (wf-recorder for Wayland)
 
 # Any Unix — portable tarball (installs to /usr/local by default)
-tar xzf turborec-3.8.1.tar.gz && cd turborec-3.8.1
+tar xzf turborec-3.9.0.tar.gz && cd turborec-3.9.0
 sudo ./install.sh                   # or: PREFIX="$HOME/.local" ./install.sh
 ```
 
@@ -101,7 +101,7 @@ guix shell   -f guix.scm -- turborec detect   # run it ad-hoc
 
 # Or the prebuilt relocatable pack from the Releases page (no Guix daemon needed
 # to run it; unpacks the /gnu/store closure + a /bin/turborec launcher)
-tar xf turborec-3.8.1-guix-x86_64.tar.gz -C /
+tar xf turborec-3.9.0-guix-x86_64.tar.gz -C /
 /bin/turborec record -m video_both
 ```
 
@@ -150,7 +150,7 @@ It is **fully self-contained** — Python, Tk **and FFmpeg are bundled inside th
 admin rights needed:
 
 ```powershell
-Turbo_Recorder-3.8.1-windows-x64.exe gui        # or: detect / record / --help
+Turbo_Recorder-3.9.0-windows-x64.exe gui        # or: detect / record / --help
 ```
 
 Prefer a classic install with Start-Menu shortcuts and an uninstaller? Use
@@ -160,8 +160,8 @@ Python silently *only if* no Python 3.8+ with Tk is already present, and adds
 "Turbo Recorder" under **Settings → Apps** for clean removal.
 
 (The bundle carries its own FFmpeg; if you'd rather use a system FFmpeg, put it
-on `PATH` and pass `--ffmpeg C:\path\to\ffmpeg.exe`.) Version 3.7 keeps Unicode
-microphone/camera labels intact, records through stable DirectShow IDs, and
+on `PATH` and pass `--ffmpeg C:\path\to\ffmpeg.exe`.) The current release keeps
+Unicode microphone/camera labels intact, records through stable DirectShow IDs, and
 lists native monitors/windows even with negative multi-monitor coordinates.
 Allow **Microphone** and **Camera** access for desktop apps under Windows
 **Settings → Privacy & security**. For system-audio capture, enable a loopback
@@ -179,7 +179,7 @@ Prefer running from source? Install [Python](https://www.python.org/downloads/)
 ```bash
 turborec detect        # see what was auto-detected (OS, CPU, GPU, encoder, screen, devices)
 turborec gui           # open the graphical app — pick options, press ● START, press ■ STOP
-turborec record        # CLI: automatic audio selection, best quality
+turborec record        # CLI: Best · Auto codec · 23 fps · 4K
 ```
 
 Recordings go to `~/Videos` (video) or `~/Audio` (audio) with timestamped names
@@ -191,13 +191,14 @@ like `video_mic_2026-07-24_14-22-09.mkv`. Stop a CLI recording with **`q`** or
 ## 3. Core concepts
 
 - **It auto-detects everything.** Run `turborec detect` to see your OS, display
-  server, CPU vendor, GPU, the best available hardware encoder per codec, your
+  server, CPU vendor, GPU, the best usable codec/encoder candidates, your
   screen resolution, and your microphone + system-audio (loopback) sources.
 - **Real-time, correct-speed capture.** Presets are tuned to keep up with a live
   source, and the output is forced to constant frame rate — so recordings always
   play back at the right speed and stay smooth, even at high resolution/fps.
-- **Best quality by default.** Hardware encoding when available (NVENC, Quick
-  Sync, VAAPI, AMF, VideoToolbox), lossless FLAC audio, BT.709 color.
+- **Quality-first defaults.** Best quality, Auto codec, 23 fps and 4K output.
+  Auto prefers usable hardware AV1 → HEVC → H.264, then safely falls back to
+  software H.264. Audio is lossless FLAC and video carries BT.709 color metadata.
 - **One engine, two front-ends:** the cross-platform `turborec` (CLI + GUI) and
   the lightweight Linux/X11 `turborecorder` bash script.
 
@@ -215,10 +216,11 @@ Recorder** from your application menu.
 │ CAPTURE                                                        │
 │ [Screen+All][Screen+Mic][Screen+Sys][Screen]                  │  ← capture mode (segmented)
 │ [Audio All][Mic][Sys]                                         │
-│ Quality [best ▾]  Codec [h264 ▾]  FPS [60 ▾]                  │
-│ h264_nvenc · nvenc · hardware accelerated                     │  ← which encoder will run
+│ Quality [best ▾]  Codec [auto ▾]  FPS [23 ▾]                  │
+│ av1_nvenc · nvenc · hardware accelerated                      │  ← example chosen encoder
 │ Source [ Full screen (3280x1200)        ▾] ⟳                  │  ← screen / monitor / window
 │ Region [________]  blank = full screen                        │  ← optional exact override
+│ Output resolution [4K (3840×2160) ▾]                           │
 │ AUDIO                                                      ⟳   │
 │ ● Microphone   [ Built-in / your mic           ▾]            │
 │ ● System audio [ ...monitor                     ▾]            │
@@ -236,14 +238,15 @@ Recorder** from your application menu.
 ```
 
 - **CAPTURE** — pick a mode (what to record), then Quality / Codec / FPS. The
-  cyan line under them shows exactly which encoder will run.
+  defaults are Best / Auto / 23; the cyan line shows the codec and encoder that
+  passed the runtime probe.
 - **Source** — full screen, a specific monitor, or a window (OBS-style). Press
   **⟳** to re-scan after opening/closing windows. **Region** is an advanced
   override (`WxH` or `WxH+X+Y`).
 - **AUDIO** — your mic and system-audio source are pre-selected; the **⟳** button
   re-probes devices. Dots show whether a real device is selected.
 - **OUTPUT** — choose the folder; the filename preview updates live.
-- **Encoder** — `Auto` (default), `GPU` (force hardware) or `CPU` (force software).
+- **Encoder** — `Auto` (default), `GPU` (request hardware) or `CPU` (force software).
 - **command preview** — expand to see (and `copy`) the exact FFmpeg command.
 - **Footer** — press **● START** to record. While recording you get a live
   **timer**, a pulsing **REC** indicator and the growing **file size**. Press
@@ -271,8 +274,9 @@ Most-used `record` options:
 |---|---|---|
 | `-m, --mode` | what to capture (see [modes](#6-capture-modes)) | `auto` |
 | `-q, --quality` | `best` · `high` · `balanced` · `compact` | `best` |
-| `-c, --codec` | `h264` · `hevc` · `av1` | `h264` |
-| `-f, --fps` | frames per second | `60` |
+| `-c, --codec` | `auto` · `h264` · `hevc` · `av1` | `auto` |
+| `-f, --fps` | frames per second | `23` |
+| `-R, --resolution` | `native` · `720p` · `1080p` · `1440p` · `4k` | `4k` |
 | `-o, --out` | output folder | `~/Videos` or `~/Audio` |
 | `--backend` | `auto` · `gpu` · `cpu` (also `--gpu` / `--cpu`) | `auto` |
 | `--monitor NAME` | capture a specific monitor | — |
@@ -355,7 +359,7 @@ windows). Notes:
 ### CPU vs GPU
 
 ```bash
-turborec record --gpu      # force hardware (NVENC / Quick Sync / VAAPI / AMF / VideoToolbox)
+turborec record --gpu      # request hardware (NVENC / Quick Sync / VAAPI / AMF / VideoToolbox)
 turborec record --cpu      # force software (libx264 / libx265)
 turborec record            # auto: hardware if available, else software
 ```
@@ -370,9 +374,12 @@ record in **real time**; `best` favors quality, `compact` favors file size.
 
 ### Codec
 
-`-c h264|hevc|av1`. **h264** is the most compatible (default). **hevc** (H.265)
-gives smaller files at the same quality. **av1** is the most efficient where your
-hardware/FFmpeg supports it. See what you have:
+`-c auto|h264|hevc|av1`. **auto** is the default and selects the first usable
+hardware encoder in quality/efficiency order: **AV1 → HEVC → H.264**. If none is
+usable, it falls back to software H.264 so recording still works. Explicit
+**h264** is the most compatible; **hevc** (H.265) and **av1** can produce smaller
+files at comparable visual quality when your hardware, FFmpeg and player support
+them. See what your machine exposes:
 
 ```bash
 turborec encoders          # shows the best h264/hevc/av1 encoder for your machine
@@ -380,13 +387,15 @@ turborec encoders          # shows the best h264/hevc/av1 encoder for your machi
 
 ### Output resolution (record in 4K)
 
-`-R native|720p|1080p|1440p|4k` (GUI: the **Output** dropdown). `native`
-(default) records at the capture size. Any other value scales the recording with
-high-quality **lanczos** (aspect preserved, padded to the exact standard frame):
+`-R native|720p|1080p|1440p|4k` (GUI: the **Output** dropdown). `4k` is the
+default and produces an exact 3840×2160 frame. Turbo Recorder scales with
+high-quality **lanczos** while preserving aspect ratio and padding as needed.
+Choose `native` to preserve the captured dimensions and reduce processing load:
 
 ```bash
-turborec record -R 4k -c hevc -f 23     # true 3840×2160 output from any screen
-turborec record -R 1080p                # normalize to 1920×1080
+turborec record                          # Best · Auto codec · 23 fps · 4K
+turborec record -R native                # preserve the source dimensions
+turborec record -R 1080p                 # normalize to 1920×1080
 ```
 
 > **Why upscale to 4K for YouTube?** YouTube picks the quality tier — and,
@@ -597,16 +606,19 @@ turborec record -m video_both --dry-run
 
 ## 15. Tips for the best possible quality
 
-- **Use GPU encoding** (`--gpu`, the default when available) — it leaves CPU
-  headroom so capture stays real-time and smooth.
-- **Match FPS to your content.** 60 fps for motion/gameplay; 30 fps for talks and
-  slides (smaller files, easier on the encoder).
+- **Leave codec and backend on Auto** for the quality-first hardware path. Use
+  `--gpu` to request hardware explicitly; Turbo Recorder still warns and takes
+  the safe software fallback if no hardware candidate passes its probe.
+- **Match FPS to your content.** The 23 fps default prioritizes detail per frame
+  and keeps load down; use 30 fps for talks/slides or 60 fps for fast motion and
+  gameplay.
 - **`-q best`** plus **FLAC** audio for archival masters; transcode later if needed.
 - **HEVC/AV1** (`-c hevc` / `-c av1`) for much smaller files at the same quality,
   if your players support them.
-- **Capture native resolution** (the default) for archival; **`-R 4k` for
-  YouTube** — the platform assigns its quality tier and bitrate budget from the
-  uploaded resolution, so a 4K upload keeps your video sharp (see
+- **4K output is the default** for a quality-first master and YouTube upload.
+  Use **`-R native`** to preserve source pixels or reduce encoding load. YouTube
+  assigns its quality tier and bitrate budget from the uploaded resolution, so
+  a 4K upload keeps your video sharp (see
   [§8 Output resolution](#output-resolution-record-in-4k)).
 - If a recording is ever choppy, drop to `-q high`/`-f 30` or a smaller `--region`
   to give the encoder more headroom (see Troubleshooting).

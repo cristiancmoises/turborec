@@ -193,6 +193,56 @@ class CaptureTargetTests(unittest.TestCase):
 
 
 class DefaultsAndShutdownTests(unittest.TestCase):
+    def test_video_defaults_are_quality_first_4k_at_23_fps(self):
+        spec = tr.RecordSpec(mode="video_only")
+        self.assertEqual(
+            (spec.quality, spec.codec, spec.fps, spec.resolution),
+            ("best", "auto", 23, "4k"),
+        )
+        args = tr.build_parser().parse_args(["record"])
+        self.assertEqual(
+            (args.quality, args.codec, args.fps, args.resolution),
+            ("best", "auto", 23, "4k"),
+        )
+
+    def test_auto_codec_prefers_hardware_av1_over_hevc_and_h264(self):
+        si = tr.SystemInfo(
+            os="windows", gpu_vendor="nvidia", has_gpu=True,
+            encoders={"av1_nvenc", "hevc_nvenc", "h264_nvenc", "libx264"},
+        )
+        with mock.patch.object(
+                tr, "_hardware_encoder_usable", return_value=True):
+            choice = tr.choose_encoder(si, "auto")
+        self.assertEqual(
+            (choice.name, choice.kind, choice.codec),
+            ("av1_nvenc", "nvenc", "av1"),
+        )
+
+    def test_auto_codec_falls_back_to_realtime_software_h264(self):
+        si = tr.SystemInfo(
+            os="windows", gpu_vendor="nvidia", has_gpu=True,
+            encoders={"av1_nvenc", "hevc_nvenc", "h264_nvenc", "libx264"},
+        )
+        with mock.patch.object(
+                tr, "_hardware_encoder_usable", return_value=False):
+            choice = tr.choose_encoder(si, "auto")
+        self.assertEqual(
+            (choice.name, choice.kind, choice.codec),
+            ("libx264", "software", "h264"),
+        )
+
+    def test_wayland_auto_codec_uses_same_vaapi_quality_order(self):
+        si = tr.SystemInfo(
+            os="linux", display_server="wayland", gpu_vendor="intel",
+            vaapi_device="/dev/dri/renderD128",
+            encoders={"av1_vaapi", "hevc_vaapi", "h264_vaapi", "libx264"},
+        )
+        spec = tr.RecordSpec(mode="video_only")
+        with mock.patch.object(
+                tr, "_hardware_encoder_usable", return_value=True):
+            codec, _params, kind, _device = tr.wf_codec(si, spec)
+        self.assertEqual((codec, kind), ("av1_vaapi", "vaapi"))
+
     def test_auto_mode_degrades_to_available_sources(self):
         mic = tr.AudioDevice("mic", "Mic")
         mon = tr.AudioDevice("mon", "System", True)

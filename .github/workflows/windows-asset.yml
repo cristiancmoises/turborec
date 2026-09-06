@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to build from and attach the .exe to (e.g. v3.7.0)
+        description: Release tag to build from and attach the .exe to (e.g. v3.9.0)
         required: true
-        default: v3.8.1
+        default: v3.9.0
 
 permissions:
   contents: write
@@ -27,7 +27,7 @@ jobs:
           ref: ${{ github.event.inputs.tag }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 

@@ -3,18 +3,17 @@
 #  publish-release.sh — mirror a release's binaries onto the Forgejo (primary)
 #  and Codeberg forges.
 #
-#  Why this exists: Forgejo is the source of truth and GitHub + Codeberg are
-#  push-mirrors, but Forgejo/Gitea push-mirrors replicate only git refs
-#  (branches/tags) — NOT release objects or their binary assets. GitHub gets its
-#  binaries from the release.yml GitHub Actions build; this script attaches the
-#  same binaries to the matching Forgejo and Codeberg releases so all three
-#  forges carry the full set.
+#  Why this exists: Forgejo is the source of truth, while GitHub and Codeberg
+#  are independent remotes synchronized during a release. Git pushes replicate
+#  refs (branches/tags) — NOT release objects or binary assets. GitHub gets its
+#  binaries from release.yml; this script attaches the same verified binaries
+#  to Forgejo and Codeberg so all three forges carry the complete set.
 #
 #  Usage:
 #     FJTOKEN=<forgejo-token> CBTOKEN=<codeberg-token> \
-#         packaging/publish-release.sh v3.8.1 [asset-dir]
+#         packaging/publish-release.sh v3.9.0 [asset-dir]
 #
-#   - <tag>       the release tag, e.g. v3.8.1 (must already be pushed).
+#   - <tag>       the release tag, e.g. v3.9.0 (must already be pushed).
 #   - [asset-dir] a directory of files to attach. If omitted, the assets are
 #                 downloaded from the GitHub release for <tag> using `gh`.
 #
@@ -52,7 +51,7 @@ TAG="${1:-}"
 [ -n "${TAG}" ] || die "usage: FJTOKEN=… CBTOKEN=… $0 <tag> [asset-dir]"
 VERSION="${TAG#v}"
 [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-    || die "tag must look like v3.8.1 (got: ${TAG})"
+    || die "tag must look like v3.9.0 (got: ${TAG})"
 ASSET_DIR="${2:-}"
 
 # ---- gather the assets ------------------------------------------------------
