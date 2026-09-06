@@ -4,7 +4,7 @@
 #
 #  One file. No third-party Python dependencies (stdlib only). Needs FFmpeg.
 #
-#  It automatically detects, on Linux / macOS / Windows:
+#  It automatically detects, on Linux / macOS / Windows / the major BSDs:
 #    * the operating system and display server (X11 / Wayland / Quartz / GDI)
 #    * the CPU vendor (Intel / AMD / Apple Silicon)
 #    * the GPU and the best available hardware video encoder
@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import locale
 import os
@@ -28,6 +29,7 @@ import platform
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -39,7 +41,10 @@ from datetime import datetime
 from typing import Optional
 
 APP_NAME = "Turbo Recorder"
-VERSION = "3.9.0"
+VERSION = "3.9.1"
+
+_BSD_OSES = frozenset(("freebsd", "openbsd", "netbsd", "dragonfly"))
+_X11_CAPTURE_OSES = frozenset(("linux", *_BSD_OSES))
 
 # ---------------------------------------------------------------------------
 # Small terminal helpers
@@ -155,6 +160,7 @@ class AudioDevice:
     id: str          # backend identifier passed to ffmpeg
     label: str       # human readable
     is_monitor: bool = False  # True for system-audio / loopback / monitor
+    backend: str = ""        # pulse | sndio | oss | avfoundation | dshow
 
 
 @dataclass
@@ -190,7 +196,7 @@ def _label_choice_map(items: list) -> dict[str, object]:
 
 @dataclass
 class SystemInfo:
-    os: str = ""                 # linux | macos | windows
+    os: str = ""                 # linux | macos | windows | freebsd | openbsd | netbsd | dragonfly
     display_server: str = ""     # x11 | wayland | quartz | gdi
     cpu_vendor: str = ""         # intel | amd | apple | unknown
     cpu_model: str = ""
@@ -201,6 +207,7 @@ class SystemInfo:
     screen: str = ""             # WxH
     ffmpeg: str = "ffmpeg"
     encoders: set[str] = field(default_factory=set)
+    indevs: set[str] = field(default_factory=set)
     mics: list[AudioDevice] = field(default_factory=list)
     monitors: list[AudioDevice] = field(default_factory=list)
     default_mic: Optional[AudioDevice] = None
@@ -252,6 +259,22 @@ def list_encoders(ffmpeg: str) -> set[str]:
     return found
 
 
+def _parse_ffmpeg_indevs(text: str) -> set[str]:
+    """Parse demuxing-capable device names from ``ffmpeg -devices`` output."""
+    found: set[str] = set()
+    for line in text.splitlines():
+        match = re.match(r"^\s*([D.])([E. ])\s+(\S+)", line)
+        if not match or match.group(1) != "D" or match.group(3) == "=":
+            continue
+        found.update(name for name in match.group(3).split(",") if name)
+    return found
+
+
+def list_indevs(ffmpeg: str) -> set[str]:
+    """Return the input-device backends compiled into this FFmpeg binary."""
+    return _parse_ffmpeg_indevs(run_cmd([ffmpeg, "-hide_banner", "-devices"]))
+
+
 # ---------------------------------------------------------------------------
 # OS / display server
 # ---------------------------------------------------------------------------
@@ -261,6 +284,8 @@ def detect_os() -> str:
         return "macos"
     if s.startswith("win"):
         return "windows"
+    if s in _BSD_OSES:
+        return s
     return "linux"
 
 
@@ -269,7 +294,7 @@ def detect_display_server(os_name: str) -> str:
         return "quartz"
     if os_name == "windows":
         return "gdi"
-    # linux
+    # Unix desktop (Linux and the BSDs)
     session = os.environ.get("XDG_SESSION_TYPE", "").lower()
     if session == "wayland" or os.environ.get("WAYLAND_DISPLAY"):
         return "wayland"
@@ -382,7 +407,7 @@ def detect_gpu(os_name: str) -> tuple[str, str, bool, str]:
 # Screen size
 # ---------------------------------------------------------------------------
 def detect_screen(os_name: str, display_server: str) -> str:
-    if os_name == "linux":
+    if os_name in _X11_CAPTURE_OSES:
         if shutil.which("xdpyinfo"):
             out = run_cmd(["xdpyinfo"])
             m = re.search(r"dimensions:\s*(\d+x\d+)", out)
@@ -448,7 +473,9 @@ def _detect_audio_linux() -> tuple[list[AudioDevice], list[AudioDevice], Optiona
         if len(cols) < 2:
             continue
         name = cols[1]
-        dev = AudioDevice(id=name, label=name, is_monitor=name.endswith(".monitor"))
+        dev = AudioDevice(
+            id=name, label=name, is_monitor=name.endswith(".monitor"),
+            backend="pulse")
         if dev.is_monitor:
             monitors.append(dev)
         else:
@@ -457,6 +484,79 @@ def _detect_audio_linux() -> tuple[list[AudioDevice], list[AudioDevice], Optiona
     want_mon = (default_sink + ".monitor") if default_sink else ""
     def_mon = next((m for m in monitors if m.id == want_mon), monitors[0] if monitors else None)
     return mics, monitors, def_mic, def_mon
+
+
+def _bsd_audio_backend_order(os_name: str) -> tuple[str, str]:
+    """Prefer each BSD's native capture API when PulseAudio is unavailable."""
+    if os_name == "openbsd":
+        return "sndio", "oss"
+    return "oss", "sndio"
+
+
+def _is_character_device(path: str) -> bool:
+    """True when path exists and resolves (including symlinks) to a device."""
+    try:
+        return stat.S_ISCHR(os.stat(path).st_mode)
+    except (OSError, ValueError):
+        return False
+
+
+def _bsd_audio_nodes(os_name: str, backend: str) -> list[str]:
+    """Return existing native capture nodes accepted by an FFmpeg backend."""
+    if backend == "sndio":
+        patterns = ("/dev/audio", "/dev/audio[0-9]*")
+        allowed = re.compile(r"/dev/audio(?:\d+)?$")
+    elif backend == "oss":
+        patterns = [
+            "/dev/dsp", "/dev/dsp[0-9]*",
+            "/dev/sound", "/dev/sound[0-9]*",
+        ]
+        # NetBSD's OSS compatibility layer also uses audio(4) device nodes.
+        if os_name == "netbsd":
+            patterns += ["/dev/audio", "/dev/audio[0-9]*"]
+        allowed = re.compile(
+            r"/dev/(?:dsp(?:\d+(?:\.\d+)?)?|sound\d*"
+            + (r"|audio(?:\d+)?" if os_name == "netbsd" else "")
+            + r")$")
+    else:
+        return []
+
+    nodes: set[str] = set()
+    for pattern in patterns:
+        for path in glob.glob(pattern):
+            if allowed.fullmatch(path) and _is_character_device(path):
+                nodes.add(path)
+    return sorted(nodes)
+
+
+def _detect_audio_bsd(
+        os_name: str, indevs: set[str]
+) -> tuple[list[AudioDevice], list[AudioDevice],
+           Optional[AudioDevice], Optional[AudioDevice]]:
+    """Detect real BSD audio inputs, selected by FFmpeg capability first.
+
+    PulseAudio provides named microphones and monitor sources, so use it when
+    both FFmpeg and a working ``pactl`` connection expose devices. Otherwise
+    fall back to an OS-native backend and only advertise device nodes that are
+    actually present. sndio/OSS capture nodes are microphones, not loopbacks.
+    """
+    if "pulse" in indevs and shutil.which("pactl"):
+        pulse = _detect_audio_linux()
+        if pulse[0] or pulse[1]:
+            return pulse
+
+    for backend in _bsd_audio_backend_order(os_name):
+        if backend not in indevs:
+            continue
+        devices = [
+            AudioDevice(
+                id=path, label=f"{backend.upper()} input ({path})",
+                backend=backend)
+            for path in _bsd_audio_nodes(os_name, backend)
+        ]
+        if devices:
+            return devices, [], devices[0], None
+    return [], [], None, None
 
 
 def _parse_avfoundation_devices(text: str) -> tuple[list[str], list[str]]:
@@ -502,7 +602,8 @@ def _detect_audio_macos(ffmpeg: str, refresh: bool = False) -> tuple[list[AudioD
     for entry in audio:
         idx, _, name = entry.partition(": ")
         is_mon = any(k in name.lower() for k in ("blackhole", "soundflower", "loopback", "aggregate"))
-        dev = AudioDevice(id=idx, label=name, is_monitor=is_mon)
+        dev = AudioDevice(
+            id=idx, label=name, is_monitor=is_mon, backend="avfoundation")
         (monitors if is_mon else mics).append(dev)
     return mics, monitors, (mics[0] if mics else None), (monitors[0] if monitors else None)
 
@@ -657,19 +758,42 @@ def _detect_audio_windows(ffmpeg: str, refresh: bool = False) -> tuple[list[Audi
         if "audio" not in source.media_types:
             continue
         is_mon = _is_windows_loopback(source.label)
-        dev = AudioDevice(id=source.id, label=source.label, is_monitor=is_mon)
+        dev = AudioDevice(
+            id=source.id, label=source.label, is_monitor=is_mon,
+            backend="dshow")
         (monitors if is_mon else mics).append(dev)
     return mics, monitors, (mics[0] if mics else None), (monitors[0] if monitors else None)
 
 
-def detect_audio(os_name: str, ffmpeg: str, refresh: bool = False):
+def detect_audio(os_name: str, ffmpeg: str, refresh: bool = False,
+                 indevs: Optional[set[str]] = None):
     if os_name == "linux":
         return _detect_audio_linux()
     if os_name == "macos":
         return _detect_audio_macos(ffmpeg, refresh=refresh)
     if os_name == "windows":
         return _detect_audio_windows(ffmpeg, refresh=refresh)
+    if os_name in _BSD_OSES:
+        return _detect_audio_bsd(
+            os_name, list_indevs(ffmpeg) if indevs is None else indevs)
     return [], [], None, None
+
+
+def _explicit_audio_device(
+        si: SystemInfo, identifier: str, is_monitor: bool = False
+) -> Optional[AudioDevice]:
+    """Resolve an explicit device without fabricating BSD capture endpoints."""
+    if si.os not in _BSD_OSES:
+        return AudioDevice(
+            id=identifier, label=identifier, is_monitor=is_monitor)
+    # sndio and OSS device nodes are capture inputs, never system loopbacks.
+    if is_monitor:
+        return None
+    for backend in _bsd_audio_backend_order(si.os):
+        if backend in si.indevs and identifier in _bsd_audio_nodes(si.os, backend):
+            return AudioDevice(
+                id=identifier, label=identifier, backend=backend)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1078,7 +1202,7 @@ def detect_capture_targets(si: SystemInfo) -> list[CaptureTarget]:
                       label=f"Full screen  ({si.screen})" if si.screen else "Full screen",
                       geometry=(f"{si.screen}+0+0" if si.screen else None))
     ]
-    if si.os == "linux" and si.display_server == "x11":
+    if si.os in _X11_CAPTURE_OSES and si.display_server == "x11":
         mons = _detect_monitors_x11()
         if len(mons) > 1:        # a single monitor == full screen; don't duplicate
             targets += mons
@@ -1100,7 +1224,10 @@ def probe_system(ffmpeg: Optional[str] = None) -> SystemInfo:
     si.gpu_vendor, si.gpu_model, si.has_gpu, si.vaapi_device = detect_gpu(si.os)
     si.screen = detect_screen(si.os, si.display_server)
     si.encoders = list_encoders(ff)
-    si.mics, si.monitors, si.default_mic, si.default_monitor = detect_audio(si.os, ff)
+    if si.os in _BSD_OSES:
+        si.indevs = list_indevs(ff)
+    si.mics, si.monitors, si.default_mic, si.default_monitor = detect_audio(
+        si.os, ff, indevs=si.indevs if si.os in _BSD_OSES else None)
     # Wayland (wlroots) capture backend
     if si.os == "linux" and si.display_server == "wayland":
         si.wayland_recorder = shutil.which("wf-recorder") or ""
@@ -1133,17 +1260,24 @@ class EncoderChoice:
 
 
 # preference order per (gpu_vendor, codec) -> list of (encoder, kind)
-def _sw_encoder(si: SystemInfo, codec: str) -> str:
-    """Real-time-capable software encoder for live capture.
+def _software_encoder_names(si: SystemInfo, codec: str) -> tuple[str, ...]:
+    """Software candidates in quality/compatibility order for live capture.
 
-    For AV1 prefer SVT-AV1 (real-time at low presets); never libaom-av1 (far below
-    real-time for a live source) — fall back to libx264 if SVT-AV1 is unavailable.
+    ``libx264`` remains the preferred H.264 implementation. Fedora's
+    ``ffmpeg-free`` cannot ship it, but does expose ``libopenh264``; use that as
+    a real-time fallback only after a one-frame initialization probe succeeds.
+    For AV1 retain the existing real-time policy: prefer SVT-AV1 and otherwise
+    fall back to the same H.264 chain rather than selecting very slow libaom.
     """
+    if codec == "h264":
+        return "libx264", "libopenh264"
     if codec == "av1":
         if "libsvtav1" in si.encoders:
-            return "libsvtav1"
-        return "libx264"
-    return {"h264": "libx264", "hevc": "libx265"}.get(codec, "libx264")
+            return ("libsvtav1",)
+        return "libx264", "libopenh264"
+    if codec == "hevc":
+        return ("libx265",)
+    return "libx264", "libopenh264"
 
 
 def _candidate_encoders(si: SystemInfo, codec: str) -> list[tuple[str, str]]:
@@ -1179,7 +1313,8 @@ def _candidate_encoders(si: SystemInfo, codec: str) -> list[tuple[str, str]]:
         table.append((f"{c}_videotoolbox", "videotoolbox"))
     elif si.os == "linux":
         table.append((f"{c}_vaapi", "vaapi"))
-    table.append((_sw_encoder(si, c), "software"))
+    table.extend((name, "software")
+                 for name in _software_encoder_names(si, c))
     return table
 
 
@@ -1187,14 +1322,23 @@ _ENCODER_PROBE_CACHE: dict[tuple[str, str, str], bool] = {}
 
 
 def _hardware_encoder_usable(si: SystemInfo, name: str, kind: str) -> bool:
-    """Verify that an advertised hardware encoder can initialize on this GPU.
+    """Verify that an advertised encoder can initialize at runtime.
 
     ``ffmpeg -encoders`` describes build capabilities, not the installed driver
     or GPU generation. A binary can advertise AV1/NVENC/QSV/AMF and still fail
     as soon as recording starts. Encode one synthetic frame once per process so
     auto mode can fall through to a working backend before the user presses REC.
+    The same check is mandatory for ``libopenh264`` because Fedora deliberately
+    builds FFmpeg against a no-op OpenH264 shim when the runtime codec is absent;
+    in that state the encoder is listed but fails during initialization.
     """
-    if kind == "software" or os.environ.get("TURBOREC_SKIP_ENCODER_PROBE") == "1":
+    probe_openh264 = kind == "software" and name == "libopenh264"
+    if kind == "software" and not probe_openh264:
+        return True
+    # The escape hatch is useful for slow/broken hardware drivers, but must not
+    # turn Fedora's advertised-yet-unusable OpenH264 shim into a selectable codec.
+    if not probe_openh264 \
+            and os.environ.get("TURBOREC_SKIP_ENCODER_PROBE") == "1":
         return True
     key = (os.path.normcase(os.path.abspath(si.ffmpeg)), name,
            si.vaapi_device or "")
@@ -1217,6 +1361,8 @@ def _hardware_encoder_usable(si: SystemInfo, name: str, kind: str) -> bool:
         cmd += ["-vf", "format=nv12,hwupload"]
     elif kind == "qsv":
         cmd += ["-vf", "format=nv12,hwupload=extra_hw_frames=8"]
+    elif probe_openh264:
+        cmd += ["-pix_fmt", "yuv420p"]
     cmd += ["-c:v", name, "-f", "null", "-"]
     try:
         result = subprocess.run(
@@ -1229,6 +1375,35 @@ def _hardware_encoder_usable(si: SystemInfo, name: str, kind: str) -> bool:
     return usable
 
 
+def _software_encoder_usable(si: SystemInfo, name: str) -> bool:
+    """Return whether a listed software encoder is safe to select."""
+    if name not in si.encoders:
+        return False
+    if name == "libopenh264":
+        return _hardware_encoder_usable(si, name, "software")
+    return True
+
+
+def _first_usable_software_encoder(si: SystemInfo, codec: str) -> Optional[str]:
+    for name in _software_encoder_names(si, codec):
+        if _software_encoder_usable(si, name):
+            return name
+    return None
+
+
+def _software_encoder_error(si: SystemInfo, codec: str) -> str:
+    """Explain an exhausted software chain, including Fedora's stub case."""
+    wanted = "/".join(_software_encoder_names(si, codec))
+    message = (f"No usable software encoder ({wanted}) is available in this "
+               "FFmpeg build.")
+    if "libopenh264" in _software_encoder_names(si, codec) \
+            and "libopenh264" in si.encoders:
+        message += (" FFmpeg advertises libopenh264, but it failed to initialize. "
+                    "On Fedora, enable the fedora-cisco-openh264 repository and "
+                    "run: sudo dnf swap noopenh264 openh264")
+    return message
+
+
 def choose_encoder(si: SystemInfo, codec: str = "auto", force_software: bool = False,
                    backend: str = "auto") -> EncoderChoice:
     """Pick the video encoder. backend: auto | gpu | cpu (force_software == cpu).
@@ -1236,7 +1411,8 @@ def choose_encoder(si: SystemInfo, codec: str = "auto", force_software: bool = F
     ``codec=auto`` is deliberately quality-first without sacrificing a usable
     default: prefer a *working hardware* AV1 encoder, then HEVC, then H.264.
     Software AV1/HEVC are skipped because 4K live capture can easily outrun
-    them; libx264 is the deterministic real-time compatibility fallback.
+    them; libx264, then a runtime-verified libopenh264, provide the real-time
+    H.264 compatibility fallback.
     Explicit codec selections retain their existing behavior.
     """
     codec = codec.lower()
@@ -1254,25 +1430,25 @@ def choose_encoder(si: SystemInfo, codec: str = "auto", force_software: bool = F
                             enc, kind, candidate_codec,
                             f"automatic {candidate_codec.upper()} hardware encoding",
                         )
-        if "libx264" in si.encoders:
+        sw_name = _first_usable_software_encoder(si, "h264")
+        if sw_name:
             if backend == "gpu":
                 warn("No usable hardware AV1/HEVC/H.264 encoder available — "
-                     "falling back to CPU (libx264).")
+                     f"falling back to CPU ({sw_name}).")
             return EncoderChoice(
-                "libx264", "software", "h264",
+                sw_name, "software", "h264",
                 "automatic H.264 software fallback",
             )
-        die("No usable hardware AV1/HEVC/H.264 encoder or libx264 fallback "
-            "is available in this FFmpeg build.")
-
-    sw_name = _sw_encoder(si, codec)
+        die("No usable hardware AV1/HEVC/H.264 encoder. "
+            + _software_encoder_error(si, "h264"))
 
     if backend == "cpu":
-        if sw_name not in si.encoders:
-            die(f"Software encoder {sw_name} not available in this FFmpeg build.")
+        sw_name = _first_usable_software_encoder(si, codec)
+        if not sw_name:
+            die(_software_encoder_error(si, codec))
         note = "CPU / software encoding (user-selected)"
-        if codec == "av1" and sw_name == "libx264":
-            note = "AV1 software is not real-time; using libx264 (CPU)"
+        if codec == "av1" and sw_name in ("libx264", "libopenh264"):
+            note = f"AV1 software is not real-time; using {sw_name} (CPU)"
         return EncoderChoice(sw_name, "software", codec, note)
 
     # gpu or auto: walk the hardware-first candidate list
@@ -1280,13 +1456,17 @@ def choose_encoder(si: SystemInfo, codec: str = "auto", force_software: bool = F
         if enc in si.encoders:
             if backend == "gpu" and kind == "software":
                 break  # don't silently fall back to CPU when GPU was requested
+            if kind == "software" and not _software_encoder_usable(si, enc):
+                continue
             if kind != "software" and not _hardware_encoder_usable(si, enc, kind):
                 continue
             note = "hardware accelerated" if kind != "software" else "software (no HW encoder available)"
             return EncoderChoice(enc, kind, codec, note)
     if backend == "gpu":
-        warn(f"No hardware {codec} encoder available — falling back to CPU ({sw_name}).")
-        if sw_name in si.encoders:
+        sw_name = _first_usable_software_encoder(si, codec)
+        fallback = sw_name or "/".join(_software_encoder_names(si, codec))
+        warn(f"No hardware {codec} encoder available — falling back to CPU ({fallback}).")
+        if sw_name:
             return EncoderChoice(sw_name, "software", codec, "software (no GPU encoder available)")
     die(f"No usable encoder for codec {codec} in this FFmpeg build.")
 
@@ -1355,6 +1535,21 @@ def _stream_bitrate_k(w: int, h: int, fps: int) -> int:
     return int(base * 1.5) if fps >= 48 else base
 
 
+def _openh264_recording_bitrate_k(
+        quality: str, pixrate: Optional[float] = None) -> int:
+    """Quality-first OpenH264 target in kbit/s for the output pixel rate.
+
+    OpenH264 has no CRF or speed presets. Its supported quality rate-control
+    mode still needs a target bitrate, so scale that target by pixels/second.
+    The four values correspond to roughly 0.22/0.16/0.11/0.075 bits per pixel;
+    the default 4K/23-fps ``best`` profile therefore receives about 42 Mbit/s.
+    """
+    if pixrate is None:
+        pixrate = 1920 * 1080 * DEFAULT_FPS / 1_000_000
+    bits_per_pixel_x1000 = (220, 160, 110, 75)[_quality_index(quality)]
+    return max(2500, int(round(pixrate * bits_per_pixel_x1000)))
+
+
 def _stream_encoder_args(enc: EncoderChoice, bitrate_k: int, fps: int) -> list[str]:
     """CBR-ish, low-latency H.264 args for RTMP(S) live ingest (YouTube etc.).
 
@@ -1362,7 +1557,8 @@ def _stream_encoder_args(enc: EncoderChoice, bitrate_k: int, fps: int) -> list[s
     ~2 s keyframe interval, so the platform can segment and adapt.
     """
     br, mx, buf = f"{bitrate_k}k", f"{int(bitrate_k * 1.07)}k", f"{bitrate_k * 2}k"
-    gop = ["-g", str(fps * 2), "-keyint_min", str(fps), "-pix_fmt", "yuv420p"]
+    gop = ["-g", str(fps * 2), "-keyint_min", str(fps),
+           "-pix_fmt", "yuv420p"]
     a = ["-c:v", enc.name]
     if enc.kind == "nvenc":
         a += ["-preset", "p5", "-tune", "ll", "-rc", "cbr", "-b:v", br,
@@ -1375,6 +1571,14 @@ def _stream_encoder_args(enc: EncoderChoice, bitrate_k: int, fps: int) -> list[s
         a += ["-usage", "lowlatency", "-rc", "cbr", "-b:v", br, "-maxrate", mx]
     elif enc.kind == "videotoolbox":
         a += ["-b:v", br, "-maxrate", mx, "-realtime", "1"]
+    elif enc.name == "libopenh264":
+        # libopenh264 supports bitrate/quality RC but not x264's CRF, preset or
+        # tune options. rc_mode=bitrate is its bounded live-streaming mode.
+        a += ["-rc_mode", "bitrate", "-b:v", br, "-maxrate", mx,
+              "-profile:v", "high", "-bf", "0"]
+        # keyint_min is an x264-style control that the OpenH264 wrapper does not
+        # consume. Keep only the supported two-second intra period.
+        gop = ["-g", str(fps * 2), "-pix_fmt", "yuv420p"]
     else:  # software libx264
         a += ["-preset", "veryfast", "-tune", "zerolatency", "-b:v", br,
               "-maxrate", mx, "-bufsize", buf, "-profile:v", "high"]
@@ -1497,8 +1701,16 @@ def encoder_args(enc: EncoderChoice, quality: str,
         a += ["-q:v", str(vq), "-realtime", "1"]
         if enc.codec == "hevc":
             a += ["-tag:v", "hvc1"]
-    else:  # software libx264 / libx265 / libsvtav1
-        if enc.name == "libsvtav1":
+    else:  # software libx264 / libopenh264 / libx265 / libsvtav1
+        if enc.name == "libopenh264":
+            # OpenH264 exposes quality/bitrate rate-control modes but not CRF
+            # or x264-style speed presets. Give quality mode a resolution- and
+            # frame-rate-aware target so the fallback remains suitable for 4K.
+            bitrate_k = _openh264_recording_bitrate_k(quality, pixrate)
+            maxrate_k = int(round(bitrate_k * 1.25))
+            a += ["-rc_mode", "quality", "-b:v", f"{bitrate_k}k",
+                  "-maxrate", f"{maxrate_k}k", "-profile:v", "high"]
+        elif enc.name == "libsvtav1":
             # SVT-AV1 presets 0(slow)..13(fastest); scale with the pixel rate.
             # Enhanced quality for 4K: lower CRF = better quality
             a += ["-preset", str([6, 8, 9, 11][st]), "-crf", str([26, 29, 32, 35][qi])]
@@ -1563,7 +1775,7 @@ def screen_input_args(si: SystemInfo, fps: int, geometry: Optional[str], enc: En
     if enc.kind == "qsv":
         pre += ["-init_hw_device", "qsv=hw", "-filter_hw_device", "hw"]
 
-    if si.os == "linux":
+    if si.os in _X11_CAPTURE_OSES:
         if si.display_server == "wayland":
             warn("Wayland session detected: x11grab only sees XWayland windows. "
                  "For full-desktop Wayland capture install 'wf-recorder' or use a kmsgrab setup.")
@@ -1607,11 +1819,20 @@ def screen_input_args(si: SystemInfo, fps: int, geometry: Optional[str], enc: En
 # Audio input arguments per platform
 # ---------------------------------------------------------------------------
 def audio_input_args(si: SystemInfo, dev: AudioDevice) -> list[str]:
-    if si.os == "linux":
+    backend = dev.backend or {
+        "linux": "pulse",
+        "macos": "avfoundation",
+        "windows": "dshow",
+    }.get(si.os, "")
+    if backend == "pulse":
         return ["-f", "pulse", "-thread_queue_size", "1024", "-i", dev.id]
-    if si.os == "macos":
+    if backend == "sndio":
+        return ["-f", "sndio", "-thread_queue_size", "1024", "-i", dev.id]
+    if backend == "oss":
+        return ["-f", "oss", "-thread_queue_size", "1024", "-i", dev.id]
+    if backend == "avfoundation":
         return ["-f", "avfoundation", "-thread_queue_size", "1024", "-i", f"none:{dev.id}"]
-    if si.os == "windows":
+    if backend == "dshow":
         return ["-rtbufsize", "256M", "-f", "dshow",
                 "-thread_queue_size", "1024", "-i", f"audio={dev.id}"]
     return []
@@ -1629,6 +1850,13 @@ def camera_input_args(si: SystemInfo, spec: RecordSpec) -> list[str]:
         # v4l2 treats -framerate as a hint (nudges the cam to a higher-fps mode)
         # and degrades gracefully if the exact rate is unavailable.
         return ["-f", "v4l2", "-framerate", "30", "-thread_queue_size", "1024", "-i", cam]
+    if si.os in _BSD_OSES:
+        if not ({"v4l2", "video4linux2"} & si.indevs):
+            die("This FFmpeg build has no Video4Linux2 input for BSD camera capture.")
+        if not cam or not _is_character_device(cam):
+            die(f"BSD camera device is unavailable: {cam or '(empty)'}")
+        return ["-f", "v4l2", "-framerate", "30",
+                "-thread_queue_size", "1024", "-i", cam]
     if si.os == "macos":
         # avfoundation video index (":none" = video only, no audio from the cam).
         return ["-f", "avfoundation", "-framerate", "30", "-thread_queue_size", "1024", "-i", f"{cam}:none"]
@@ -1683,24 +1911,28 @@ CAMERA_SIZES = ("small", "medium", "large")
 
 @dataclass
 class VideoDevice:
-    id: str          # /dev/videoN (linux) | avf index (macos) | dshow name (windows)
+    id: str          # /dev/videoN (Linux/BSD) | AVF index | DirectShow id
     label: str
 
 
 def detect_cameras(si: SystemInfo, refresh: bool = False) -> list[VideoDevice]:
     """Enumerate webcams/capture devices for the overlay picker."""
     cams: list[VideoDevice] = []
-    if si.os == "linux":
-        import glob
+    bsd_v4l2 = si.os in _BSD_OSES \
+        and bool({"v4l2", "video4linux2"} & si.indevs)
+    if si.os == "linux" or bsd_v4l2:
         for path in sorted(glob.glob("/dev/video*"),
                            key=lambda p: int(re.sub(r"\D", "", p) or 0)):
+            if bsd_v4l2 and not _is_character_device(path):
+                continue
+            base = os.path.basename(path)
             name = ""
-            try:
-                base = os.path.basename(path)
-                with open(f"/sys/class/video4linux/{base}/name") as fh:
-                    name = fh.read().strip()
-            except OSError:
-                pass
+            if si.os == "linux":
+                try:
+                    with open(f"/sys/class/video4linux/{base}/name") as fh:
+                        name = fh.read().strip()
+                except OSError:
+                    pass
             # keep only capture-capable nodes (many cams expose a metadata node too)
             probe = run_cmd([si.ffmpeg, "-hide_banner", "-f", "v4l2",
                              "-list_formats", "all", "-i", path], timeout=4.0)
@@ -2011,7 +2243,8 @@ def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False,
              force_software: bool = False) -> tuple[str, list[str], str, str]:
     """Return (codec, [codec params], kind, drm_device) for wf-recorder.
 
-    wf-recorder cannot use NVENC; on NVIDIA it uses software (libx264/x265).
+    wf-recorder cannot use NVENC; on NVIDIA it uses software (x264/OpenH264
+    for H.264, or x265 for HEVC).
     VAAPI is used only on Intel/AMD when available. Presets adapt to the output
     pixel rate: slower/higher-quality when there's headroom, fast at 4K.
     """
@@ -2022,7 +2255,7 @@ def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False,
     codec = spec.codec
     # wf-recorder cannot use NVENC/QSV/AMF.  Its quality-first automatic mode
     # therefore checks the usable VAAPI codecs in the same order as FFmpeg and
-    # otherwise takes the predictable real-time libx264 fallback.
+    # otherwise takes the predictable real-time software H.264 fallback.
     auto_codec = codec == "auto"
     if auto_codec:
         codec = "h264"
@@ -2041,17 +2274,34 @@ def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False,
                 # Enhanced quality for 4K: lower qp = better quality
                 qp = [18, 22, 25, 28][qi]
                 return venc, [f"qp={qp}"], "vaapi", si.vaapi_device
-    if spec.backend == "gpu" and si.gpu_vendor == "nvidia" and not quiet:
-        warn("wf-recorder cannot use NVENC on Wayland; recording with software x264.")
     if codec == "hevc":
+        if spec.backend == "gpu" and si.gpu_vendor == "nvidia" and not quiet:
+            warn("wf-recorder cannot use NVENC on Wayland; recording with "
+                 "software libx265.")
         preset = ["medium", "fast", "faster", "veryfast"][st]
         # Enhanced quality for 4K: lower CRF = better quality
         return "libx265", [f"preset={preset}", f"crf={[18,20,23,26][qi]}"], "software", ""
     if codec == "av1" and not quiet:
         warn("AV1 software encoding is not real-time for live capture; using H.264.")
+    sw_h264 = _first_usable_software_encoder(si, "h264")
+    if spec.backend == "gpu" and si.gpu_vendor == "nvidia" \
+            and not quiet and sw_h264:
+        warn("wf-recorder cannot use NVENC on Wayland; recording with "
+             f"software {sw_h264}.")
+    if not sw_h264:
+        die(_software_encoder_error(si, "h264")
+            + " A software H.264 encoder is required by wf-recorder here.")
+    if sw_h264 == "libopenh264":
+        bitrate_k = _openh264_recording_bitrate_k(
+            spec.quality, _pixrate_mp(si, spec))
+        maxrate_k = int(round(bitrate_k * 1.25))
+        return sw_h264, ["rc_mode=quality", f"b={bitrate_k * 1000}",
+                         f"maxrate={maxrate_k * 1000}", "profile=high"], \
+            "software", ""
     preset = ["slow", "medium", "fast", "veryfast"][st]
     # Enhanced quality for 4K: lower CRF = better quality
-    return "libx264", [f"preset={preset}", f"crf={[16,18,21,24][qi]}"], "software", ""
+    return sw_h264, [f"preset={preset}", f"crf={[16,18,21,24][qi]}"], \
+        "software", ""
 
 
 def _parse_wxhxy(geom: Optional[str]) -> Optional[tuple[int, int, int, int]]:
@@ -2400,6 +2650,10 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
     # so it encodes the screen into an mpegts FIFO which ffmpeg reads to overlay
     # the webcam, mix + denoise the audio, and write the file (or push the FLV).
     if spec.stream_url or spec.camera:
+        wf_h264 = _first_usable_software_encoder(si, "h264")
+        if not wf_h264:
+            die(_software_encoder_error(si, "h264")
+                + " Wayland webcam/stream composition requires software H.264.")
         # Only mint a real temp dir + FIFO when we will actually record; the live
         # GUI preview and CLI --dry-run rebuild this plan repeatedly and would
         # otherwise orphan a temp dir on every rebuild.
@@ -2409,17 +2663,35 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
             # High-quality fast intermediate; ffmpeg re-encodes to the final
             # quality after overlaying the webcam (preserves quality across the
             # second encode, at all resolutions).
-            vcmd = [wf, "-o", output, "-D", "-c", "libx264", "-r", str(spec.fps),
-                    "-x", "yuv420p", "-p", "preset=ultrafast", "-p", "crf=14",
-                    "-p", f"g={spec.fps * 2}"]
+            vcmd = [wf, "-o", output, "-D", "-c", wf_h264, "-r", str(spec.fps),
+                    "-x", "yuv420p"]
+            if wf_h264 == "libx264":
+                vcmd += ["-p", "preset=ultrafast", "-p", "crf=14"]
+            else:
+                # The screen stream is encoded again after the webcam overlay,
+                # so keep this OpenH264 intermediate generously provisioned.
+                br = _openh264_recording_bitrate_k(
+                    "best", _pixrate_mp(si, spec))
+                vcmd += ["-p", "rc_mode=quality", "-p", f"b={br * 1000}",
+                         "-p", f"maxrate={int(round(br * 1.25)) * 1000}",
+                         "-p", "profile=high"]
+            vcmd += ["-p", f"g={spec.fps * 2}"]
         else:
             # Streaming without a camera: CBR intermediate the mux can stream-copy.
             dims = _output_dims(si, spec) or (1920, 1080)
             br = _stream_bitrate_k(*dims, spec.fps)
-            vcmd = [wf, "-o", output, "-D", "-c", "libx264", "-r", str(spec.fps),
-                    "-x", "yuv420p", "-p", "preset=veryfast", "-p", "tune=zerolatency",
-                    "-p", f"b={br * 1000}", "-p", f"maxrate={int(br * 1070)}",
-                    "-p", f"bufsize={br * 2000}", "-p", f"g={spec.fps * 2}"]
+            vcmd = [wf, "-o", output, "-D", "-c", wf_h264, "-r", str(spec.fps),
+                    "-x", "yuv420p"]
+            if wf_h264 == "libx264":
+                vcmd += ["-p", "preset=veryfast", "-p", "tune=zerolatency",
+                         "-p", f"b={br * 1000}",
+                         "-p", f"maxrate={int(br * 1070)}",
+                         "-p", f"bufsize={br * 2000}"]
+            else:
+                vcmd += ["-p", "rc_mode=bitrate", "-p", f"b={br * 1000}",
+                         "-p", f"maxrate={int(br * 1070)}",
+                         "-p", "profile=high", "-p", "bf=0"]
+            vcmd += ["-p", f"g={spec.fps * 2}"]
         if wl_geom:
             vcmd += ["-g", wl_geom]
         if scale:
@@ -3014,7 +3286,9 @@ def _resolve_audio_devices(si: SystemInfo, args) -> tuple[Optional[AudioDevice],
     if getattr(args, "mic_device", None):
         mic = next((m for m in si.mics if m.id == args.mic_device or m.label == args.mic_device), None)
         if mic is None:
-            mic = AudioDevice(id=args.mic_device, label=args.mic_device)
+            mic = _explicit_audio_device(si, args.mic_device)
+        if mic is None and si.os in _BSD_OSES:
+            die(f"BSD microphone device is unavailable: {args.mic_device}")
     if getattr(args, "system_device", None):
         system_candidates = list(si.monitors)
         if si.os == "windows":
@@ -3025,7 +3299,12 @@ def _resolve_audio_devices(si: SystemInfo, args) -> tuple[Optional[AudioDevice],
             None,
         )
         if mon is None:
-            mon = AudioDevice(id=args.system_device, label=args.system_device, is_monitor=True)
+            mon = _explicit_audio_device(
+                si, args.system_device, is_monitor=True)
+        if mon is None and si.os in _BSD_OSES:
+            die("No BSD system-audio monitor matches "
+                f"'{args.system_device}'. A usable PulseAudio monitor source "
+                "is required for system audio.")
     return mic, mon
 
 
@@ -4195,7 +4474,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     def find_dev(which, lab, fallback_monitor=False):
         d = audio_choices[which].get(lab)
         if d is None and _has_dev(lab):
-            d = AudioDevice(id=lab, label=lab, is_monitor=fallback_monitor)
+            d = _explicit_audio_device(si, lab, fallback_monitor)
         return d
 
     def _current_spec():
@@ -4522,8 +4801,11 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             return
         refresh_btn.configure(fg=C["accent"])
         try:
+            if si.os in _BSD_OSES:
+                si.indevs = list_indevs(si.ffmpeg)
             mics, monitors, dmic, dmon = detect_audio(
-                si.os, si.ffmpeg, refresh=True)
+                si.os, si.ffmpeg, refresh=True,
+                indevs=si.indevs if si.os in _BSD_OSES else None)
             si.mics, si.monitors = mics, monitors
             si.default_mic, si.default_monitor = dmic, dmon
         except Exception:  # noqa: BLE001

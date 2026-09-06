@@ -140,10 +140,13 @@ command -v python3 >/dev/null 2>&1 || missing="${missing} python3"
 command -v ffmpeg  >/dev/null 2>&1 || missing="${missing} ffmpeg"
 if [ -n "${missing}" ]; then
     echo "NOTE: install the runtime prerequisites for your system:${missing}"
-    echo "  FreeBSD:  pkg install python3 ffmpeg     (Wayland: pkg install wf-recorder)"
-    echo "  OpenBSD:  pkg_add python3 ffmpeg"
+    echo "  FreeBSD:  pkg install python3 ffmpeg     (audio input: native OSS)"
+    echo "  OpenBSD:  pkg_add python3 ffmpeg          (audio input: native sndio)"
+    echo "  NetBSD/DragonFly: install Python 3 + FFmpeg with the system package manager"
     echo "  Linux:    use your package manager (apt/dnf/pacman): python3 ffmpeg"
+    echo "  Fedora:   ffmpeg-free is supported; use real openh264, not noopenh264"
 fi
+echo "BSD screen capture uses X11/XWayland; PulseAudio is optional for monitor/system audio."
 echo "Run 'turborec gui' or 'turborec --help' to get started."
 INSTALL_EOF
 chmod 0755 "${STAGE}/install.sh"

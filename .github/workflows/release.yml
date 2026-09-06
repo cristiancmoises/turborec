@@ -72,6 +72,8 @@ jobs:
           packaging/build-windows.sh
           # Architecture-independent tarball — installs on any Unix (incl. the BSDs).
           packaging/build-tarball.sh
+          # Complete immutable source tree for downstream repositories.
+          packaging/build-source-tarball.sh
 
       - name: Collect artifacts
         run: |
@@ -108,16 +110,20 @@ jobs:
         uses: vmactions/freebsd-vm@v1
         with:
           usesh: true
-          # python3 is needed both to read VERSION cleanly and to smoke-test the
-          # installed package; pkg(8) itself is part of the base FreeBSD image.
+          # Test the package against FreeBSD's stock FFmpeg and native OSS
+          # capture backend; pkg(8) itself is part of the base image.
           prepare: |
-            pkg install -y python3
+            pkg install -y python3 ffmpeg
           run: |
             set -eu
             sh packaging/build-freebsd-pkg.sh
             echo "== smoke test: install the built package =="
             pkg add -f dist/turborec-*.pkg
             turborec --version
+            ffmpeg -hide_banner -devices 2>&1 | grep -q 'oss'
+            turborec detect --json > detect.json
+            python3 -c 'import json; d=json.load(open("detect.json")); assert d["os"] == "freebsd"'
+            turborec record --mode video_only --resolution native --dry-run
             pkg delete -y turborec
 
       - name: Upload FreeBSD build artifact
@@ -259,6 +265,7 @@ jobs:
           turborec-${VERSION}-1.src.rpm
           turborec-${VERSION}-guix-x86_64.tar.gz
           turborec-${VERSION}.pkg
+          turborec-${VERSION}-source.tar.gz
           turborec-${VERSION}.tar.gz
           turborec_${VERSION}_all.deb"
           for name in ${EXPECTED}; do
@@ -303,6 +310,7 @@ jobs:
           turborec-${VERSION}-1.src.rpm
           turborec-${VERSION}-guix-x86_64.tar.gz
           turborec-${VERSION}.pkg
+          turborec-${VERSION}-source.tar.gz
           turborec-${VERSION}.tar.gz
           turborec_${VERSION}_all.deb"
           ACTUAL="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \

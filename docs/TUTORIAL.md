@@ -1,9 +1,10 @@
 # Turbo Recorder — Complete User Guide
 
 > Record your screen and audio at the **best quality your hardware can deliver** —
-> on Linux, macOS or Windows. Turbo Recorder probes your machine and configures
-> everything (OS, GPU, encoder, screen, mic, system audio) automatically, then
-> builds a real-time, correct-speed FFmpeg pipeline. Use the **GUI** or the **CLI**.
+> on Linux, macOS, Windows, FreeBSD, OpenBSD, NetBSD or DragonFly. Turbo Recorder
+> probes your machine and configures everything (OS, GPU, encoder, screen, mic,
+> system audio) automatically, then builds a real-time, correct-speed FFmpeg
+> pipeline. Use the **GUI** or the **CLI**.
 
 ---
 
@@ -33,7 +34,7 @@
 
 **Requirements:** [FFmpeg](https://ffmpeg.org/download.html) on your `PATH`,
 Python 3.8+, and (for the GUI) Tk — bundled with the python.org installers on
-macOS/Windows; a separate package on Linux. On a **Wayland** session (sway,
+macOS/Windows; a separate package on Linux. On a **Linux Wayland** session (sway,
 Hyprland, river, …) screen capture additionally needs
 [`wf-recorder`](https://github.com/ammen99/wf-recorder)
 (`sudo apt install wf-recorder` · `sudo dnf install wf-recorder` ·
@@ -43,18 +44,33 @@ Hyprland, river, …) screen capture additionally needs
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.9.0_all.deb        # pulls ffmpeg, python3, python3-tk
+sudo apt install ./turborec_3.9.1_all.deb        # pulls ffmpeg, python3, python3-tk
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.9.0-1.noarch.rpm   # pulls ffmpeg, python3, python3-tkinter
+sudo dnf install ./turborec-3.9.1-1.noarch.rpm   # accepts any RPM provider of /usr/bin/ffmpeg
 
 # Any Linux — portable AppImage (uses your host ffmpeg/python/tk)
-chmod +x Turbo_Recorder-3.9.0-x86_64.AppImage
-./Turbo_Recorder-3.9.0-x86_64.AppImage
+chmod +x Turbo_Recorder-3.9.1-x86_64.AppImage
+./Turbo_Recorder-3.9.1-x86_64.AppImage
 ```
 
 Get these from the project **Releases** page, or build them yourself with the
 scripts in [`packaging/`](../packaging/).
+
+Fedora's `ffmpeg-free` can omit `libx264`. In v3.9.1 the automatic, explicit
+H.264, CPU and streaming paths can fall through to `libopenh264`, but only after
+Turbo Recorder proves that encoder with a real one-frame test. Fedora's
+`noopenh264` compatibility shim is deliberately rejected. With the Cisco
+OpenH264 repository enabled, the normal install pulls the real implementation;
+replace an existing stub with:
+
+```bash
+sudo dnf install ffmpeg-free
+sudo dnf swap noopenh264 openh264
+```
+
+The second command requires the `fedora-cisco-openh264` repository to be
+enabled. Alternatively, use another compatible `/usr/bin/ffmpeg` provider.
 
 ### BSD and other Unix
 
@@ -64,16 +80,31 @@ Python plus a POSIX shell front-end, so one archive runs everywhere.
 
 ```sh
 # FreeBSD — native package
-pkg add ./turborec-3.9.0.pkg
-pkg install python3 ffmpeg          # runtime prerequisites (wf-recorder for Wayland)
+pkg add ./turborec-3.9.1.pkg
+pkg install python3 ffmpeg          # runtime prerequisites; screen via X11/XWayland
 
 # Any Unix — portable tarball (installs to /usr/local by default)
-tar xzf turborec-3.9.0.tar.gz && cd turborec-3.9.0
+tar xzf turborec-3.9.1.tar.gz && cd turborec-3.9.1
 sudo ./install.sh                   # or: PREFIX="$HOME/.local" ./install.sh
 ```
 
-On **OpenBSD** install the prerequisites with `pkg_add python3 ffmpeg`. The
-tarball's `install.sh` prints any missing prerequisite it detects.
+On **OpenBSD** install the prerequisites with `pkg_add python3 ffmpeg`. Use the
+equivalent Python 3, Tk and FFmpeg packages on NetBSD and DragonFly. The
+tarball's `install.sh` prints any missing core prerequisite it detects.
+
+Turbo Recorder identifies FreeBSD, OpenBSD, NetBSD and DragonFly separately.
+BSD screen capture uses FFmpeg `x11grab` in an X11 session or through XWayland.
+Microphones use an FFmpeg input that is genuinely compiled and backed by a real
+character-device node: sndio is preferred on OpenBSD; OSS is preferred on
+FreeBSD, NetBSD and DragonFly. PulseAudio is optional on BSD and is used only
+when FFmpeg's Pulse input, a working `pactl` connection and real sources are all
+available. A Pulse monitor source is required for BSD desktop/system audio.
+
+Release archives have two different purposes: `turborec-3.9.1.tar.gz` is the
+portable end-user installer above, while `turborec-3.9.1-source.tar.gz` is the
+complete immutable tracked source tree, including tests, intended for ports and
+distribution maintainers. Together with nine platform payloads and
+`SHA256SUMS`, the release contains 11 assets in total.
 
 ### Linux — from source (works everywhere)
 
@@ -90,8 +121,8 @@ Install Tk for the GUI: `sudo apt install python3-tk` (Debian/Ubuntu),
 
 **Easiest — the package definition or the relocatable pack.** The repo ships a
 `guix.scm`, and every release ships a relocatable pack tarball. Both give you a
-working `turborec` **CLI** with `ffmpeg`, `wf-recorder` and `pactl` already
-wired onto its PATH:
+working `turborec` CLI and Tk GUI with `ffmpeg`, `wf-recorder`, `pactl` and the
+Python `tk` output wired into the environment:
 
 ```bash
 # From the repo — build and/or install the package
@@ -101,38 +132,20 @@ guix shell   -f guix.scm -- turborec detect   # run it ad-hoc
 
 # Or the prebuilt relocatable pack from the Releases page (no Guix daemon needed
 # to run it; unpacks the /gnu/store closure + a /bin/turborec launcher)
-tar xf turborec-3.9.0-guix-x86_64.tar.gz -C /
+tar xf turborec-3.9.1-guix-x86_64.tar.gz -C /
 /bin/turborec record -m video_both
 ```
 
-**For the Tk GUI on Guix.** Guix's default `python` has no `_tkinter`, so the
-package above is CLI-only. For the GUI, use a Tk-capable Python plus a tiny
-launcher: `guix install python python:tk` then a wrapper —
+The package build validates that Python can import `_tkinter`, and release CI
+validates the packaged command paths. The GUI is intended to run on a graphical
+Guix session; that headless build validation does not amount to a visual GUI or
+physical capture-device test. Launch it normally:
 
 ```bash
-guix install python python:tk                    # provides a Tk-capable python3
-
-mkdir -p ~/.local/bin ~/.local/lib/turborec
-install -m755 turborec.py   ~/.local/lib/turborec/turborec.py
-install -m755 turborecorder ~/.local/bin/turborecorder
-
-cat > ~/.local/bin/turborec <<'WRAP'
-#!/bin/sh
-SCRIPT="$HOME/.local/lib/turborec/turborec.py"
-PY="$HOME/.guix-profile/bin/python3"            # has tkinter
-if [ -x "$PY" ]; then
-  for d in "$HOME"/.guix-profile/lib/python3*/site-packages; do
-    [ -d "$d" ] && GUIX_PYTHONPATH="$d${GUIX_PYTHONPATH:+:$GUIX_PYTHONPATH}"
-  done
-  export GUIX_PYTHONPATH
-  exec "$PY" "$SCRIPT" "$@"
-fi
-exec python3 "$SCRIPT" "$@"
-WRAP
-chmod +x ~/.local/bin/turborec
+turborec gui
+# or, from the relocatable pack:
+/bin/turborec gui
 ```
-
-Then `turborec gui` works (make sure `~/.local/bin` is on your `PATH`).
 
 ### macOS
 
@@ -150,7 +163,7 @@ It is **fully self-contained** — Python, Tk **and FFmpeg are bundled inside th
 admin rights needed:
 
 ```powershell
-Turbo_Recorder-3.9.0-windows-x64.exe gui        # or: detect / record / --help
+Turbo_Recorder-3.9.1-windows-x64.exe gui        # or: detect / record / --help
 ```
 
 Prefer a classic install with Start-Menu shortcuts and an uninstaller? Use
@@ -345,12 +358,16 @@ windows). Notes:
 - On **X11**, window capture grabs that window's *screen region* (like OBS
   "Display Capture" cropped to the window) — if another window overlaps it, the
   overlap is captured too.
-- On **Wayland** (sway/Hyprland/river), capture uses `wf-recorder` automatically.
+- On **Linux Wayland** (sway/Hyprland/river), capture uses `wf-recorder` automatically.
   Pick an output with `--monitor <name>` (or the Source dropdown); a region with
   `--region`; a sway window with `--window`. NVENC isn't available through
   `wf-recorder`, so encoding is software `libx264`/`libx265` (real-time at 1080p).
   `video_both` records perfectly A/V-synced via a temporary PipeWire combined
   source. (Install `wf-recorder` if it's missing.)
+- On the **BSDs**, use an X11 session or XWayland. X11 retains the `x11grab`
+  screen, monitor, visible-window and region targets. XWayland can capture the
+  screen/region it exposes, subject to compositor policy; native Linux
+  `wf-recorder` integration is not claimed for BSD Wayland sessions.
 
 ---
 
@@ -360,7 +377,7 @@ windows). Notes:
 
 ```bash
 turborec record --gpu      # request hardware (NVENC / Quick Sync / VAAPI / AMF / VideoToolbox)
-turborec record --cpu      # force software (libx264 / libx265)
+turborec record --cpu      # force software (including verified OpenH264 fallback)
 turborec record            # auto: hardware if available, else software
 ```
 
@@ -431,7 +448,9 @@ turborec record -m video_mic --audio-channels right   # fix right-only audio
 
 > **Recording desktop/system audio** needs a loopback/monitor source: PulseAudio/
 > PipeWire `*.monitor` on Linux, BlackHole/Loopback on macOS, "Stereo Mix" on
-> Windows. `turborec devices` shows what's available.
+> Windows, or a working PulseAudio monitor on BSD. Native sndio/OSS device nodes
+> provide microphone/input capture on BSD, not desktop loopback. `turborec
+> devices` shows only what is actually available.
 
 ### Noise suppression (NoiseTorch-style, built in)
 
@@ -459,8 +478,9 @@ turborec record -m video_both --camera /dev/video0 \
     --camera-size medium --camera-position bottom-right
 ```
 
-- `--camera` — `/dev/videoN` (Linux), an AVFoundation index (macOS), or a
-  DirectShow name (Windows). In the GUI: the **Webcam** dropdown.
+- `--camera` — `/dev/videoN` on Linux, or on BSD only when FFmpeg exposes V4L2
+  and the path resolves to a real device; an AVFoundation index on macOS; or a
+  DirectShow name on Windows. In the GUI: the **Webcam** dropdown.
 - `--camera-size` — `small` / `medium` / `large`, an explicit `WxH`, or `N%` of
   the output width.
 - `--camera-position` — `top-left`, `top-right`, `bottom-left`, `bottom-right`,
@@ -507,7 +527,7 @@ a file, so Turbo Recorder switches the pipeline automatically:
 - A **2-second keyframe interval** (GOP = 2×fps) and **FLV over RTMPS**, which is
   what YouTube expects.
 - Video-only modes still get a **silent audio track** so YouTube always sees audio.
-- On **Wayland**, `wf-recorder` encodes into a pipe that ffmpeg pushes, so live
+- On **Linux Wayland**, `wf-recorder` encodes into a pipe that ffmpeg pushes, so live
   streaming works on wlroots compositors too.
 
 Choose a resolution with `-R` (e.g. `-R 1080p`) exactly as for recording; the
@@ -647,7 +667,15 @@ see [Install → GNU Guix](#1-install). The CLI works without Tk.
 **Microphone requested but none found.** Select one explicitly:
 `turborec record --mic-device "<name from turborec devices>"`.
 
-**Wayland: "wf-recorder is not installed".** Install it
+**BSD microphone is not listed.** First inspect the FFmpeg build with
+`ffmpeg -hide_banner -devices` and the nodes with `ls -l /dev/audio* /dev/dsp*`.
+OpenBSD normally uses the `sndio` input; FreeBSD, NetBSD and DragonFly normally
+use `oss`. Turbo Recorder lists a native source only when both the FFmpeg input
+and a real character-device node exist. Do not use `--system-device` with a
+native sndio/OSS microphone node: desktop audio needs an actual Pulse monitor
+shown by `turborec devices`.
+
+**Linux Wayland: "wf-recorder is not installed".** Install it
 (`sudo apt install wf-recorder` / `sudo dnf install wf-recorder` /
 `guix install wf-recorder`). turborec uses it to capture wlroots compositors
 (sway/Hyprland/river); a black/empty recording usually means an old version

@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!--
-  Turbo Recorder v3.9.0 — static documentation and landing page.
+  Turbo Recorder v3.9.1 — static documentation and landing page.
 
   Security properties of this document:
     * no JavaScript
@@ -28,10 +28,10 @@
 <meta name="referrer" content="no-referrer">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#000000">
-<meta name="description" content="Turbo Recorder 3.9.0: cross-platform screen, microphone, system-audio and webcam recorder. Quality-first 4K, 23 FPS and automatic AV1/HEVC/H.264 defaults, GUI and CLI, powered by FFmpeg.">
+<meta name="description" content="Turbo Recorder 3.9.1: quality-first screen and audio recording with distinct FreeBSD, OpenBSD, NetBSD and DragonFly detection, native BSD audio fallbacks, 4K at 23 FPS, GUI and CLI.">
 <link rel="canonical" href="https://turborec.securityops.co/">
 <link rel="icon" href="/favicon.ico" sizes="any">
-<title>Turbo Recorder 3.9.0 — record, mix, overlay and stream</title>
+<title>Turbo Recorder 3.9.1 — BSD portability, recording and streaming</title>
 <style>
 :root {
   color-scheme: dark;
@@ -344,7 +344,7 @@ h3 { margin-bottom: 8px; color: var(--ink); font: 780 1rem/1.35 var(--mono); }
 }
 .card .tag.solid { color: #001513; background: var(--cyan); border-color: var(--cyan); }
 .new-card { position: relative; overflow: hidden; }
-.new-card::after { content: "3.9"; position: absolute; right: 13px; top: 11px; color: #154448; font: 850 1.1rem var(--mono); }
+.new-card::after { content: "3.9.1"; position: absolute; right: 13px; top: 11px; color: #154448; font: 850 1.1rem var(--mono); }
 
 .downloads { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 .download {
@@ -501,7 +501,7 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
   <div class="shell header-inner">
     <a class="brand" href="#top" aria-label="Turbo Recorder home"><span class="brand-mark" aria-hidden="true"></span>TURBO RECORDER</a>
     <nav class="nav-desktop" aria-label="Primary navigation">
-      <a href="#new">New in 3.9</a>
+      <a href="#new">New in 3.9.1</a>
       <a href="#features">Features</a>
       <a href="#download">Download</a>
       <a href="#platforms">Platforms</a>
@@ -512,7 +512,7 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
     <details class="nav-mobile">
       <summary aria-label="Open navigation">Menu</summary>
       <nav class="mobile-panel" aria-label="Mobile navigation">
-        <a href="#new">New in 3.9</a>
+        <a href="#new">New in 3.9.1</a>
         <a href="#features">Features</a>
         <a href="#download">Download</a>
         <a href="#interface">Interface</a>
@@ -531,12 +531,12 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
   <section class="hero" id="top">
     <div class="shell hero-grid">
       <div>
-        <p class="eyebrow">Version 3.9.0 · GPL-3.0 · FFmpeg engine</p>
+        <p class="eyebrow">Version 3.9.1 · GPL-3.0 · FFmpeg engine</p>
         <h1>Record. Mix. Overlay. Go <span>live.</span></h1>
         <p class="lede">Turbo Recorder detects the machine, validates the encoder, selects the available audio sources and builds a real-time capture pipeline. Record the screen, microphone and system audio, add a webcam, suppress mic noise, or stream over RTMP — without configuring an OBS scene.</p>
-        <p class="platform-line"><strong>Linux</strong> · <strong>macOS</strong> · <strong>Windows</strong> · <strong>FreeBSD</strong> · <strong>GNU Guix</strong> &nbsp;•&nbsp; X11 + wlroots Wayland &nbsp;•&nbsp; GUI + CLI</p>
+        <p class="platform-line"><strong>Linux</strong> · <strong>macOS</strong> · <strong>Windows</strong> · <strong>FreeBSD</strong> · <strong>OpenBSD</strong> · <strong>NetBSD</strong> · <strong>DragonFly</strong> · <strong>GNU Guix</strong> &nbsp;•&nbsp; GUI + CLI</p>
         <div class="actions">
-          <a class="button primary" href="#download">Download v3.9.0</a>
+          <a class="button primary" href="#download">Download v3.9.1</a>
           <a class="button" href="https://github.com/cristiancmoises/turborec" rel="noopener noreferrer external">View source ↗</a>
           <a class="button" href="https://github.com/cristiancmoises/turborec/blob/main/docs/README.pt-BR.md" rel="noopener noreferrer external">Guia em português ↗</a>
         </div>
@@ -573,8 +573,8 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
 
   <div class="release-band">
     <div class="shell release-band-inner">
-      <div class="release-label"><b>v3.9.0</b><span>released 6 September 2026</span></div>
-      <div class="release-points"><span>4K quality-first defaults</span><span>23 FPS by default</span><span>automatic modern codecs</span><span>10 verified release assets</span></div>
+      <div class="release-label"><b>v3.9.1</b><span>release · 6 September 2026</span></div>
+      <div class="release-points"><span>distinct BSD detection</span><span>native sndio / OSS audio</span><span>Best · Auto · 23 FPS · 4K retained</span><span>11 verified release assets</span></div>
     </div>
   </div>
 
@@ -582,39 +582,39 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
     <div class="shell">
       <div class="section-head">
         <p class="section-kicker">Latest changes</p>
-        <h2><span class="number">01</span>What changed in 3.9.0</h2>
-        <p>This release makes the first-run profile quality-first while preserving explicit overrides: 4K output, a literal 23 FPS, Best quality and automatic codec selection across the supported platforms.</p>
+        <h2><span class="number">01</span>What changed in 3.9.1</h2>
+        <p>This portability patch identifies each major BSD correctly, selects audio and camera inputs from actual FFmpeg capabilities and device nodes, and preserves the Best · Auto · 23 FPS · 4K first-run profile plus the recent Windows fixes.</p>
       </div>
       <div class="grid grid-3">
         <article class="card new-card">
-          <span class="tag solid">QUALITY PROFILE</span>
-          <h3>4K, Best and 23 FPS from first launch</h3>
-          <p>The GUI, CLI parser and internal recording specification now share one default profile. Users can still select native resolution, a different frame rate or a lighter quality level for constrained hardware.</p>
+          <span class="tag solid">BSD IDENTITY</span>
+          <h3>Four systems, four identities</h3>
+          <p>FreeBSD, OpenBSD, NetBSD and DragonFly are no longer folded into Linux. X11 retains full-screen, monitor, visible-window and signed-region targets; XWayland can capture the screen/region exposed by its compatibility server.</p>
         </article>
         <article class="card new-card">
-          <span class="tag">AUTO CODEC</span>
-          <h3>The best usable encoder wins</h3>
-          <p>Automatic mode validates hardware AV1 first, then HEVC and H.264. If no GPU encoder initializes, real-time software H.264 keeps recording available on older or virtual machines.</p>
+          <span class="tag">NATIVE BSD AUDIO</span>
+          <h3>sndio and OSS when present</h3>
+          <p>OpenBSD prefers sndio; FreeBSD, NetBSD and DragonFly prefer OSS. Pulse is selected only when FFmpeg supports it, pactl reaches the server and real sources exist; a Pulse monitor remains the BSD path for desktop audio.</p>
         </article>
         <article class="card new-card">
-          <span class="tag">WINDOWS</span>
-          <h3>Portable EXE or guided installer</h3>
-          <p>Both Windows x64 builds bundle Python, Tk and FFmpeg. DirectShow discovery accepts current structured output and legacy lists, preserves Unicode names and stable device identifiers, and caches slow probes.</p>
+          <span class="tag">REAL DEVICES</span>
+          <h3>Capabilities before assumptions</h3>
+          <p>Native audio paths must resolve to character devices, so directories and guessed aliases are not advertised. BSD cameras likewise require an FFmpeg V4L2 input and a real capturable video node.</p>
         </article>
         <article class="card new-card">
-          <span class="tag">SAFE OUTPUT</span>
-          <h3>Recordings never overwrite each other</h3>
-          <p>Automatically generated and user-selected output names receive a collision-safe suffix when necessary, so repeated captures do not silently replace an existing recording.</p>
+          <span class="tag">FEDORA</span>
+          <h3>OpenH264 fallback for ffmpeg-free</h3>
+          <p>If libx264 is absent, H.264 paths can try libopenh264 only after a real one-frame initialization succeeds. This covers compatible Fedora ffmpeg-free installations while rejecting its advertised but unusable noopenh264 shim.</p>
         </article>
         <article class="card new-card">
-          <span class="tag">PORTABLE</span>
-          <h3>One workflow across operating systems</h3>
-          <p>Debian, RPM, AppImage, Guix, FreeBSD and portable Unix packages join the two Windows builds. GUI and CLI use the same detection, validation and pipeline planner.</p>
+          <span class="tag">SOURCE RELEASE</span>
+          <h3>Complete input for downstream ports</h3>
+          <p>The release adds an immutable complete-source archive, including tests, beside the portable end-user tarball. Nine platform payloads, that source archive and SHA256SUMS make 11 verified assets.</p>
         </article>
         <article class="card new-card">
-          <span class="tag">RELEASE + DOCS</span>
-          <h3>Verified everywhere, explained twice</h3>
-          <p>Linux, Windows and macOS tests gate nine platform artifacts plus checksums. The same immutable release is published to GitHub, Codeberg and Forgejo, with complete English and Brazilian Portuguese guides.</p>
+          <span class="tag">NO REGRESSIONS</span>
+          <h3>Quality and Windows fixes stay put</h3>
+          <p>Best quality, Auto codec, a literal 23 FPS and 4K remain the defaults. The self-contained Windows builds retain Unicode DirectShow names, stable IDs, native window handles and signed multi-monitor geometry.</p>
         </article>
       </div>
     </div>
@@ -629,17 +629,17 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
       </div>
       <div class="grid grid-4">
         <article class="card"><span class="tag solid">ZERO CONFIG</span><h3>Safe automatic capture</h3><p>Detects OS, display server, GPU, encoder, screen, microphone and loopback source, then chooses the richest mode that can actually run.</p></article>
-        <article class="card"><span class="tag">HW ACCEL</span><h3>Validated GPU encoding</h3><p>NVENC, Quick Sync, VAAPI, AMF and VideoToolbox are tested before use. Auto prefers hardware AV1, HEVC and H.264 in that order, then falls back to software x264.</p></article>
+        <article class="card"><span class="tag">HW ACCEL</span><h3>Validated GPU encoding</h3><p>NVENC, Quick Sync, VAAPI, AMF and VideoToolbox are tested before use. Auto prefers hardware AV1, HEVC and H.264 in that order, then software H.264 through libx264 or a runtime-verified libopenh264.</p></article>
         <article class="card"><span class="tag">OBS STYLE</span><h3>Screen, monitor, window, region</h3><p>Capture the full desktop, a physical monitor, a native window target or a precise signed region using the active platform backend.</p></article>
-        <article class="card"><span class="tag">WAYLAND + X11</span><h3>Native wlroots capture</h3><p>Uses wf-recorder on sway, Hyprland, river and other wlroots sessions, with X11 capture through x11grab.</p></article>
+        <article class="card"><span class="tag">WAYLAND + X11</span><h3>Platform-aware screen paths</h3><p>Linux uses wf-recorder on wlroots sessions and x11grab on X11; BSD uses its supported x11grab path on X11 or through XWayland.</p></article>
         <article class="card"><span class="tag">4K DEFAULT</span><h3>Standard output resolutions</h3><p>4K is selected initially; native, 720p, 1080p and 1440p remain available. Lanczos scaling preserves aspect ratio and pads to the exact standard frame.</p></article>
-        <article class="card"><span class="tag">WEBCAM</span><h3>Picture-in-picture overlay</h3><p>Select a camera, size and corner. The overlay works in local recordings and live streams on every supported capture path.</p></article>
+        <article class="card"><span class="tag">WEBCAM</span><h3>Picture-in-picture overlay</h3><p>Select a camera, size and corner. BSD cameras appear only when FFmpeg provides V4L2 and a real capturable device node exists.</p></article>
         <article class="card"><span class="tag">DENOISE</span><h3>Clean the microphone only</h3><p>Light, medium or strong FFmpeg-based noise suppression plus high-pass filtering, without touching clean system audio.</p></article>
         <article class="card"><span class="tag">GO LIVE</span><h3>YouTube and custom RTMP(S)</h3><p>H.264, AAC, a two-second keyframe interval and FLV are selected for streaming. The GUI masks the key and output text redacts it.</p></article>
         <article class="card"><span class="tag">AUDIO</span><h3>FLAC, mixing and channel repair</h3><p>Lossless FLAC is the file default, with AAC and Opus alternatives. Clone left/right, average to mono or preserve stereo.</p></article>
         <article class="card"><span class="tag">ADAPTIVE Q</span><h3>Quality follows pixel throughput</h3><p>Slow, quality-heavy presets are used when there is headroom; 4K and high frame rates step toward faster real-time settings.</p></article>
         <article class="card"><span class="tag">GUI + CLI</span><h3>Interactive and scriptable</h3><p>A focused Tk interface and a complete command line share the same detection and pipeline builder. Python uses the standard library only.</p></article>
-        <article class="card"><span class="tag">PACKAGED</span><h3>Install where you work</h3><p>Debian, RPM, AppImage, FreeBSD, Guix, portable Unix tarball, Windows portable EXE and a self-contained Windows installer.</p></article>
+        <article class="card"><span class="tag">PACKAGED</span><h3>Install where you work</h3><p>Debian, RPM, AppImage, FreeBSD, Guix, portable Unix tarball, Windows portable EXE and installer, plus a complete source archive for packagers.</p></article>
       </div>
     </div>
   </section>
@@ -648,72 +648,84 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
     <div class="shell">
       <div class="section-head">
         <p class="section-kicker">Official release</p>
-        <h2><span class="number">03</span>Download Turbo Recorder 3.9.0</h2>
-        <p>The release contains nine platform packages and binaries plus <span class="mono">SHA256SUMS</span>. Choose the build for your operating system and verify its checksum before use.</p>
+        <h2><span class="number">03</span>Download Turbo Recorder 3.9.1</h2>
+        <p>The release contains nine platform payloads, one complete source archive and <span class="mono">SHA256SUMS</span> — 11 assets in total. Choose the build for your operating system and verify its checksum before use.</p>
       </div>
       <div class="downloads">
-        <a class="download featured" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.0/Turbo_Recorder-3.9.0-windows-x64-setup.exe" rel="noopener noreferrer external">
+        <a class="download featured" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/Turbo_Recorder-3.9.1-windows-x64-setup.exe" rel="noopener noreferrer external">
           <span class="os">Windows x64 <span class="badge">RECOMMENDED</span></span>
-          <span class="file">Turbo_Recorder-3.9.0-windows-x64-setup.exe</span>
+          <span class="file">Turbo_Recorder-3.9.1-windows-x64-setup.exe</span>
           <span class="meta">Windows 10/11 · guided install and shortcuts · Python, Tk and FFmpeg bundled</span>
           <span class="go">Download installer ↓</span>
         </a>
-        <a class="download featured" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.0/Turbo_Recorder-3.9.0-windows-x64.exe" rel="noopener noreferrer external">
+        <a class="download featured" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/Turbo_Recorder-3.9.1-windows-x64.exe" rel="noopener noreferrer external">
           <span class="os">Windows x64 <span class="badge">PORTABLE</span></span>
-          <span class="file">Turbo_Recorder-3.9.0-windows-x64.exe</span>
+          <span class="file">Turbo_Recorder-3.9.1-windows-x64.exe</span>
           <span class="meta">Windows 10/11 · Python, Tk and FFmpeg bundled · no admin installation</span>
           <span class="go">Download executable ↓</span>
         </a>
-        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.0/turborec_3.9.0_all.deb" rel="noopener noreferrer external">
+        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/turborec_3.9.1_all.deb" rel="noopener noreferrer external">
           <span class="os">Debian / Ubuntu</span>
-          <span class="file">turborec_3.9.0_all.deb</span>
-          <span class="meta"><span class="mono">sudo apt install ./turborec_3.9.0_all.deb</span></span>
+          <span class="file">turborec_3.9.1_all.deb</span>
+          <span class="meta"><span class="mono">sudo apt install ./turborec_3.9.1_all.deb</span></span>
           <span class="go">Download .deb ↓</span>
         </a>
-        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.0/turborec-3.9.0-1.noarch.rpm" rel="noopener noreferrer external">
+        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/turborec-3.9.1-1.noarch.rpm" rel="noopener noreferrer external">
           <span class="os">Fedora / RHEL / openSUSE</span>
-          <span class="file">turborec-3.9.0-1.noarch.rpm</span>
-          <span class="meta"><span class="mono">sudo dnf install ./turborec-3.9.0-1.noarch.rpm</span></span>
+          <span class="file">turborec-3.9.1-1.noarch.rpm</span>
+          <span class="meta"><span class="mono">sudo dnf install ./turborec-3.9.1-1.noarch.rpm</span></span>
           <span class="go">Download .rpm ↓</span>
         </a>
-        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.0/Turbo_Recorder-3.9.0-x86_64.AppImage" rel="noopener noreferrer external">
+        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/turborec-3.9.1-1.src.rpm" rel="noopener noreferrer external">
+          <span class="os">RPM packagers</span>
+          <span class="file">turborec-3.9.1-1.src.rpm</span>
+          <span class="meta">RPM recipe and sources · rebuild with <span class="mono">rpmbuild --rebuild</span></span>
+          <span class="go">Download source RPM ↓</span>
+        </a>
+        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/Turbo_Recorder-3.9.1-x86_64.AppImage" rel="noopener noreferrer external">
           <span class="os">Linux AppImage</span>
-          <span class="file">Turbo_Recorder-3.9.0-x86_64.AppImage</span>
+          <span class="file">Turbo_Recorder-3.9.1-x86_64.AppImage</span>
           <span class="meta">Portable launcher · uses system Python, Tk and FFmpeg</span>
           <span class="go">Download AppImage ↓</span>
         </a>
-        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.0/turborec-3.9.0-guix-x86_64.tar.gz" rel="noopener noreferrer external">
+        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/turborec-3.9.1-guix-x86_64.tar.gz" rel="noopener noreferrer external">
           <span class="os">GNU Guix pack</span>
-          <span class="file">turborec-3.9.0-guix-x86_64.tar.gz</span>
-          <span class="meta">Relocatable Guix store + command wrapper · usable on another GNU/Linux system</span>
+          <span class="file">turborec-3.9.1-guix-x86_64.tar.gz</span>
+          <span class="meta">Relocatable Guix store + CLI/GUI wrapper · Python Tk import validated headlessly</span>
           <span class="go">Download Guix pack ↓</span>
         </a>
-        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.0/turborec-3.9.0.pkg" rel="noopener noreferrer external">
+        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/turborec-3.9.1.pkg" rel="noopener noreferrer external">
           <span class="os">FreeBSD</span>
-          <span class="file">turborec-3.9.0.pkg</span>
-          <span class="meta"><span class="mono">pkg add ./turborec-3.9.0.pkg</span> · install Python and FFmpeg separately</span>
+          <span class="file">turborec-3.9.1.pkg</span>
+          <span class="meta"><span class="mono">pkg add ./turborec-3.9.1.pkg</span> · install Python and FFmpeg separately</span>
           <span class="go">Download .pkg ↓</span>
         </a>
-        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.0/turborec-3.9.0.tar.gz" rel="noopener noreferrer external">
+        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/turborec-3.9.1.tar.gz" rel="noopener noreferrer external">
           <span class="os">macOS / BSD / Unix</span>
-          <span class="file">turborec-3.9.0.tar.gz</span>
-          <span class="meta">Portable source tarball · install to <span class="mono">/usr/local</span> or <span class="mono">~/.local</span></span>
+          <span class="file">turborec-3.9.1.tar.gz</span>
+          <span class="meta">Portable end-user tarball · install to <span class="mono">/usr/local</span> or <span class="mono">~/.local</span></span>
           <span class="go">Download tarball ↓</span>
         </a>
-        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/tag/v3.9.0" rel="noopener noreferrer external">
+        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/turborec-3.9.1-source.tar.gz" rel="noopener noreferrer external">
+          <span class="os">Downstream packagers</span>
+          <span class="file">turborec-3.9.1-source.tar.gz</span>
+          <span class="meta">Immutable complete tracked source tree · includes tests</span>
+          <span class="go">Download complete source ↓</span>
+        </a>
+        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/tag/v3.9.1" rel="noopener noreferrer external">
           <span class="os">All assets</span>
-          <span class="file">Release v3.9.0</span>
+          <span class="file">Release v3.9.1</span>
           <span class="meta">Platform artifacts, source RPM, checksums and release metadata</span>
           <span class="go">Open release page ↗</span>
         </a>
       </div>
       <div class="download-foot">
-        <a href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.0/SHA256SUMS" rel="noopener noreferrer external">SHA256SUMS ↗</a>
+        <a href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/SHA256SUMS" rel="noopener noreferrer external">SHA256SUMS ↗</a>
         <a href="https://github.com/cristiancmoises/turborec/releases/latest" rel="noopener noreferrer external">Latest release ↗</a>
         <a href="https://github.com/cristiancmoises/turborec/blob/main/CHANGELOG.md" rel="noopener noreferrer external">Changelog ↗</a>
         <a href="#install">Install commands</a>
       </div>
-      <p class="note"><strong>Release integrity.</strong> Version 3.9.0 gates publication on a Linux, Windows and macOS test matrix. The publishing job requires all nine platform artifacts to be non-empty, generates <span class="mono">SHA256SUMS</span>, and verifies names and byte sizes across GitHub, Codeberg and Forgejo.</p>
+      <p class="note"><strong>Release integrity.</strong> Version 3.9.1 gates publication on a Linux, Windows and macOS test matrix plus a FreeBSD VM packaging smoke check. The publishing job requires nine platform payloads and the complete source archive to be non-empty, generates <span class="mono">SHA256SUMS</span>, and verifies all 11 asset names and byte sizes across GitHub, Codeberg and Forgejo. These automated checks do not claim visual GUI or physical BSD/Windows capture-device testing.</p>
     </div>
   </section>
 
@@ -727,7 +739,7 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
       <figure class="shot">
         <div class="shot-bar" aria-hidden="true"><span class="shot-dot active"></span><span class="shot-dot"></span><span class="shot-dot"></span><span>turborec-gui.png · repository screenshot</span></div>
         <img src="turborec-gui.png" width="1000" height="575" alt="Turbo Recorder dark graphical interface showing its capture, quality, codec, frame-rate, device, audio and output controls.">
-        <figcaption>Official repository screenshot. The current GUI exposes output resolution, audio channels, webcam, denoise, masked stream key, output folder and live filename controls; v3.9.0 opens with the new quality-first profile.</figcaption>
+        <figcaption>Official repository screenshot. The current GUI exposes output resolution, audio channels, webcam, denoise, masked stream key, output folder and live filename controls; v3.9.1 retains the quality-first profile.</figcaption>
       </figure>
       <ul class="control-list">
         <li>Automatic or strict capture modes</li>
@@ -777,12 +789,15 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
             <tr><td>macOS</td><td>AVFoundation screen pseudo-devices</td><td>AVFoundation</td><td>Enumerates real display indices and multiple screens. Screen, microphone and camera permissions are required.</td></tr>
             <tr><td>Linux X11</td><td><span class="mono">x11grab</span></td><td>PulseAudio/PipeWire + V4L2</td><td>Full desktop, monitors, visible-window regions and arbitrary signed geometry. <span class="mono">wmctrl</span> is optional for window listing.</td></tr>
             <tr><td>Linux Wayland / wlroots</td><td><span class="mono">wf-recorder</span></td><td>PulseAudio/PipeWire + V4L2</td><td>Designed for sway, Hyprland, river and other wlroots compositors. Requires <span class="mono">wf-recorder</span> plus <span class="mono">swaymsg</span> or <span class="mono">wlr-randr</span>.</td></tr>
-            <tr><td>FreeBSD</td><td>Unix/X11 path; wlroots where available</td><td>FFmpeg-visible devices + PulseAudio</td><td>Native <span class="mono">.pkg</span> is provided; install Python, FFmpeg, Tk and PulseAudio tools as required.</td></tr>
-            <tr><td>GNU Guix</td><td>Linux X11 / wlroots Wayland</td><td>PulseAudio/PipeWire + V4L2</td><td>Install from <span class="mono">guix.scm</span> or use the relocatable Guix pack from the release.</td></tr>
+            <tr><td>FreeBSD</td><td>X11/XWayland via <span class="mono">x11grab</span></td><td>OSS; optional Pulse monitor; capability-gated V4L2</td><td>A native <span class="mono">.pkg</span> is provided. Microphone capture does not require PulseAudio when FFmpeg OSS and a real device node are available.</td></tr>
+            <tr><td>OpenBSD</td><td>X11/XWayland via <span class="mono">x11grab</span></td><td>sndio; optional Pulse monitor; capability-gated V4L2</td><td>sndio is preferred when compiled into FFmpeg and backed by a real audio device node.</td></tr>
+            <tr><td>NetBSD</td><td>X11/XWayland via <span class="mono">x11grab</span></td><td>OSS; optional Pulse monitor; capability-gated V4L2</td><td>OSS inputs are selected from actual FFmpeg capabilities and character-device nodes.</td></tr>
+            <tr><td>DragonFly</td><td>X11/XWayland via <span class="mono">x11grab</span></td><td>OSS; optional Pulse monitor; capability-gated V4L2</td><td>Native nodes are microphone/input sources; desktop audio still requires an actual Pulse monitor.</td></tr>
+            <tr><td>GNU Guix</td><td>Linux X11 / wlroots Wayland</td><td>PulseAudio/PipeWire + V4L2</td><td>The package and relocatable pack include Python's Tk output and validate <span class="mono">_tkinter</span> headlessly; a graphical-session visual test is not claimed.</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="note warning"><strong>Wayland scope.</strong> Native Wayland capture targets wlroots compositors. GNOME and KDE Wayland sessions use different portal-based capture paths and may require an X11/Xorg session for this tool. On NVIDIA + wlroots, wf-recorder cannot use NVENC directly, so Turbo Recorder uses a real-time software encoder; Intel/AMD can use VAAPI when available.</p>
+      <p class="note warning"><strong>Wayland scope.</strong> Native Wayland capture targets Linux wlroots compositors. GNOME and KDE use different portal-based paths and may require X11/Xorg; BSD sessions use the supported X11/XWayland path. On NVIDIA + wlroots, wf-recorder cannot use NVENC directly, so Turbo Recorder uses a real-time software encoder; Intel/AMD can use VAAPI when available.</p>
     </div>
   </section>
 
@@ -879,17 +894,17 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
         <div class="terminal">
           <div class="terminal-head"><span class="shot-dot active"></span><span class="shot-dot"></span><span class="shot-dot"></span><span>Linux packages</span></div>
 <pre><span class="comment"># Debian / Ubuntu</span>
-<span class="prompt">$</span> sudo apt install ./turborec_3.9.0_all.deb
+<span class="prompt">$</span> sudo apt install ./turborec_3.9.1_all.deb
 
 <span class="comment"># Fedora / RHEL</span>
-<span class="prompt">$</span> sudo dnf install ./turborec-3.9.0-1.noarch.rpm
+<span class="prompt">$</span> sudo dnf install ./turborec-3.9.1-1.noarch.rpm
 
 <span class="comment"># openSUSE</span>
-<span class="prompt">$</span> sudo zypper install ./turborec-3.9.0-1.noarch.rpm
+<span class="prompt">$</span> sudo zypper install ./turborec-3.9.1-1.noarch.rpm
 
 <span class="comment"># portable AppImage</span>
-<span class="prompt">$</span> chmod +x Turbo_Recorder-3.9.0-x86_64.AppImage
-<span class="prompt">$</span> ./Turbo_Recorder-3.9.0-x86_64.AppImage</pre>
+<span class="prompt">$</span> chmod +x Turbo_Recorder-3.9.1-x86_64.AppImage
+<span class="prompt">$</span> ./Turbo_Recorder-3.9.1-x86_64.AppImage</pre>
         </div>
         <div class="terminal">
           <div class="terminal-head"><span class="shot-dot active"></span><span class="shot-dot"></span><span class="shot-dot"></span><span>Guix, FreeBSD and Unix</span></div>
@@ -897,22 +912,22 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
 <span class="prompt">$</span> guix package -f guix.scm
 
 <span class="comment"># relocatable Guix release pack</span>
-<span class="prompt">$</span> sudo tar xf turborec-3.9.0-guix-x86_64.tar.gz -C /
+<span class="prompt">$</span> sudo tar xf turborec-3.9.1-guix-x86_64.tar.gz -C /
 
 <span class="comment"># FreeBSD package</span>
-<span class="prompt">$</span> pkg add ./turborec-3.9.0.pkg
+<span class="prompt">$</span> pkg add ./turborec-3.9.1.pkg
 <span class="prompt">$</span> pkg install python3 ffmpeg
 
 <span class="comment"># macOS / BSD / Unix tarball, user-local prefix</span>
-<span class="prompt">$</span> tar xzf turborec-3.9.0.tar.gz
-<span class="prompt">$</span> cd turborec-3.9.0
+<span class="prompt">$</span> tar xzf turborec-3.9.1.tar.gz
+<span class="prompt">$</span> cd turborec-3.9.1
 <span class="prompt">$</span> PREFIX="$HOME/.local" ./install.sh</pre>
         </div>
         <div class="terminal">
           <div class="terminal-head"><span class="shot-dot active"></span><span class="shot-dot"></span><span class="shot-dot"></span><span>Windows and source</span></div>
 <pre><span class="comment"># Windows: double-click, or use PowerShell</span>
-<span class="prompt">&gt;</span> .\Turbo_Recorder-3.9.0-windows-x64.exe gui
-<span class="prompt">&gt;</span> .\Turbo_Recorder-3.9.0-windows-x64.exe detect
+<span class="prompt">&gt;</span> .\Turbo_Recorder-3.9.1-windows-x64.exe gui
+<span class="prompt">&gt;</span> .\Turbo_Recorder-3.9.1-windows-x64.exe detect
 
 <span class="comment"># source checkout, every platform</span>
 <span class="prompt">$</span> git clone https://github.com/cristiancmoises/turborec
@@ -922,7 +937,7 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
         <article class="card">
           <span class="tag">RUNTIME</span>
           <h3>Dependencies outside the Windows executable</h3>
-          <p>Python 3.8+, FFmpeg and Tk for the GUI. Linux/FreeBSD automatic audio discovery uses <span class="mono">pactl</span>. A wlroots Wayland session also needs <span class="mono">wf-recorder</span> and either <span class="mono">swaymsg</span> or <span class="mono">wlr-randr</span>. The CLI works without Tk.</p>
+          <p>Python 3.8+, FFmpeg and Tk for the GUI. Linux Pulse/PipeWire discovery uses <span class="mono">pactl</span>. BSD microphones use a real sndio/OSS device when supported; <span class="mono">pactl</span> is optional and needed for Pulse monitor/system audio. Linux wlroots Wayland also needs <span class="mono">wf-recorder</span> and either <span class="mono">swaymsg</span> or <span class="mono">wlr-randr</span>. Fedora <span class="mono">ffmpeg-free</span> can use a proven <span class="mono">libopenh264</span> fallback if <span class="mono">libx264</span> is absent. The CLI works without Tk.</p>
           <p class="note warning"><strong>macOS permissions.</strong> Grant Screen Recording, Microphone and Camera access to Terminal, Python or the launcher that starts Turbo Recorder, then fully restart that application.</p>
         </article>
       </div>
@@ -1030,8 +1045,8 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
       </div>
       <div class="docs">
         <a class="doc-link" href="https://github.com/cristiancmoises/turborec/blob/main/docs/TUTORIAL.md" rel="noopener noreferrer external"><strong>Complete user guide ↗</strong><p>Installation, 60-second start, capture modes, quality, recipes, troubleshooting and FAQ.</p></a>
-        <a class="doc-link" href="https://github.com/cristiancmoises/turborec/blob/main/docs/README.pt-BR.md" hreflang="pt-BR" lang="pt-BR" rel="noopener noreferrer external"><strong>Documentação em português do Brasil ↗</strong><p>Guia completo da versão 3.9.0: instalação, primeiros passos, permissões do Windows, dispositivos, receitas, diagnóstico e solução de problemas.</p></a>
-        <a class="doc-link" href="https://github.com/cristiancmoises/turborec/blob/main/CHANGELOG.md" rel="noopener noreferrer external"><strong>Changelog ↗</strong><p>All notable changes, including the v3.9.0 quality profile, automatic codec order and release hardening.</p></a>
+        <a class="doc-link" href="https://github.com/cristiancmoises/turborec/blob/main/docs/README.pt-BR.md" hreflang="pt-BR" lang="pt-BR" rel="noopener noreferrer external"><strong>Documentação em português do Brasil ↗</strong><p>Guia completo da versão 3.9.1: instalação, primeiros passos, BSDs, permissões do Windows, dispositivos, diagnóstico e solução de problemas.</p></a>
+        <a class="doc-link" href="https://github.com/cristiancmoises/turborec/blob/main/CHANGELOG.md" rel="noopener noreferrer external"><strong>Changelog ↗</strong><p>All notable changes, including the v3.9.1 BSD portability, Fedora fallback and complete source release.</p></a>
         <a class="doc-link" href="https://github.com/cristiancmoises/turborec/blob/main/SECURITY.md" rel="noopener noreferrer external"><strong>Security policy ↗</strong><p>Supported versions and private vulnerability-reporting process.</p></a>
         <a class="doc-link" href="https://github.com/cristiancmoises/turborec/releases/latest" rel="noopener noreferrer external"><strong>Releases and checksums ↗</strong><p>Official binaries, portable packages, SHA256SUMS and previous versions.</p></a>
         <a class="doc-link" href="https://youtu.be/mlf531Da9Qo?si=RTaSB9dJ4NSbGsOm" rel="noopener noreferrer external"><strong>Sample recording ↗</strong><p>A real capture produced by Turbo Recorder.</p></a>
@@ -1046,7 +1061,7 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
       <div>
         <div class="footer-brand">● TURBO RECORDER</div>
         <div class="footer-tag">IN CODE WE TRUST</div>
-        <p class="footer-copy">Free software under GPL-3.0. A focused screen, audio, webcam and streaming front-end powered by FFmpeg, with native X11 and wlroots Wayland capture paths.</p>
+        <p class="footer-copy">Free software under GPL-3.0. A focused screen, audio, webcam and streaming front-end powered by FFmpeg, with X11/XWayland and native Linux wlroots capture paths.</p>
       </div>
       <div>
         <h3>Project</h3>

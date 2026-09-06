@@ -6,11 +6,12 @@
 #      pkg add ./turborec-<version>.pkg
 #
 #  Turbo Recorder is architecture-independent (pure Python stdlib + a POSIX
-#  shell front-end), so the package installs the engine under ${PREFIX}/bin and
-#  the desktop assets under ${PREFIX}/share.  Runtime prerequisites (python3,
-#  ffmpeg, and optionally wf-recorder for Wayland) are intentionally NOT hard
-#  dependencies so the package installs cleanly from a local file on any
-#  FreeBSD release; they are listed in the description and printed by pkg.
+#  Bash front-end), so the package installs the engine under ${PREFIX}/bin and
+#  the desktop assets under ${PREFIX}/share.  Runtime prerequisites (python3
+#  and ffmpeg, plus Tk for the GUI and Bash for the optional Linux-oriented
+#  front-end) are intentionally NOT hard dependencies so the package installs
+#  cleanly from a local file on any FreeBSD release; they are listed in the
+#  description and printed by pkg.
 #
 #  Must run on FreeBSD (needs pkg-create(8)).  License: GPL-3.0.
 # =============================================================================
@@ -83,19 +84,23 @@ licenses: [GPLv3]
 desc: <<EOD
 Turbo Recorder captures your screen and audio at the best quality your
 hardware can deliver.  It probes the machine and configures everything
-automatically: OS, display server, CPU/GPU, the best hardware video encoder
-(NVENC, QSV, VAAPI, AMF, VideoToolbox, or x264), resolution, and the
+automatically: OS, display server, CPU/GPU, the best usable video encoder,
+resolution, and the
 microphone / system-audio sources, then records or live-streams (OBS-style
 RTMP to YouTube) with a quality-first FFmpeg pipeline.
 
 Two front-ends share one engine:
   * turborec      - cross-platform CLI + GUI (Python, stdlib only)
-  * turborecorder - fast, dependency-light shell CLI for X11
+  * turborecorder - optional, Linux-oriented Bash CLI
 
 Runtime prerequisites (install separately):
   pkg install python3 ffmpeg        # required
-  pkg install wf-recorder           # optional, for Wayland/wlroots capture
   py39-tkinter (or matching)        # optional, for the GUI
+  pkg install bash                  # optional, for turborecorder
+
+FreeBSD screen capture uses X11 or XWayland through FFmpeg x11grab.  Audio
+capture uses real OSS device nodes; a working PulseAudio monitor is optional
+for desktop/system audio.
 EOD
 EOF
 

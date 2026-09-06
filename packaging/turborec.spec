@@ -1,9 +1,9 @@
 Name:           turborec
-Version:        3.9.0
+Version:        3.9.1
 Release:        1%{?dist}
 Summary:        State-of-the-art hardware-accelerated screen and audio recorder
 
-License:        GPL-3.0-or-later
+License:        GPL-3.0-only
 URL:            https://github.com/cristiancmoises/turborec
 Source0:        %{name}-%{version}.tar.gz
 
@@ -12,8 +12,11 @@ BuildArch:      noarch
 # Build-time tooling: rasterize the scalable icon and validate the desktop entry.
 BuildRequires:  librsvg2-tools
 BuildRequires:  desktop-file-utils
+BuildRequires:  python3 >= 3.8
 
-Requires:       ffmpeg
+# Provider-neutral executable dependency: Fedora's ffmpeg-free and the full
+# FFmpeg packages used by other RPM distributions all provide this path.
+Requires:       /usr/bin/ffmpeg
 Requires:       python3 >= 3.8
 Requires:       python3-tkinter
 Requires:       pulseaudio-utils
@@ -24,7 +27,7 @@ Turbo Recorder captures your screen and audio at the best quality your
 hardware can deliver. It probes the machine and configures everything for
 you: operating system, display server, CPU vendor, GPU, the best available
 hardware video encoder (NVIDIA NVENC, Intel QSV, VAAPI, AMD AMF, Apple
-VideoToolbox, or x264), screen resolution, and microphone / system-audio
+VideoToolbox, x264, or OpenH264), screen resolution, and microphone / system-audio
 sources. It then builds a quality-first FFmpeg pipeline and records.
 
 Two front-ends share one engine:
@@ -37,6 +40,9 @@ Two front-ends share one engine:
 %build
 # Generate the 256x256 raster icon from the scalable SVG source.
 rsvg-convert -w 256 -h 256 packaging/turborec.svg -o turborec-256.png
+
+%check
+python3 -m unittest discover -s tests -v
 
 %install
 rm -rf %{buildroot}
@@ -76,23 +82,14 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/%{name}.desktop
 %{_datadir}/icons/hicolor/scalable/apps/%{name}.svg
 %{_datadir}/icons/hicolor/256x256/apps/%{name}.png
 
-%post
-# Update the icon cache and the desktop database (non-fatal if missing).
-touch --no-create %{_datadir}/icons/hicolor &>/dev/null || :
-gtk-update-icon-cache %{_datadir}/icons/hicolor &>/dev/null || :
-update-desktop-database &>/dev/null || :
-
-%postun
-if [ $1 -eq 0 ] ; then
-    touch --no-create %{_datadir}/icons/hicolor &>/dev/null
-    gtk-update-icon-cache %{_datadir}/icons/hicolor &>/dev/null || :
-fi
-update-desktop-database &>/dev/null || :
-
-%posttrans
-gtk-update-icon-cache %{_datadir}/icons/hicolor &>/dev/null || :
-
 %changelog
+* Sun Sep 06 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.9.1-1
+- Add native BSD platform identities, X11/XWayland capture, sndio/OSS audio,
+  and FreeBSD package smoke coverage.
+- Fall back from x264 to a runtime-verified OpenH264 encoder for Fedora's
+  ffmpeg-free builds, rejecting the unusable noopenh264 shim.
+- Ship a deterministic complete source archive and a Tk-enabled Guix package.
+
 * Sun Sep 06 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.9.0-1
 - Default the GUI, CLI, and configuration model to best quality, automatic
   codec selection, 23 fps, and 4K output.

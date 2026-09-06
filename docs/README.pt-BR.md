@@ -4,16 +4,17 @@ O **Turbo Recorder** grava a tela, o microfone e o áudio do sistema com o
 FFmpeg. Ele detecta o sistema operacional, a tela, os dispositivos de áudio, a
 GPU e os codificadores disponíveis e oferece duas interfaces:
 
-Este guia corresponde ao **Turbo Recorder 3.9.0**.
+Este guia corresponde ao **Turbo Recorder 3.9.1**.
 
-- `turborec`: interface gráfica e linha de comando para Windows, macOS, Linux e
-  FreeBSD;
+- `turborec`: interface gráfica e linha de comando para Windows, macOS, Linux,
+  FreeBSD, OpenBSD, NetBSD e DragonFly;
 - `turborecorder`: linha de comando alternativa, voltada para Linux com X11 ou
   Wayland/wlroots.
 
-Para começar, use `turborec`. Esta página usa nomes de arquivos sem fixar uma
-versão; substitua `*` ou `VERSÃO` pelo número mostrado na
+Para começar, use `turborec`. Nos exemplos genéricos, substitua `*` ou `VERSÃO`
+pelo número mostrado na
 [página de lançamentos (Releases)](https://github.com/cristiancmoises/turborec/releases/latest).
+Os exemplos específicos deste lançamento usam 3.9.1.
 
 Ao abrir o aplicativo, o perfil inicial já prioriza qualidade: **Qualidade
 Best**, **Codec Auto**, **23 fps** e saída **4K (3840×2160)**. No modo Auto, o
@@ -21,6 +22,11 @@ Turbo Recorder escolhe o primeiro codificador por hardware realmente utilizável
 nesta ordem: **AV1 → HEVC/H.265 → H.264**. Se nenhum deles funcionar, usa H.264
 por software, que é a alternativa mais segura e compatível. Todos esses valores
 podem ser alterados pela GUI, CLI ou configuração JSON.
+
+A versão 3.9.1 mantém esse perfil e todas as correções recentes do Windows —
+nomes Unicode, identificadores estáveis do DirectShow, janelas nativas e
+coordenadas de vários monitores — e acrescenta detecção portátil dos quatro
+sistemas BSD sem anunciar dispositivos inexistentes.
 
 Documentos relacionados:
 
@@ -51,21 +57,26 @@ Documentos relacionados:
 | macOS | AVFoundation | AVFoundation | É necessário autorizar tela, microfone e câmera |
 | Linux X11 | `x11grab` | PulseAudio/PipeWire e V4L2 | `wmctrl` é opcional para listar janelas |
 | Linux Wayland/wlroots | `wf-recorder` | PipeWire/PulseAudio e V4L2 | Compatível com sway, Hyprland, river e outros compositores wlroots |
-| FreeBSD | caminho Unix/X11 | PulseAudio e dispositivos expostos ao FFmpeg | Python, FFmpeg e, para a GUI, Tk devem ser instalados separadamente |
+| FreeBSD | X11/XWayland (`x11grab`) | OSS; Pulse opcional; V4L2 quando disponível | Há pacote `.pkg`; Python, FFmpeg e Tk são instalados separadamente |
+| OpenBSD | X11/XWayland (`x11grab`) | sndio; Pulse opcional; V4L2 quando disponível | O tarball portátil usa as ferramentas nativas disponíveis |
+| NetBSD | X11/XWayland (`x11grab`) | OSS; Pulse opcional; V4L2 quando disponível | Use o tarball portátil e os pacotes do sistema |
+| DragonFly | X11/XWayland (`x11grab`) | OSS; Pulse opcional; V4L2 quando disponível | Use o tarball portátil e os pacotes do sistema |
 
 Requisitos quando não se usa o executável/instalador autossuficiente do Windows:
 
 - Python 3.8 ou mais recente;
 - FFmpeg disponível no `PATH`;
 - Tk para a interface gráfica; a CLI funciona sem Tk;
-- no Linux/FreeBSD, `pactl` é necessário para a detecção automática de
-  microfones e fontes de áudio PulseAudio/PipeWire; ainda é possível informar
-  um dispositivo manualmente pela CLI;
-- no Wayland/wlroots, `wf-recorder` e `swaymsg` ou `wlr-randr`.
+- no Linux, `pactl` é usado para detectar fontes PulseAudio/PipeWire;
+- nos BSDs, o microfone usa sndio ou OSS nativo quando o FFmpeg oferece o
+  backend e existe um nó de dispositivo real; `pactl` é opcional e necessário
+  apenas para descobrir uma fonte monitor do PulseAudio para o áudio do sistema;
+- no Linux com Wayland/wlroots, `wf-recorder` e `swaymsg` ou `wlr-randr`.
 
-> O suporte a Wayland é direcionado a compositores **wlroots**. Em sessões
-> Wayland do GNOME ou KDE, o método de captura pode não estar disponível. Nesse
-> caso, entre em uma sessão X11/Xorg ou use um compositor compatível.
+> O suporte nativo do Linux a Wayland é direcionado a compositores **wlroots**.
+> Em sessões Wayland do GNOME ou KDE, o método de captura pode não estar
+> disponível. Nesse caso, entre em uma sessão X11/Xorg ou use um compositor
+> compatível.
 
 ## Instalação
 
@@ -134,6 +145,27 @@ Em Wayland/wlroots, instale também `wf-recorder`. O pacote que fornece `pactl`
 normalmente se chama `pulseaudio-utils`; o nome pode variar conforme a
 distribuição.
 
+O Fedora pode fornecer `ffmpeg-free` sem `libx264`. No Turbo Recorder 3.9.1, os
+caminhos Auto, H.264 explícito, CPU e transmissão podem usar `libopenh264` como
+última alternativa H.264, mas somente depois de um teste real de codificação de
+um quadro. O pacote de compatibilidade `noopenh264`, que anuncia o codificador
+sem conseguir inicializá-lo, é rejeitado. Com o repositório
+`fedora-cisco-openh264` habilitado, a instalação normal pode obter a
+implementação real:
+
+```bash
+sudo dnf install ffmpeg-free
+```
+
+Se o `noopenh264` já estiver instalado, troque-o pela implementação funcional:
+
+```bash
+sudo dnf swap noopenh264 openh264
+```
+
+Se preferir, use outro pacote que forneça `/usr/bin/ffmpeg` com um codificador
+H.264 funcional.
+
 ### AppImage
 
 O AppImage é portátil, mas usa o Python, o Tk e o FFmpeg do sistema:
@@ -167,6 +199,32 @@ PREFIX="$HOME/.local" ./install.sh
 ```
 
 Adicione `$HOME/.local/bin` ao `PATH` para chamar apenas `turborec`.
+
+O lançamento também inclui `turborec-3.9.1-source.tar.gz`, um arquivo imutável
+com toda a árvore rastreada do código-fonte e os testes, destinado a quem mantém
+ports e pacotes de distribuições. Para instalar e usar o programa, prefira o
+tarball portátil `turborec-3.9.1.tar.gz` mostrado acima. Ao todo, o lançamento
+contém nove artefatos de plataforma, o arquivo completo do código-fonte e
+`SHA256SUMS`: 11 artefatos.
+
+### GNU Guix
+
+O arquivo `guix.scm` e o pack relocável incluem a saída `tk` do Python e validam
+que o módulo `_tkinter` pode ser importado. Portanto, a CLI e a GUI são os
+caminhos previstos nas duas formas de instalação:
+
+```bash
+guix package -f guix.scm
+turborec gui
+
+# ou o pack do lançamento
+sudo tar xf turborec-3.9.1-guix-x86_64.tar.gz -C /
+/bin/turborec gui
+```
+
+A CI valida a construção e a importação do Tk sem ambiente gráfico. Isso não
+equivale a um teste visual da GUI nem a um teste com dispositivos físicos de
+captura.
 
 ### macOS
 
@@ -207,10 +265,10 @@ executando o Turbo Recorder — Terminal, iTerm, Python ou o lançador usado —
 Feche e abra novamente o Terminal ou o aplicativo depois de alterar uma
 permissão.
 
-### FreeBSD
+### FreeBSD, OpenBSD, NetBSD e DragonFly
 
-Execute como `root` (diretamente, com `doas` ou com `sudo`, conforme a
-configuração local):
+No FreeBSD, instale primeiro o pacote nativo como `root` (diretamente, com
+`doas` ou com `sudo`, conforme a configuração local):
 
 ```sh
 pkg add ./turborec-*.pkg
@@ -220,23 +278,45 @@ turborec --version
 
 O pacote nativo do Turbo Recorder não força dependências de execução; por isso,
 Python e FFmpeg devem ser instalados separadamente. Para a interface gráfica,
-procure e instale o pacote Tk que corresponda à versão padrão do Python:
+procure e instale o pacote Tk correspondente ao Python:
 
 ```sh
 pkg search tkinter
 ```
 
-A detecção automática de áudio usa `pactl`. Instale e configure PulseAudio na
-sessão do usuário quando precisar de microfone ou áudio do sistema:
+No OpenBSD, instale os requisitos e use o tarball portátil:
 
 ```sh
-pkg install pulseaudio
-pactl info
+pkg_add python3 ffmpeg
+tar xzf turborec-3.9.1.tar.gz
+cd turborec-3.9.1
+doas ./install.sh
 ```
 
-Em X11, `xrandr`/`xdpyinfo` ajudam a detectar a tela e `wmctrl` permite listar
-janelas. Em uma sessão Wayland/wlroots, instale `wf-recorder` e `wlr-randr` ou
-use `swaymsg`.
+No NetBSD e no DragonFly, instale Python 3, FFmpeg e Tk pelos repositórios do
+sistema e use o mesmo tarball. Os nomes exatos dos pacotes Python/Tk podem
+acompanhar a versão padrão oferecida pelo sistema.
+
+O Turbo Recorder registra cada sistema como `freebsd`, `openbsd`, `netbsd` ou
+`dragonfly`, sem tratá-los como Linux. Em X11, `xrandr`/`xdpyinfo` ajudam a
+detectar a tela e `wmctrl` permite listar janelas. Em uma sessão Wayland, use
+XWayland; o backend nativo `wf-recorder` documentado neste guia é específico do
+Linux/wlroots.
+
+Para microfone, o programa prefere sndio no OpenBSD e OSS no FreeBSD, NetBSD e
+DragonFly, sempre conferindo antes se o FFmpeg contém esse backend e se o
+arquivo em `/dev` é realmente um dispositivo de caractere. Portanto, não é
+necessário instalar PulseAudio apenas para gravar o microfone. Para gravar o
+som do sistema, configure PulseAudio opcionalmente e confirme que existe uma
+fonte monitor real:
+
+```sh
+pactl info
+pactl list short sources
+```
+
+Uma webcam só aparece quando o FFmpeg oferece uma entrada V4L2 e um nó
+`/dev/video*` real e capturável está presente.
 
 ### A partir do código-fonte
 
@@ -395,9 +475,12 @@ turborec record -m video_mic --denoise medium
 turborec record -m video_mic --dry-run
 ```
 
-Os alvos dependem do backend. Linux/FreeBSD com X11 e Linux com
-Wayland/wlroots oferecem monitores, regiões e, conforme o compositor,
-janelas. No Windows, a listagem inclui a área de trabalho virtual, monitores e
+Os alvos dependem do backend. Linux e os quatro BSDs em uma sessão X11 oferecem
+tela, monitores, regiões e janelas visíveis. No XWayland dos BSDs, é possível
+capturar a tela/região exposta pelo servidor de compatibilidade, conforme a
+política do compositor. O Linux com Wayland/wlroots também oferece saídas,
+regiões e, conforme o compositor, janelas. No Windows, a listagem inclui a área
+de trabalho virtual, monitores e
 janelas nativas, inclusive quando um monitor fica à esquerda ou acima do
 principal. O AVFoundation no macOS seleciona telas completas. Use somente
 monitores e janelas realmente mostrados por `turborec targets`.
@@ -479,8 +562,9 @@ o FFmpeg consigam enxergar.
   o som e enviá-lo ao dispositivo virtual.
 - **Linux:** o PulseAudio ou a camada de compatibilidade Pulse do PipeWire
   normalmente cria uma fonte com final `.monitor` para cada saída.
-- **FreeBSD:** use uma fonte monitor/loopback disponibilizada pelo PulseAudio;
-  `pactl` permite conferir e selecionar essa fonte explicitamente.
+- **FreeBSD, OpenBSD, NetBSD e DragonFly:** sndio/OSS oferece entrada de
+  microfone, não retorno dos alto-falantes. Para o áudio do sistema, configure
+  uma fonte monitor real no PulseAudio; `pactl` permite conferi-la e selecioná-la.
 
 Depois de habilitar ou criar o loopback, feche e abra a aplicação ou atualize os
 dispositivos na GUI.
@@ -627,7 +711,7 @@ Em sway, Hyprland, river e outros compositores wlroots, instale `wf-recorder`.
 No GNOME/KDE Wayland, entre em uma sessão X11/Xorg se o backend wlroots não
 estiver disponível.
 
-### Linux/FreeBSD: nenhum dispositivo de áudio
+### Linux: nenhum dispositivo de áudio
 
 O Turbo Recorder consulta `pactl`. Primeiro confirme que ele alcança o servidor
 de áudio da sessão:
@@ -648,7 +732,29 @@ Procure uma fonte física para o microfone e uma fonte terminada em `.monitor`
 para o áudio do sistema. Execute o Turbo Recorder como o usuário da sessão
 gráfica, não como `root`, para que ele acesse o servidor de áudio correto.
 
-### Webcam no Linux/FreeBSD não aparece
+### BSD: nenhum dispositivo de áudio
+
+Confira quais entradas o FFmpeg realmente contém e quais nós existem:
+
+```sh
+ffmpeg -hide_banner -devices
+ls -l /dev/audio* /dev/dsp* 2>/dev/null
+turborec devices
+```
+
+No OpenBSD, procure `sndio`; no FreeBSD, NetBSD e DragonFly, procure `oss`.
+Mesmo que o nome do backend apareça, o Turbo Recorder só lista o microfone se o
+caminho correspondente resolver para um dispositivo de caractere real. Isso
+evita que diretórios como `/dev/sound` ou nomes presumidos sejam anunciados como
+fontes. Verifique também permissões e se outro programa mantém o dispositivo
+aberto.
+
+PulseAudio e `pactl` não são obrigatórios para o microfone nativo. Eles são
+necessários no BSD apenas quando você deseja usar fontes Pulse ou gravar áudio
+do sistema por uma fonte terminada em `.monitor`. Nós sndio/OSS não devem ser
+informados em `--system-device`.
+
+### Webcam no Linux ou BSD não aparece
 
 Confira se existe um dispositivo de vídeo e se o usuário tem permissão para
 abri-lo:
@@ -659,9 +765,10 @@ turborec cameras
 ```
 
 No Linux, o usuário pode precisar pertencer ao grupo que possui `/dev/videoN`
-e iniciar uma nova sessão depois da alteração. No FreeBSD, a webcam precisa ser
-exposta em um formato que o FFmpeg reconheça; isso pode exigir a configuração
-de `webcamd`/`cuse`, conforme o dispositivo.
+e iniciar uma nova sessão depois da alteração. Nos BSDs, a webcam só é listada
+se o FFmpeg oferecer `video4linux2`/`v4l2` e `/dev/videoN` for um dispositivo de
+caractere capturável. No FreeBSD, isso pode exigir a configuração de
+`webcamd`/`cuse`, conforme o dispositivo.
 
 ### `FFmpeg not found`
 

@@ -7,83 +7,162 @@
 ;;; This installs the `turborec` (Python CLI) and `turborecorder` (shell CLI)
 ;;; recorders with ffmpeg, wf-recorder (Wayland) and pulseaudio wrapped onto
 ;;; PATH, so screen/audio recording and OBS-style YouTube streaming work out of
-;;; the box.  The Tk GUI needs a Tk-enabled Python; Guix's default `python`
-;;; omits `_tkinter`, so on Guix use the CLI (`turborec record …`) — or the GUI
-;;; launcher documented in docs/TUTORIAL.md (§1, "GNU Guix").
+;;; the box.  Python's separate `tk` output is included and wrapped onto
+;;; GUIX_PYTHONPATH, so `turborec gui` works from a profile or Guix pack.
 
 (use-modules (guix packages)
              (guix build-system copy)
              (guix gexp)
              (guix git-download)
-             ((guix licenses) #:prefix license:)
+             ((guix licenses)
+              #:prefix license:)
+             (gnu packages base)
              (gnu packages bash)
+             (gnu packages freedesktop)
+             (gnu packages gawk)
+             (gnu packages pciutils)
              (gnu packages python)
              (gnu packages pulseaudio)
-             (gnu packages video))
+             (gnu packages video)
+             (gnu packages window-management)
+             (gnu packages xdisorg)
+             (gnu packages xorg))
 
-(define %source-dir (dirname (current-filename)))
+(define %source-dir
+  (dirname (current-filename)))
 
 (define turborec
   (package
     (name "turborec")
-    (version "3.9.0")
+    (version "3.9.1")
     (source
      (let ((tracked? (git-predicate %source-dir)))
-       (local-file %source-dir "turborec-checkout"
+       (local-file %source-dir
+                   "turborec-checkout"
                    #:recursive? #t
                    ;; Keep generated build/dist files out of the source, while
-                   ;; allowing the newly created PT-BR guide to be tested before
-                   ;; its first commit. Once committed, tracked? selects it too.
-                   #:select?
-                   (lambda (file stat)
-                     (or (tracked? file stat)
-                         (string=? (basename file)
-                                   "README.pt-BR.md"))))))
+                   ;; allowing newly created release files to be tested before
+                   ;; their first commit.  Once committed, tracked? selects them.
+                   #:select? (lambda (file stat)
+                               (or (tracked? file stat)
+                                   (member (basename file)
+                                           '("README.pt-BR.md"
+                                             "build-source-tarball.sh")))))))
     (build-system copy-build-system)
     (arguments
      (list
       #:install-plan
-      #~'(("turborec.py"   "bin/turborec")
+      #~'(("turborec.py" "bin/turborec")
           ("turborecorder" "bin/turborecorder")
+          ("packaging/turborec.desktop" "share/applications/turborec.desktop")
+          ("packaging/turborec.svg"
+           "share/icons/hicolor/scalable/apps/turborec.svg")
           ("README.md" "share/doc/turborec/README.md")
+          ("CHANGELOG.md" "share/doc/turborec/CHANGELOG.md")
+          ("SECURITY.md" "share/doc/turborec/SECURITY.md")
           ("docs/TUTORIAL.md" "share/doc/turborec/docs/TUTORIAL.md")
-          ("docs/README.pt-BR.md"
-           "share/doc/turborec/docs/README.pt-BR.md"))
+          ("docs/README.pt-BR.md" "share/doc/turborec/docs/README.pt-BR.md")
+          ("docs/turborec-gui.png" "share/doc/turborec/docs/turborec-gui.png"))
       #:phases
       #~(modify-phases %standard-phases
+          (add-after 'unpack 'check
+            (lambda* (#:key inputs tests? #:allow-other-keys)
+              (when tests?
+                (let ((python-tk (dirname (car (find-files (assoc-ref inputs
+                                                            "python:tk")
+                                                           "^_tkinter.*\\.so$")))))
+                  (setenv "GUIX_PYTHONPATH" python-tk)
+                  (invoke "python3" "-m" "py_compile" "turborec.py")
+                  (invoke "python3"
+                          "-m"
+                          "unittest"
+                          "discover"
+                          "-s"
+                          "tests"
+                          "-v")
+                  (invoke "python3" "-c"
+                          "import _tkinter, tkinter; tkinter.Tcl()")
+                  (invoke "bash" "-n" "turborecorder")
+                  (invoke "desktop-file-validate" "packaging/turborec.desktop")))))
           (add-after 'install 'patch-and-wrap
             (lambda* (#:key inputs outputs #:allow-other-keys)
-              (let* ((out    (assoc-ref outputs "out"))
-                     (bin    (string-append out "/bin"))
-                     (sh     (search-input-file inputs "/bin/bash"))
-                     (python (dirname (search-input-file inputs "/bin/python3")))
-                     (tools  (map (lambda (pkg)
-                                    (string-append (assoc-ref inputs pkg) "/bin"))
-                                  '("ffmpeg" "wf-recorder" "pulseaudio")))
-                     (progs  (list (string-append bin "/turborec")
-                                   (string-append bin "/turborecorder"))))
-                ;; Run each front-end under a hermetic PATH (its own python3,
-                ;; ffmpeg, wf-recorder and pactl), so it works regardless of the
-                ;; user's environment.
-                (for-each
-                 (lambda (f)
-                   (chmod f #o755)
-                   (patch-shebang f)
-                   (wrap-program f
-                     #:sh sh
-                     `("PATH" ":" prefix ,(cons python tools))))
-                 progs)))))))
-    (inputs (list bash-minimal ffmpeg wf-recorder pulseaudio python))
+              (define (command-directory command)
+                (dirname (search-input-file inputs
+                                            (string-append "/bin/" command))))
+
+              (let* ((out (assoc-ref outputs "out"))
+                     (bin (string-append out "/bin"))
+                     (sh (search-input-file inputs "/bin/bash"))
+                     (turborec (string-append bin "/turborec"))
+                     (turborecorder (string-append bin "/turborecorder"))
+                     (python-tk (dirname (car (find-files (assoc-ref inputs
+                                                           "python:tk")
+                                                          "^_tkinter.*\\.so$"))))
+                     (path (map command-directory
+                                '("awk" "bash"
+                                  "cat"
+                                  "date"
+                                  "ffmpeg"
+                                  "grep"
+                                  "head"
+                                  "lspci"
+                                  "mkdir"
+                                  "pactl"
+                                  "python3"
+                                  "sed"
+                                  "sh"
+                                  "tr"
+                                  "wf-recorder"
+                                  "wlr-randr"
+                                  "wmctrl"
+                                  "xdg-open"
+                                  "xdpyinfo"
+                                  "xrandr"))))
+                (for-each (lambda (program)
+                            (chmod program #o755)
+                            (patch-shebang program))
+                          (list turborec turborecorder))
+                (wrap-program turborec
+                  #:sh sh
+                  `("PATH" ":" prefix
+                    ,path)
+                  `("GUIX_PYTHONPATH" ":" prefix
+                    (,python-tk)))
+                (wrap-program turborecorder
+                  #:sh sh
+                  `("PATH" ":" prefix
+                    ,path)))))
+          (add-after 'patch-and-wrap 'check-installed-commands
+            (lambda _
+              (invoke (string-append #$output "/bin/turborec") "--version")
+              (invoke (string-append #$output "/bin/turborecorder") "-h"))))))
+    (native-inputs (list desktop-file-utils))
+    (inputs `(("bash-minimal" ,bash-minimal)
+              ("coreutils-minimal" ,coreutils-minimal)
+              ("ffmpeg" ,ffmpeg)
+              ("gawk" ,gawk)
+              ("grep" ,grep)
+              ("pciutils" ,pciutils)
+              ("pulseaudio" ,pulseaudio)
+              ("python" ,python)
+              ("python:tk" ,python "tk")
+              ("sed" ,sed)
+              ("wf-recorder" ,wf-recorder)
+              ("wlr-randr" ,wlr-randr)
+              ("wmctrl" ,wmctrl)
+              ("xdg-utils" ,xdg-utils)
+              ("xdpyinfo" ,xdpyinfo)
+              ("xrandr" ,xrandr)))
     (home-page "https://github.com/cristiancmoises/turborec")
-    (synopsis "State-of-the-art hardware-accelerated screen and audio recorder")
+    (synopsis "Screen and audio recorder using FFmpeg")
     (description
-     "Turbo Recorder captures your screen and audio at the best quality your
-hardware can deliver.  It auto-detects the operating system, display server,
-CPU/GPU, the best hardware video encoder, screen resolution and audio devices,
-then records or live-streams (OBS-style RTMP to YouTube) with a quality-first
-FFmpeg pipeline.  It ships two front-ends over one engine: the cross-platform
-@code{turborec} (Python CLI, plus a Tk GUI where a Tk-enabled Python is present)
-and the lightweight @code{turborecorder} shell CLI for X11.")
-    (license license:gpl3+)))
+     "Turbo Recorder captures the screen, microphone, and system audio using
+FFmpeg.  It detects available hardware video encoders and falls back to
+software encoding when needed.  Its Python front-end provides a command-line
+interface and a Tk graphical interface, while @command{turborecorder} provides
+a Bash interface.  X11 capture uses FFmpeg directly; wlroots-based Wayland
+capture uses @command{wf-recorder}.  The program can also capture individual
+monitors, windows, or regions, overlay a camera, and stream over RTMP.")
+    (license license:gpl3)))
 
 turborec

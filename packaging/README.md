@@ -4,6 +4,11 @@ This directory builds every distributable: the Debian `.deb`, the RPM, the
 AppImage, a portable tarball for **any Unix (including the BSDs)**, and a native
 **FreeBSD `.pkg`**.
 
+Every release also publishes `turborec-<version>-source.tar.gz`: an immutable,
+reproducible archive of the complete tracked source tree, including tests. Use
+it for distribution packaging; `turborec-<version>.tar.gz` is the portable
+end-user installer.
+
 `turborec.py`'s `VERSION` is the release source of truth. The tarball and
 FreeBSD builders derive it automatically; package formats that require literal
 metadata are checked against it by `tests/test_release_metadata.py`. The GitHub
@@ -30,7 +35,7 @@ Actions release workflow builds the Linux artifacts on
   `uninstall.sh` honouring `PREFIX` (default `/usr/local`) and `DESTDIR`:
 
   ```sh
-  tar xzf turborec-3.9.0.tar.gz && cd turborec-3.9.0
+  tar xzf turborec-3.9.1.tar.gz && cd turborec-3.9.1
   sudo ./install.sh                  # → /usr/local
   PREFIX="$HOME/.local" ./install.sh # per-user
   ```
@@ -38,10 +43,15 @@ Actions release workflow builds the Linux artifacts on
 - **`build-freebsd-pkg.sh`** → `dist/turborec-<version>.pkg`. Must run on FreeBSD
   (uses `pkg create`). Stages the tree under `${PREFIX}`, generates a plist +
   `+MANIFEST`, and emits a package installable with
-  `pkg add ./turborec-3.9.0.pkg`. Runtime prerequisites (`python3`, `ffmpeg`,
-  optional `wf-recorder`) are documented in the package description rather than
+  `pkg add ./turborec-3.9.1.pkg`. Runtime prerequisites (`python3`, `ffmpeg`,
+  and Tk for the GUI) are documented in the package description rather than
   declared as hard deps, so the file installs cleanly on any FreeBSD release
   (`pkg install python3 ffmpeg`).
+
+- **`build-source-tarball.sh`** → `dist/turborec-<version>-source.tar.gz`.
+  Archives exactly `HEAD` with `git archive` and deterministic gzip metadata;
+  it refuses staged or tracked working-tree edits so a release cannot omit
+  uncommitted source accidentally.
 
 ## Publishing release binaries to Forgejo + Codeberg
 
@@ -55,16 +65,17 @@ to the Forgejo and Codeberg releases, run:
 # downloads the tag's assets from the GitHub release, then attaches them to the
 # matching Forgejo + Codeberg releases (creating the release if needed)
 FJTOKEN=<forgejo-token> CBTOKEN=<codeberg-token> \
-    packaging/publish-release.sh v3.9.0
+    packaging/publish-release.sh v3.9.1
 
 # or attach files from a local directory instead of downloading
-FJTOKEN=… CBTOKEN=… packaging/publish-release.sh v3.9.0 dist/
+FJTOKEN=… CBTOKEN=… packaging/publish-release.sh v3.9.1 dist/
 ```
 
 Tokens are read only from the environment. The script requires all **nine
-platform artifacts** (including both Windows executables and both RPMs), mirrors
-`SHA256SUMS`, verifies remote byte sizes, and fails on an incomplete upload. It
-is idempotent when re-run.
+platform payloads** (including both Windows executables and both RPMs), the
+complete source archive, and `SHA256SUMS`: **11 release assets in total**. It
+mirrors the checksum file, verifies remote byte sizes, and fails on an
+incomplete upload. It is idempotent when re-run.
 
 ## Debian `.deb` layout
 
@@ -100,7 +111,7 @@ The script:
    - `README.md`               -> `/usr/share/doc/turborec/README.md`
 2. Builds the control tree (`control` with computed `Installed-Size`,
    `md5sums`, `postinst`, `postrm`).
-3. Emits `dist/turborec_3.9.0_all.deb`.
+3. Emits `dist/turborec_3.9.1_all.deb`.
 
 ### dpkg-deb vs. portable mode
 
@@ -117,16 +128,31 @@ pre-rendered `assets/turborec.png` exists, that is used instead.
 
 ## Runtime dependencies
 
-`ffmpeg`, `python3 (>= 3.8)`, Tk, and `pactl`. On Debian/Ubuntu Tk comes from
-`python3-tk`; the `.deb` also installs `pulseaudio-utils` for `pactl`. On RPM
-distributions the equivalents are `python3-tkinter` and `pulseaudio-utils`.
+All non-self-contained builds need `ffmpeg`, Python 3.8+, and Tk for the GUI.
+On Debian/Ubuntu Tk comes from `python3-tk`; the `.deb` also installs
+`pulseaudio-utils` for Linux Pulse/PipeWire discovery. On RPM distributions Tk
+is normally `python3-tkinter`; the RPM accepts any provider of
+`/usr/bin/ffmpeg`, including Fedora's `ffmpeg-free`. When `libx264` is absent,
+Turbo Recorder can use `libopenh264` only after its one-frame probe succeeds;
+the `noopenh264` shim is rejected. With `fedora-cisco-openh264` enabled, repair
+a stub installation with `sudo dnf swap noopenh264 openh264`.
+
+BSD microphone discovery does not require PulseAudio: OpenBSD prefers an
+FFmpeg sndio input, while FreeBSD, NetBSD and DragonFly prefer OSS. Each source
+must be backed by a real character-device node. `pactl` is optional on BSD and
+is needed only for available Pulse sources, including the monitor source
+required for desktop/system audio. BSD screen capture uses X11/XWayland.
+
+The Guix definition includes Python's `tk` output and validates `_tkinter`
+during the build. This validates the intended CLI/GUI runtime composition in a
+headless environment; it does not claim a visual GUI test.
 
 ## Verify a built package
 
 ```bash
 # inspect members and metadata without installing
-ar t dist/turborec_3.9.0_all.deb
-mkdir -p /tmp/deb && ar x dist/turborec_3.9.0_all.deb --output /tmp/deb
+ar t dist/turborec_3.9.1_all.deb
+mkdir -p /tmp/deb && ar x dist/turborec_3.9.1_all.deb --output /tmp/deb
 tar -tvf /tmp/deb/data.tar.xz
 tar -xOf /tmp/deb/control.tar.gz ./control
 ```

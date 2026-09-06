@@ -5,6 +5,53 @@ All notable changes to Turbo Recorder are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.1] — 2026-09-06
+
+### Fixed
+- **BSD is detected as BSD.** FreeBSD, OpenBSD, NetBSD and DragonFly now retain
+  distinct operating-system identities instead of falling through to Linux.
+  Their supported screen path uses FFmpeg `x11grab`: X11 retains screen,
+  monitor, visible-window and signed-region targets, while XWayland can capture
+  the screen/region visible through the compatibility server.
+- **Capability-first BSD audio.** Turbo Recorder reads the actual FFmpeg input
+  devices before choosing Pulse, sndio or OSS. Pulse is used only when its
+  FFmpeg input, `pactl` connection and real sources work; OpenBSD otherwise
+  prefers sndio, and FreeBSD/NetBSD/DragonFly prefer OSS. Native candidates
+  must resolve to character-device nodes, and sndio/OSS inputs are never
+  invented as desktop-audio monitors.
+- **Capability-aware BSD cameras.** `/dev/video*` devices are offered only when
+  FFmpeg contains V4L2 and the path resolves to a real, capturable device.
+- **Fedora H.264 fallback.** If `libx264` is absent from a stock `ffmpeg-free`
+  build, automatic recording, explicit H.264, CPU mode and RTMP streaming can
+  use `libopenh264` only after a real one-frame initialization succeeds. An
+  advertised but unusable Fedora `noopenh264` shim is rejected even when the
+  general encoder-probe opt-out is set; OpenH264 uses its supported
+  quality/bitrate controls rather than x264 CRF or preset options.
+
+### Packaging and validation
+- Added `turborec-3.9.1-source.tar.gz`, a deterministic archive of the complete
+  tracked source tree including tests, for BSD ports and other downstream
+  packagers. It is distinct from the portable end-user tarball.
+- The release gate now requires nine platform payloads, the complete source
+  archive and `SHA256SUMS` — 11 assets total — before publication/mirroring.
+- The RPM accepts any provider of `/usr/bin/ffmpeg`, including Fedora's
+  `ffmpeg-free`. The Guix definition includes Python's `tk` output and validates
+  that `_tkinter` imports.
+- Added mocked coverage for all four BSD identities, realistic FFmpeg input
+  listings, audio preference/fallback, device-node filtering, X11 arguments and
+  targets, camera safeguards, and automatic mode. The FreeBSD release job also
+  smoke-tests stock FFmpeg, OS detection and a video dry run in a VM. These are
+  automated capability/package checks, not physical BSD or Windows capture
+  hardware tests.
+
+### Compatibility and documentation
+- The v3.9.0 quality-first defaults remain unchanged: **Best**, **Auto**, the
+  literal integer **23 fps**, and **4K (3840×2160)**. Recent Windows Unicode
+  DirectShow IDs, native HWND and signed multi-monitor fixes are retained.
+- Updated the English guide, Brazilian Portuguese documentation, packaging
+  notes and website for the BSD audio model, Fedora fallback, Guix GUI runtime,
+  new source archive and v3.9.1 downloads.
+
 ## [3.9.0] — 2026-09-06
 
 ### Changed

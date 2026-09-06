@@ -47,6 +47,19 @@ class ReleaseMetadataTests(unittest.TestCase):
             encoding="utf-8")
         self.assertIn(f"default: v{turborec.VERSION}", workflow)
 
+    def test_release_includes_distribution_source_archive(self):
+        name = f"turborec-${{VERSION}}-source.tar.gz"
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(
+            encoding="utf-8")
+        publisher = (ROOT / "packaging/publish-release.sh").read_text(
+            encoding="utf-8")
+        self.assertIn("packaging/build-source-tarball.sh", workflow)
+        self.assertGreaterEqual(workflow.count(name), 2)
+        self.assertIn(name, publisher)
+        self.assertTrue(
+            (ROOT / "packaging/build-source-tarball.sh").stat().st_mode
+            & 0o111)
+
     def test_website_static_assets_exist(self):
         for relative in (
             "website/favicon.ico",

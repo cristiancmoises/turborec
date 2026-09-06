@@ -41,6 +41,187 @@ class CommandOutputTests(unittest.TestCase):
                 tr.run_cmd(["ffmpeg"], timeout=25), "Mixagem estéreo")
 
 
+class BsdCapabilityTests(unittest.TestCase):
+    def test_each_bsd_has_a_distinct_os_identity(self):
+        expected = {
+            "FreeBSD": "freebsd",
+            "OpenBSD": "openbsd",
+            "NetBSD": "netbsd",
+            "DragonFly": "dragonfly",
+        }
+        for reported, detected in expected.items():
+            with self.subTest(reported=reported), \
+                    mock.patch.object(tr.platform, "system", return_value=reported):
+                self.assertEqual(tr.detect_os(), detected)
+
+    def test_ffmpeg_indev_parser_handles_realistic_flags_and_headers(self):
+        listing = """
+Devices:
+ D. = Demuxing supported
+ .E = Muxing supported
+ ---
+ D  sndio           sndio audio capture
+ DE oss             OSS (Open Sound System) playback and capture
+ DE pulse           Pulse audio output
+ D  video4linux2,v4l2 Video4Linux2 device grab
+  E caca            caca output device
+"""
+        self.assertEqual(
+            tr._parse_ffmpeg_indevs(listing),
+            {"sndio", "oss", "pulse", "video4linux2", "v4l2"},
+        )
+
+    def test_bsd_prefers_usable_pulse_with_real_sources(self):
+        pulse_mic = tr.AudioDevice(
+            "pulse-mic", "Pulse microphone", backend="pulse")
+        pulse_result = ([pulse_mic], [], pulse_mic, None)
+        with mock.patch.object(tr.shutil, "which", return_value="/usr/bin/pactl"), \
+                mock.patch.object(
+                    tr, "_detect_audio_linux", return_value=pulse_result), \
+                mock.patch.object(tr, "_bsd_audio_nodes") as native_nodes:
+            result = tr._detect_audio_bsd(
+                "openbsd", {"pulse", "sndio", "oss"})
+        self.assertEqual(result, pulse_result)
+        native_nodes.assert_not_called()
+
+    def test_openbsd_falls_back_from_unusable_pulse_to_sndio(self):
+        def nodes(_os_name, backend):
+            return ["/dev/audio0"] if backend == "sndio" else ["/dev/dsp0"]
+
+        with mock.patch.object(tr.shutil, "which", return_value="/usr/bin/pactl"), \
+                mock.patch.object(
+                    tr, "_detect_audio_linux",
+                    return_value=([], [], None, None)), \
+                mock.patch.object(tr, "_bsd_audio_nodes", side_effect=nodes):
+            mics, monitors, default_mic, default_monitor = \
+                tr._detect_audio_bsd("openbsd", {"pulse", "sndio", "oss"})
+        self.assertEqual(mics[0].backend, "sndio")
+        self.assertEqual(mics[0].id, "/dev/audio0")
+        self.assertEqual(monitors, [])
+        self.assertIs(default_mic, mics[0])
+        self.assertIsNone(default_monitor)
+
+    def test_openbsd_falls_through_missing_sndio_node_to_oss(self):
+        with mock.patch.object(tr.shutil, "which", return_value=None), \
+                mock.patch.object(
+                    tr, "_bsd_audio_nodes",
+                    side_effect=lambda _os, backend: (
+                        [] if backend == "sndio" else ["/dev/dsp0"])):
+            mics, monitors, default_mic, default_monitor = \
+                tr._detect_audio_bsd("openbsd", {"sndio", "oss"})
+        self.assertEqual(mics[0].backend, "oss")
+        self.assertEqual(monitors, [])
+        self.assertIs(default_mic, mics[0])
+        self.assertIsNone(default_monitor)
+
+    def test_bsd_with_no_real_native_nodes_reports_no_audio(self):
+        with mock.patch.object(tr.shutil, "which", return_value=None), \
+                mock.patch.object(tr, "_bsd_audio_nodes", return_value=[]):
+            result = tr._detect_audio_bsd("freebsd", {"oss", "sndio"})
+        self.assertEqual(result, ([], [], None, None))
+
+    def test_other_bsds_prefer_oss_and_auto_mode_uses_only_real_mic(self):
+        for os_name in ("freebsd", "netbsd", "dragonfly"):
+            with self.subTest(os_name=os_name), \
+                    mock.patch.object(tr.shutil, "which", return_value=None), \
+                    mock.patch.object(
+                        tr, "_bsd_audio_nodes",
+                        side_effect=lambda _os, backend: (
+                            ["/dev/dsp0"] if backend == "oss" else
+                            ["/dev/audio0"])):
+                mics, monitors, default_mic, default_monitor = \
+                    tr._detect_audio_bsd(os_name, {"sndio", "oss"})
+            self.assertEqual(mics[0].backend, "oss")
+            self.assertEqual(monitors, [])
+            self.assertIsNone(default_monitor)
+            self.assertEqual(
+                tr._automatic_mode(tr.SystemInfo(
+                    os=os_name, default_mic=default_mic)),
+                "video_mic",
+            )
+
+    def test_native_node_scan_excludes_directories_and_non_devices(self):
+        candidates = ["/dev/dsp0", "/dev/sound", "/dev/dspctl"]
+
+        def fake_stat(path):
+            if path == "/dev/dsp0":
+                return mock.Mock(st_mode=tr.stat.S_IFCHR)
+            if path == "/dev/sound":
+                return mock.Mock(st_mode=tr.stat.S_IFDIR)
+            raise FileNotFoundError(path)
+
+        with mock.patch.object(tr.glob, "glob", return_value=candidates), \
+                mock.patch.object(tr.os, "stat", side_effect=fake_stat):
+            self.assertEqual(tr._bsd_audio_nodes("freebsd", "oss"),
+                             ["/dev/dsp0"])
+
+    def test_audio_args_follow_each_device_backend(self):
+        si = tr.SystemInfo(os="freebsd")
+        for backend, path in (("pulse", "source"),
+                              ("sndio", "/dev/audio0"),
+                              ("oss", "/dev/dsp0")):
+            with self.subTest(backend=backend):
+                args = tr.audio_input_args(
+                    si, tr.AudioDevice(path, path, backend=backend))
+                self.assertEqual(args[1], backend)
+                self.assertEqual(args[-1], path)
+
+    def test_bsd_x11_screen_and_targets_use_existing_x11_path(self):
+        enc = tr.EncoderChoice("libx264", "software", "h264")
+        si = tr.SystemInfo(
+            os="freebsd", display_server="x11", screen="1920x1080")
+        with mock.patch.dict(tr.os.environ, {"DISPLAY": ":1"}):
+            _pre, args = tr.screen_input_args(
+                si, 23, "1280x720+10+20", enc)
+        self.assertEqual(args[-1], ":1+10,20")
+        self.assertIn("x11grab", args)
+
+        monitors = [
+            tr.CaptureTarget("monitor", "one"),
+            tr.CaptureTarget("monitor", "two"),
+        ]
+        windows = [tr.CaptureTarget("window", "terminal")]
+        with mock.patch.object(
+                tr, "_detect_monitors_x11", return_value=monitors), \
+                mock.patch.object(
+                    tr, "_detect_windows_x11", return_value=windows):
+            targets = tr.detect_capture_targets(si)
+        self.assertEqual([target.kind for target in targets],
+                         ["screen", "monitor", "monitor", "window"])
+
+    def test_bsd_camera_requires_backend_and_real_device(self):
+        spec = tr.RecordSpec(mode="video_only", camera="/dev/video0")
+        with self.assertRaises(SystemExit):
+            tr.camera_input_args(tr.SystemInfo(os="freebsd"), spec)
+
+        si = tr.SystemInfo(os="freebsd", indevs={"video4linux2", "v4l2"})
+        with mock.patch.object(tr, "_is_character_device", return_value=True):
+            args = tr.camera_input_args(si, spec)
+        self.assertEqual(args[1], "v4l2")
+        self.assertEqual(args[-1], "/dev/video0")
+
+        with mock.patch.object(tr.glob, "glob", return_value=["/dev/video0"]), \
+                mock.patch.object(tr, "_is_character_device", return_value=True), \
+                mock.patch.object(tr, "run_cmd", return_value="640x480"):
+            cameras = tr.detect_cameras(si)
+        self.assertEqual([(cam.id, cam.label) for cam in cameras],
+                         [("/dev/video0", "video0")])
+
+        unavailable = tr.SystemInfo(os="freebsd", indevs={"oss"})
+        with mock.patch.object(tr.glob, "glob") as camera_glob:
+            self.assertEqual(tr.detect_cameras(unavailable), [])
+        camera_glob.assert_not_called()
+
+    def test_explicit_bsd_system_monitor_is_not_invented(self):
+        si = tr.SystemInfo(os="freebsd", indevs={"oss"})
+        args = argparse.Namespace(
+            mic_device=None, system_device="/dev/dsp0")
+        with mock.patch.object(
+                tr, "_bsd_audio_nodes", return_value=["/dev/dsp0"]), \
+                self.assertRaises(SystemExit):
+            tr._resolve_audio_devices(si, args)
+
+
 class DirectShowParserTests(unittest.TestCase):
     def test_structured_sources_keep_unique_ids_labels_and_types(self):
         devices = tr._parse_dshow_sources(DSHOW_SOURCES)
@@ -315,6 +496,121 @@ class DefaultsAndShutdownTests(unittest.TestCase):
                 side_effect=lambda _si, name, _kind: name == "h264_qsv"):
             choice = tr.choose_encoder(si, "h264")
         self.assertEqual((choice.name, choice.kind), ("h264_qsv", "qsv"))
+
+
+class OpenH264FallbackTests(unittest.TestCase):
+    def setUp(self):
+        tr._ENCODER_PROBE_CACHE.clear()
+
+    def tearDown(self):
+        tr._ENCODER_PROBE_CACHE.clear()
+
+    def test_libx264_stays_preferred_without_an_initialization_probe(self):
+        si = tr.SystemInfo(
+            os="linux", ffmpeg="/test/ffmpeg",
+            encoders={"libx264", "libopenh264"})
+        with mock.patch.object(tr.subprocess, "run") as run:
+            automatic = tr.choose_encoder(si, "auto", backend="cpu")
+            explicit = tr.choose_encoder(si, "h264", backend="cpu")
+        self.assertEqual(automatic.name, "libx264")
+        self.assertEqual(explicit.name, "libx264")
+        run.assert_not_called()
+
+    def test_runtime_usable_openh264_serves_auto_and_explicit_cpu(self):
+        si = tr.SystemInfo(
+            os="linux", ffmpeg="/test/ffmpeg", encoders={"libopenh264"})
+        completed = subprocess.CompletedProcess([], 0)
+        with mock.patch.object(
+                tr.subprocess, "run", return_value=completed) as run:
+            automatic = tr.choose_encoder(si, "auto")
+            explicit = tr.choose_encoder(si, "h264", backend="cpu")
+        self.assertEqual(
+            (automatic.name, automatic.kind, automatic.codec),
+            ("libopenh264", "software", "h264"),
+        )
+        self.assertEqual(explicit.name, "libopenh264")
+        self.assertEqual(run.call_count, 1)  # the successful probe is cached
+
+    def test_broken_advertised_openh264_is_rejected_even_when_probes_skipped(self):
+        si = tr.SystemInfo(
+            os="linux", ffmpeg="/test/ffmpeg", encoders={"libopenh264"})
+        completed = subprocess.CompletedProcess([], 1)
+        with mock.patch.dict(
+                os.environ, {"TURBOREC_SKIP_ENCODER_PROBE": "1"}), \
+                mock.patch.object(
+                    tr.subprocess, "run", return_value=completed) as run, \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            with self.assertRaises(SystemExit):
+                tr.choose_encoder(si, "auto", backend="cpu")
+        self.assertIn("libx264/libopenh264", stderr.getvalue())
+        self.assertIn("dnf swap noopenh264 openh264", stderr.getvalue())
+        probe = run.call_args.args[0]
+        self.assertIn("color=c=black:s=256x256:r=1", probe)
+        self.assertIn("libopenh264", probe)
+        self.assertIn("yuv420p", probe)
+
+    def test_openh264_recording_args_use_supported_quality_bitrate_controls(self):
+        enc = tr.EncoderChoice("libopenh264", "software", "h264")
+        best = tr.encoder_args(enc, "best", 3840 * 2160 * 23 / 1e6)
+        compact = tr.encoder_args(enc, "compact", 3840 * 2160 * 23 / 1e6)
+        self.assertEqual(best[best.index("-rc_mode") + 1], "quality")
+        self.assertIn("-b:v", best)
+        self.assertIn("-maxrate", best)
+        self.assertIn("high", best)
+        for unsupported in ("-crf", "-preset", "-tune", "-bufsize"):
+            self.assertNotIn(unsupported, best)
+        best_k = int(best[best.index("-b:v") + 1][:-1])
+        compact_k = int(compact[compact.index("-b:v") + 1][:-1])
+        self.assertGreater(best_k, compact_k)
+
+    def test_openh264_rtmp_args_use_bitrate_mode_without_x264_options(self):
+        enc = tr.EncoderChoice("libopenh264", "software", "h264")
+        args = tr._stream_encoder_args(enc, 6800, 23)
+        self.assertEqual(args[args.index("-rc_mode") + 1], "bitrate")
+        self.assertEqual(args[args.index("-g") + 1], "46")
+        self.assertIn("-b:v", args)
+        self.assertIn("-maxrate", args)
+        self.assertIn("-bf", args)
+        for unsupported in ("-crf", "-preset", "-tune", "-bufsize",
+                            "-keyint_min"):
+            self.assertNotIn(unsupported, args)
+
+    def test_wayland_openh264_params_avoid_x264_only_options(self):
+        si = tr.SystemInfo(
+            os="linux", display_server="wayland", ffmpeg="/test/ffmpeg",
+            encoders={"libopenh264"})
+        spec = tr.RecordSpec(mode="video_only", backend="cpu")
+        with mock.patch.object(
+                tr, "_hardware_encoder_usable", return_value=True):
+            codec, params, kind, _device = tr.wf_codec(si, spec)
+        self.assertEqual((codec, kind), ("libopenh264", "software"))
+        self.assertIn("rc_mode=quality", params)
+        self.assertTrue(any(item.startswith("b=") for item in params))
+        self.assertFalse(any(
+            item.startswith(("crf=", "preset=", "tune=", "bufsize="))
+            for item in params))
+
+    def test_wayland_stream_intermediate_uses_openh264_bitrate_mode(self):
+        si = tr.SystemInfo(
+            os="linux", display_server="wayland", ffmpeg="/test/ffmpeg",
+            encoders={"libopenh264"}, wayland_recorder="/usr/bin/wf-recorder",
+            wl_default_output="DP-1")
+        spec = tr.RecordSpec(
+            mode="video_only", backend="cpu",
+            stream_url="rtmps://example.invalid/live/key")
+        with mock.patch.object(
+                tr, "_hardware_encoder_usable", return_value=True):
+            plan = tr._build_wayland_plan(
+                si, spec, preview=True, out_dir="/unused",
+                wants_mic=False, wants_sys=False)
+        video_cmd = plan.procs[0][1]
+        self.assertEqual(video_cmd[video_cmd.index("-c") + 1], "libopenh264")
+        params = [video_cmd[index + 1]
+                  for index, arg in enumerate(video_cmd) if arg == "-p"]
+        self.assertIn("rc_mode=bitrate", params)
+        self.assertFalse(any(
+            item.startswith(("crf=", "preset=", "tune=", "bufsize="))
+            for item in params))
 
 
 class DurationParsingTests(unittest.TestCase):

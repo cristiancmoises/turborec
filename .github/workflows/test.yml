@@ -44,3 +44,25 @@ jobs:
           bash -n packaging/build-rpm.sh
           bash -n packaging/build-appimage.sh
           bash -n packaging/publish-release.sh
+
+  freebsd:
+    name: FreeBSD / native capabilities
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Test inside FreeBSD
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg install -y python3 ffmpeg
+          run: |
+            set -eu
+            python3 -m py_compile turborec.py
+            python3 -m unittest discover -s tests -v
+            python3 turborec.py --version
+            ffmpeg -hide_banner -devices 2>&1 | grep -q 'oss'
+            python3 turborec.py detect --json > detect.json
+            python3 -c 'import json; d=json.load(open("detect.json")); assert d["os"] == "freebsd"'
