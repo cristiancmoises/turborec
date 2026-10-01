@@ -39,10 +39,10 @@
 Name "Turbo Recorder ${VERSION}"
 OutFile "..\dist\Turbo_Recorder-${VERSION}-windows-x64-setup.exe"
 Unicode True
-RequestExecutionLevel admin
+RequestExecutionLevel user
 
-InstallDir "$PROGRAMFILES64\Turbo Recorder"
-InstallDirRegKey HKLM "Software\Turbo Recorder" "InstallDir"
+InstallDir "$LOCALAPPDATA\Programs\Turbo Recorder"
+InstallDirRegKey HKCU "Software\Turbo Recorder" "InstallDir"
 
 ; ---- MUI pages ---------------------------------------------------------------
 !define MUI_ABORTWARNING
@@ -62,6 +62,7 @@ InstallDirRegKey HKLM "Software\Turbo Recorder" "InstallDir"
 
 ; ---- installer sections ------------------------------------------------------
 Section "Install" SecMain
+  SetShellVarContext current
   SetOutPath "$INSTDIR"
 
   ; Engine and bundled binaries.
@@ -86,6 +87,7 @@ Section "Install" SecMain
   ; silently when none is found.
   Call EnsurePython
 
+  ; No elevation: this installation and its shortcuts belong to this user.
   ; Start-menu entries (GUI + CLI).
   CreateDirectory "$SMPROGRAMS\Turbo Recorder"
   CreateShortcut "$SMPROGRAMS\Turbo Recorder\Turbo Recorder.lnk" \
@@ -101,27 +103,28 @@ Section "Install" SecMain
 
   ; Uninstaller + Add/Remove Programs entry.
   WriteUninstaller "$INSTDIR\Uninstall.exe"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Turbo Recorder" \
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Turbo Recorder" \
     "DisplayName" "Turbo Recorder ${VERSION}"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Turbo Recorder" \
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Turbo Recorder" \
     "DisplayIcon" "$INSTDIR\turborec.ico"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Turbo Recorder" \
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Turbo Recorder" \
     "DisplayVersion" "${VERSION}"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Turbo Recorder" \
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Turbo Recorder" \
     "Publisher" "Cristian Cezar Moises"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Turbo Recorder" \
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Turbo Recorder" \
     "UninstallString" '"$INSTDIR\Uninstall.exe"'
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Turbo Recorder" \
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Turbo Recorder" \
     "InstallLocation" "$INSTDIR"
-  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Turbo Recorder" \
+  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Turbo Recorder" \
     "NoModify" 1
-  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Turbo Recorder" \
+  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Turbo Recorder" \
     "NoRepair" 1
-  WriteRegStr HKLM "Software\Turbo Recorder" "InstallDir" "$INSTDIR"
+  WriteRegStr HKCU "Software\Turbo Recorder" "InstallDir" "$INSTDIR"
 SectionEnd
 
 ; ---- uninstaller --------------------------------------------------------------
 Section "Uninstall"
+  SetShellVarContext current
   Delete "$DESKTOP\Turbo Recorder.lnk"
   RMDir /r "$SMPROGRAMS\Turbo Recorder"
 
@@ -142,8 +145,8 @@ Section "Uninstall"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"
 
-  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Turbo Recorder"
-  DeleteRegKey HKLM "Software\Turbo Recorder"
+  DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Turbo Recorder"
+  DeleteRegKey HKCU "Software\Turbo Recorder"
 SectionEnd
 
 ; ---- ensure a usable Python (3.8+, with Tk) -----------------------------------
@@ -153,17 +156,28 @@ SectionEnd
 ; (with Tk, pip, the py launcher, and PATH prepended), then re-check. Warn —
 ; without aborting — only if Python is still unusable afterwards.
 Function EnsurePython
-  nsExec::ExecToStack '"py" -3 -c "import tkinter,sys;sys.exit(0 if sys.version_info>=(3,8) else 1)"'
+  nsExec::ExecToStack '"py" -3 -I -c "import tkinter,sys;sys.exit(0 if sys.version_info>=(3,8) else 1)"'
   Pop $0  ; exit code: 0 = usable Python already present
+  Pop $2  ; captured output
   ${If} $0 == 0
     Goto PythonReady
   ${EndIf}
 
   ClearErrors
-  ExecWait '"$INSTDIR\python-3.12.10-amd64.exe" /quiet InstallAllUsers=0 PrependPath=1 Include_tcltk=1 Include_pip=1 Include_launcher=1 Include_test=0 Include_doc=0 Shortcuts=0' $1
+  ExecWait '"$INSTDIR\python-3.12.10-amd64.exe" /quiet InstallAllUsers=0 TargetDir="$LOCALAPPDATA\Programs\Python\Python312" PrependPath=1 Include_tcltk=1 Include_pip=1 Include_launcher=1 InstallLauncherAllUsers=0 Include_test=0 Include_doc=0 Shortcuts=0' $1
 
-  nsExec::ExecToStack '"py" -3 -c "import tkinter,sys;sys.exit(0 if sys.version_info>=(3,8) else 1)"'
+  nsExec::ExecToStack '"py" -3 -I -c "import tkinter,sys;sys.exit(0 if sys.version_info>=(3,8) else 1)"'
   Pop $0
+  Pop $2
+  ${If} $0 == 0
+    Goto PythonReady
+  ${EndIf}
+
+  ; The installer updates user PATH, not this running process's inherited PATH.
+  ; Check the deterministic per-user interpreter directly before warning.
+  nsExec::ExecToStack '"$LOCALAPPDATA\Programs\Python\Python312\python.exe" -I -c "import tkinter,sys;sys.exit(0 if sys.version_info>=(3,8) else 1)"'
+  Pop $0
+  Pop $2
   ${If} $0 == 0
     Goto PythonReady
   ${EndIf}

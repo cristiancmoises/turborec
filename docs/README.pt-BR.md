@@ -100,6 +100,15 @@ aplicativo; instala o Python silenciosamente apenas se não houver um Python 3.8
 com Tk no sistema, cria atalhos no Menu Iniciar e aparece em **Configurações →
 Aplicativos** para desinstalação.
 
+Desde a versão 3.10.0, o setup instala apenas para o usuário atual em
+`%LOCALAPPDATA%\Programs\Turbo Recorder`, com atalhos e registro desse usuário,
+sem solicitar privilégios de administrador. Não execute o setup nem o gravador
+como administrador. Para substituir uma instalação antiga em **Program Files**,
+remova primeiro a entrada antiga do Turbo Recorder em **Configurações →
+Aplicativos**; somente esse desinstalador antigo pode precisar de autorização
+administrativa. Depois execute o novo setup normalmente. Não remova o Python
+compartilhado com outros aplicativos.
+
 Para usar a CLI no PowerShell, você pode renomear o arquivo baixado:
 
 ```powershell
@@ -834,6 +843,23 @@ hardware explicitamente e avisa antes de usar a alternativa segura por software
 quando nenhum candidato funciona; `--cpu` força o caminho por software.
 
 ## Qualidade, desempenho e compatibilidade
+
+### Gravação segura e privacidade
+
+Escolha uma pasta controlada por você, sem permissão de escrita para outros
+usuários. No POSIX, novas pastas de gravação usam `0700` e a CLI adota umask
+`0077` para novos arquivos; pastas e arquivos existentes não têm suas permissões
+alteradas. O FFmpeg recusa destinos finais já existentes, mas isso não é uma
+reserva atômica nem uma garantia contra troca de caminhos em pastas hostis
+compartilhadas. No Windows, prefira pastas do seu perfil com permissões adequadas.
+
+Não execute o gravador como root/administrador. Chaves de transmissão são
+ocultadas das prévias da aplicação, mas podem aparecer na linha de comando do
+FFmpeg e no histórico do shell. Nunca compartilhe tokens, chaves, gravações
+privadas ou logs sem revisá-los; nomes de dispositivos e caminhos também podem
+identificar você. Os checksums verificam os bytes, não substituem uma assinatura
+digital. Relate problemas de segurança de forma privada conforme a
+[política do projeto](../SECURITY.md).
 
 - O perfil inicial é **Best + Auto + 23 fps + 4K**. Ele privilegia a qualidade
   sem exigir que a pessoa conheça o hardware da máquina.

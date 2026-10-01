@@ -10,10 +10,16 @@ set "TURBOREC_DIR=%~dp0"
 set "PATH=%TURBOREC_DIR%;%PATH%"
 
 where pyw >nul 2>nul
-if %errorlevel% equ 0 (
-  start "" pyw -3 "%TURBOREC_DIR%turborec.py"
-  exit /b 0
-)
+if %errorlevel% equ 0 goto run_pyw
+if exist "%LOCALAPPDATA%\Programs\Python\Python312\pythonw.exe" goto run_bundled_pythonw
 
-start "" pythonw "%TURBOREC_DIR%turborec.py"
-exit /b 0
+start "" pythonw -I "%TURBOREC_DIR%turborec.py"
+exit /b %errorlevel%
+
+:run_pyw
+start "" pyw -3 -I "%TURBOREC_DIR%turborec.py"
+exit /b %errorlevel%
+
+:run_bundled_pythonw
+start "" "%LOCALAPPDATA%\Programs\Python\Python312\pythonw.exe" -I "%TURBOREC_DIR%turborec.py"
+exit /b %errorlevel%

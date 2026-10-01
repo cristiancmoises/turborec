@@ -15,6 +15,7 @@
 #  For Windows/macOS or a GUI, use the cross-platform companion:  turborec.py
 # =============================================================================
 set -euo pipefail
+umask 0077
 IFS=$'\n\t'
 
 # ---------------------------
@@ -40,7 +41,7 @@ MIC_SOURCE="${MIC_SOURCE:-}"
 # ---------------------------
 die(){ printf '%s\n' "$*" >&2; exit 1; }
 have(){ command -v "$1" >/dev/null 2>&1; }
-ensure_dir(){ local d="$1"; [ -e "$d" ] && [ ! -d "$d" ] && die "Not a directory: $d"; mkdir -p "$d"; }
+ensure_dir(){ local d="$1"; [ -e "$d" ] && [ ! -d "$d" ] && die "Not a directory: $d"; (umask 0077; mkdir -p "$d"); }
 timestamp(){ date +"%Y-%m-%d_%H-%M-%S"; }
 
 # ---------------------------
@@ -239,21 +240,21 @@ detect_mic_channel(){
 # ---------------------------
 audio_internal_only(){
   ensure_dir "$AUD_DIR"; local out; out="${AUD_DIR}/audio_internal_$(timestamp).${AUDIO_EXT}"
-  ffmpeg -y -hide_banner -loglevel info -stats \
+  ffmpeg -n -hide_banner -loglevel info -stats \
     -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
     -af "${ARESAMPLE},pan=${PAN}" "${AUDIO_ARGS[@]}" "$out"
 }
 
 audio_microphone_only(){
   ensure_dir "$AUD_DIR"; local out; out="${AUD_DIR}/audio_mic_$(timestamp).${AUDIO_EXT}"
-  ffmpeg -y -hide_banner -loglevel info -stats \
+  ffmpeg -n -hide_banner -loglevel info -stats \
     -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
     -af "${ARESAMPLE},pan=${PAN}" "${AUDIO_ARGS[@]}" "$out"
 }
 
 audio_internal_and_mic(){
   ensure_dir "$AUD_DIR"; local out; out="${AUD_DIR}/audio_mixed_$(timestamp).${AUDIO_EXT}"
-  ffmpeg -y -hide_banner -loglevel info -stats \
+  ffmpeg -n -hide_banner -loglevel info -stats \
     -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
     -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
     -filter_complex \
@@ -263,14 +264,14 @@ audio_internal_and_mic(){
 
 video_without_audio(){
   ensure_dir "$VID_DIR"; local out; out="${VID_DIR}/video_noaudio_$(timestamp).mkv"
-  ffmpeg -y -hide_banner -loglevel info -stats \
+  ffmpeg -n -hide_banner -loglevel info -stats \
     "${PRE_INPUT[@]}" "${X11_ARGS[@]}" \
     -vf "$VFILTER" "${VENC_ARGS[@]}" "$out"
 }
 
 video_with_internal_audio(){
   ensure_dir "$VID_DIR"; local out; out="${VID_DIR}/video_internal_$(timestamp).mkv"
-  ffmpeg -y -hide_banner -loglevel info -stats \
+  ffmpeg -n -hide_banner -loglevel info -stats \
     "${PRE_INPUT[@]}" "${X11_ARGS[@]}" \
     -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
     -filter_complex "[0:v]${VFILTER}[v];[1:a]${ARESAMPLE},pan=${PAN}[a]" \
@@ -279,7 +280,7 @@ video_with_internal_audio(){
 
 video_with_microphone(){
   ensure_dir "$VID_DIR"; local out; out="${VID_DIR}/video_mic_$(timestamp).mkv"
-  ffmpeg -y -hide_banner -loglevel info -stats \
+  ffmpeg -n -hide_banner -loglevel info -stats \
     "${PRE_INPUT[@]}" "${X11_ARGS[@]}" \
     -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
     -filter_complex "[0:v]${VFILTER}[v];[1:a]${ARESAMPLE},pan=${PAN}[a]" \
@@ -288,7 +289,7 @@ video_with_microphone(){
 
 video_with_both(){
   ensure_dir "$VID_DIR"; local out; out="${VID_DIR}/video_both_$(timestamp).mkv"
-  ffmpeg -y -hide_banner -loglevel info -stats \
+  ffmpeg -n -hide_banner -loglevel info -stats \
     "${PRE_INPUT[@]}" "${X11_ARGS[@]}" \
     -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
     -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \

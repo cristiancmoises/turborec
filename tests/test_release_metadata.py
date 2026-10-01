@@ -52,6 +52,47 @@ class ReleaseMetadataTests(unittest.TestCase):
             encoding="utf-8")
         self.assertIn(f"default: v{turborec.VERSION}", workflow)
 
+    def test_windows_setup_and_python_discovery_are_unprivileged(self):
+        nsi = (ROOT / "packaging/turborec.nsi").read_text(encoding="utf-8")
+        self.assertIn("RequestExecutionLevel user", nsi)
+        self.assertIn('InstallDir "$LOCALAPPDATA\\Programs\\Turbo Recorder"', nsi)
+        self.assertNotRegex(nsi, r"\bHKLM\b|\$PROGRAMFILES64")
+        self.assertGreaterEqual(nsi.count("SetShellVarContext current"), 2)
+        self.assertEqual(nsi.count('\"py\" -3 -I -c'), 2)
+        self.assertIn("InstallLauncherAllUsers=0", nsi)
+        self.assertIn('TargetDir="$LOCALAPPDATA\\Programs\\Python\\Python312"', nsi)
+        for relative in ("packaging/turborec.cmd", "packaging/turborec-gui.cmd"):
+            launcher = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertIn("-3 -I", launcher)
+            self.assertIn("%LOCALAPPDATA%\\Programs\\Python\\Python312", launcher)
+            self.assertNotRegex(launcher, r"(?s)if[^\n]*\(.*exit /b %errorlevel%.*\)")
+
+    @unittest.skipUnless(os.name == "nt", "requires the actual Windows batch launcher")
+    def test_windows_batch_launcher_preserves_engine_exit_code(self):
+        with tempfile.TemporaryDirectory(prefix="turborec-batch-test-") as directory:
+            # Match the installed layout: launcher and engine in the same folder.
+            launcher = Path(directory) / "turborec.cmd"
+            shutil.copy2(ROOT / "packaging/turborec.cmd", launcher)
+            shutil.copy2(ROOT / "turborec.py", Path(directory) / "turborec.py")
+            environment = os.environ.copy()
+            environment.pop("TURBOREC_CONFIG", None)
+            environment.update(USERPROFILE=directory, HOME=directory,
+                               XDG_CONFIG_HOME=str(Path(directory) / "config"))
+            success = subprocess.run([str(launcher), "--version"], capture_output=True,
+                                     text=True, env=environment, timeout=30)
+            self.assertEqual(success.returncode, 0, success.stdout + success.stderr)
+            self.assertIn(turborec.VERSION, success.stdout)
+            failure = subprocess.run([str(launcher), "--definitely-unknown-option"],
+                                     capture_output=True, text=True, env=environment, timeout=30)
+            self.assertEqual(failure.returncode, 2, failure.stdout + failure.stderr)
+
+    def test_only_publication_job_has_release_write_permission(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        self.assertIn("permissions:\n  contents: read", workflow)
+        publish = workflow[workflow.index("  publish:"):]
+        self.assertIn("permissions:\n      contents: write", publish)
+        self.assertIn("$PSNativeCommandUseErrorActionPreference = $false", workflow)
+
     def test_release_includes_distribution_source_archive(self):
         name = "turborec-${VERSION}-source.zupt"
         workflow = (ROOT / ".github/workflows/release.yml").read_text(
@@ -220,7 +261,7 @@ class ReleaseArchiveTests(unittest.TestCase):
         tools.mkdir()
         for tool in (
             "sh", "cat", "cp", "chmod", "mkdir", "dirname", "basename", "sed", "head",
-            "mktemp", "rm", "tar", "grep", "date", "zupt", "cmp", "mv",
+            "mktemp", "rm", "tar", "grep", "date", "zupt", "cmp", "mv", "python3",
         ):
             (tools / tool).symlink_to(shutil.which(tool))
         for tool_path in (env["PATH"], str(tools)):

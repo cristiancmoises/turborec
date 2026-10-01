@@ -186,6 +186,13 @@ self-contained: it bundles Python 3.12 (with Tk), FFmpeg and the app, installs
 Python silently *only if* no Python 3.8+ with Tk is already present, and adds
 "Turbo Recorder" under **Settings → Apps** for clean removal.
 
+Starting with 3.10.0, setup installs for the current user in
+`%LOCALAPPDATA%\Programs\Turbo Recorder`, with user-only shortcuts and registry
+entries. Do not run setup or recording as administrator. If upgrading a legacy
+machine-wide installation, uninstall that old Turbo Recorder entry through
+**Settings → Apps** first (Windows may request administrator approval for that
+old uninstaller), then run the new setup normally. Do not remove shared Python.
+
 (The bundle carries its own FFmpeg; if you'd rather use a system FFmpeg, put it
 on `PATH` and pass `--ffmpeg C:\path\to\ffmpeg.exe`.) The current release keeps
 Unicode microphone/camera labels intact, records through stable DirectShow IDs, and
@@ -668,6 +675,15 @@ turborec record -m video_both --dry-run
 ---
 
 ## 15. Tips for the best possible quality
+
+Record into a folder you control, not a directory writable by other users.
+New POSIX recording directories use mode `0700`; the CLI uses umask `0077`
+for newly created files. Existing folders and files are not chmodded. Public
+FFmpeg file outputs refuse an already-existing destination, but this is not an
+atomic reservation or a guarantee against hostile shared-directory races.
+Keep Windows recording folders under your own user profile with suitable ACLs.
+See [Recording and privacy](../SECURITY.md#recording-and-privacy) before sharing
+logs or recording on a shared host.
 
 - **Leave codec and backend on Auto** for the quality-first hardware path. Use
   `--gpu` to request hardware explicitly; Turbo Recorder still warns and takes

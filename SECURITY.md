@@ -23,6 +23,31 @@ fix is developed.
 This project is maintained on a best-effort basis. Security fixes target the
 latest commit on the default branch; there are no long-term support branches.
 
+## Recording and Privacy
+
+Run the recorder and Windows setup as your ordinary user, not root or an
+administrator. Windows setup 3.10.0 is per-user; old machine-wide installations
+must be removed separately through the operating system's normal uninstall UI.
+
+Choose a recording directory that other users cannot modify. New POSIX
+recording folders are private (`0700`), and the CLI uses umask `0077` for new
+files. Existing user data is not chmodded. FFmpeg's no-overwrite option is a
+collision safeguard, not atomic destination binding; external recorder and OS
+path policies still matter for a hostile shared folder.
+
+The app masks supplied stream keys before quoting command previews. Streaming
+credentials nevertheless appear in the child FFmpeg argv and may be visible
+to other users on a shared host or in shell history. Review diagnostic logs
+before sharing: device names, window titles, paths and recordings can be private.
+
+Download releases from the project's official forges and compare `SHA256SUMS`
+before installing or extracting. Checksums detect changed bytes; they are not
+a digital signature or proof that an external dependency is uncompromised.
+See the [PT-BR privacy guidance](docs/README.pt-BR.md#gravação-segura-e-privacidade).
+
+Security reviews and functional tests are complementary, not a guarantee of
+exhaustive security or physical-device support on every machine.
+
 ## Responsible Use
 
 This repository may contain system administration or security tooling intended

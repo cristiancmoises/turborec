@@ -11,6 +11,8 @@
 
 <img src="docs/turborec-gui.png" alt="Turbo Recorder — dark, hardware-accelerated screen recorder GUI" width="860">
 
+<sub>Version 3.10.0 interface, captured with simulated system metadata and a generic user path.</sub>
+
 🌐 **[Official website](https://turborec.securityops.co)** &nbsp;·&nbsp;
 📺 **[Watch a sample recording](https://youtu.be/mlf531Da9Qo?si=RTaSB9dJ4NSbGsOm)** &nbsp;·&nbsp;
 🪞 also mirrored on [Forgejo](https://git.securityops.com.br/cristiancmoises/turborec)
@@ -37,6 +39,11 @@ linked below. You can override recording choices in the GUI, CLI, or JSON config
 > formats remain available. BSD capability checks and the recent Windows fixes
 > are retained.
 
+The Windows setup now installs for the current user without requesting
+administrator privileges. Release builders verify cached tools, and mirror
+publication checks the downloaded asset bytes rather than only their sizes.
+See [safe recording and privacy](SECURITY.md#recording-and-privacy).
+
 ### ✨ Highlights
 
 - 🎯 **Zero config** — auto-detects OS, CPU, GPU, encoder, screen, mic & system audio
@@ -53,7 +60,7 @@ linked below. You can override recording choices in the GUI, CLI, or JSON config
 - 🔊 **Fix one-sided audio** — clone a live channel to both sides (`--audio-channels left/right/mono`)
 - 📐 **Record in 720p / 1080p / 1440p / 4K** — exact output frames with aspect-ratio-preserving scaling; upscaling does not add captured detail
 - 🎨 **Optional 4:4:4 chroma** — CPU H.264/HEVC file recording for colored text, with higher encoding and compatibility costs
-- 📡 **Go live to YouTube (OBS-style)** — paste your stream key (`--stream KEY` or the GUI field) and stream; keys are always redacted from output
+- 📡 **Go live to YouTube (OBS-style)** — paste your stream key (`--stream KEY` or the GUI field) and stream; TurboRec masks it in its command previews and logs (see [privacy limits](SECURITY.md#recording-and-privacy))
 - 🎥 **Webcam overlay (picture-in-picture)** — overlay your camera on the recording *or* stream, with your choice of device, size and corner (`--camera`)
 - 🔇 **Built-in noise suppression** — NoiseTorch-style mic denoise (`--denoise light/medium/strong`), no extra app or virtual device needed
 - 🧠 **Adaptive quality** — presets scale with pixel throughput to balance detail and live encoding load
@@ -131,7 +138,9 @@ scene-compositing studio you configure by hand (OBS).
   Python + Tk + FFmpeg bundled in — download and run, nothing else to install.
 - **Best-quality by default & security-minded.** Adaptive encoder tuning per
   resolution, a 23 fps / 4K quality-first profile, automatic codec selection,
-  lossless FLAC audio, BT.709 color — and stream keys are always redacted.
+  lossless FLAC audio, BT.709 color, and masked stream keys in TurboRec's
+  command previews and logs. OS process lists and shell history have separate
+  [privacy limits](SECURITY.md#recording-and-privacy).
 
 When you need a **timeline editor**, reach for Kdenlive; when you need a
 **broadcast studio** with dozens of composited sources and transitions, OBS is

@@ -6,7 +6,7 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -163,7 +163,7 @@ jobs:
   windows:
     name: Build Windows executable
     runs-on: windows-latest
-    needs: test
+    needs: [test, linux]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -232,6 +232,35 @@ jobs:
           ./dist/turborec.exe targets --json > targets.json
           python -c "import json; paths=('detect.json','devices.json','cameras.json','targets.json'); data=[json.load(open(p, encoding='utf-8')) for p in paths]; assert data[3] and data[3][0]['kind'] == 'screen'"
 
+      - name: Download the compiled Windows setup for installation checks
+        uses: actions/download-artifact@v5
+        with:
+          name: release-linux
+          path: ${{ runner.temp }}/turborec-linux-assets
+
+      - name: Install setup and validate its actual launchers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $setups = @(Get-ChildItem "$env:RUNNER_TEMP/turborec-linux-assets/*-windows-x64-setup.exe")
+          if ($setups.Count -ne 1) { throw 'Expected exactly one Windows setup' }
+          $destination = Join-Path $env:RUNNER_TEMP 'turborec-installed-smoke'
+          $install = Start-Process -FilePath $setups[0].FullName -ArgumentList '/S', "/D=$destination" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Setup failed: $($install.ExitCode)" }
+          $launcher = Join-Path $destination 'turborec.cmd'
+          if (!(Test-Path $launcher)) { throw 'Setup did not install the CLI launcher' }
+          & $launcher --version
+          if ($LASTEXITCODE -ne 0) { throw 'Installed version command failed' }
+          & $launcher --help
+          if ($LASTEXITCODE -ne 0) { throw 'Installed help command failed' }
+          & $launcher --definitely-unknown-option
+          if ($LASTEXITCODE -ne 2) { throw 'Launcher lost the engine exit code' }
+          & $launcher detect --json | Out-File -Encoding utf8 "$destination/detect.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Installed detection failed' }
+          $detected = Get-Content -Raw "$destination/detect.json" | ConvertFrom-Json
+          if ($detected.os -ne 'windows') { throw 'Installed probe did not recognize Windows' }
+
       - name: Upload Windows build artifact
         uses: actions/upload-artifact@v5
         with:
@@ -285,6 +314,8 @@ jobs:
     name: Verify and publish the complete release
     runs-on: ubuntu-latest
     needs: [linux, freebsd, windows, guix]
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6

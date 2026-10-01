@@ -1988,15 +1988,14 @@ def timestamp() -> str:
 
 
 def _unique_output_path(out_dir: str, stem: str, ext: str) -> str:
-    """Pick an output path that does not exist yet.
+    """Pick a currently unused output name; this is not an atomic reservation.
 
-    The timestamp is second-granularity and ffmpeg runs with ``-y``, so a
-    second recording started in the same second would silently overwrite the
-    first (data loss). Append ``_1``, ``_2``, … until the name is free.
+    Timestamps have second granularity. Append ``_1``, ``_2``, … until no
+    directory entry, including a dangling symlink, occupies the name.
     """
     path = os.path.join(out_dir, f"{stem}.{ext}")
     n = 1
-    while os.path.exists(path):
+    while os.path.lexists(path):
         path = os.path.join(out_dir, f"{stem}_{n}.{ext}")
         n += 1
     return path
@@ -2005,7 +2004,7 @@ def _unique_output_path(out_dir: str, stem: str, ext: str) -> str:
 def ensure_dir(path: str) -> None:
     if os.path.exists(path) and not os.path.isdir(path):
         die(f"Not a directory: {path}")
-    os.makedirs(path, exist_ok=True)
+    os.makedirs(path, mode=0o700, exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -2119,7 +2118,7 @@ def _audio_src_filter(spec: RecordSpec, is_mic: bool = False) -> str:
     return chain + (f",{pan}" if pan else ",aformat=channel_layouts=stereo")
 
 
-def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
+def build_command(si: SystemInfo, spec: RecordSpec, preview: bool = False) -> tuple[list[str], str]:
     _validate_capture_geometry(si, spec)
     is_video = spec.mode.startswith("video")
     wants_mic = spec.mode in ("video_both", "video_mic", "audio_mic", "audio_both")
@@ -2131,10 +2130,11 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
         die("System audio requested but no monitor/loopback source detected/selected.")
 
     out_dir = spec.out_dir or (os.path.join(os.path.expanduser("~"), "Videos" if is_video else "Audio"))
-    if not spec.stream_url:
+    if not spec.stream_url and not preview:
         ensure_dir(out_dir)
 
-    cmd: list[str] = [si.ffmpeg, "-y", "-hide_banner", "-loglevel", "info", "-stats"]
+    cmd: list[str] = [si.ffmpeg, "-y" if spec.stream_url else "-n",
+                      "-hide_banner", "-loglevel", "info", "-stats"]
 
     enc = None
     audio_inputs: list[AudioDevice] = []
@@ -2487,7 +2487,7 @@ def _plan_cleanup(plan: "RecordPlan") -> None:
 
 
 def _redact_cmd(argv: list, secret: Optional[str]) -> str:
-    return _mask_secret(" ".join(_shquote(c) for c in argv), secret)
+    return " ".join(_shquote(_mask_secret(c, secret)) for c in argv)
 
 
 def _pump_masked_stderr(stream, secret: Optional[str]) -> None:
@@ -2560,7 +2560,7 @@ def _ffmpeg_compose_cmd(si: SystemInfo, spec: RecordSpec, fifo: str,
     cam = bool(spec.camera)
     enc = _recording_encoder(si, spec) if cam else None
 
-    base = [si.ffmpeg, "-y", "-hide_banner",
+    base = [si.ffmpeg, "-y" if streaming else "-n", "-hide_banner",
             "-loglevel", "info" if streaming else "error", "-stats"]
     if cam and enc is not None:
         base += _hw_init_args(si, enc)
@@ -2805,7 +2805,7 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
         sdir = out_dir if preview else tempfile.mkdtemp(prefix="turborec-mux.")
         atmp = os.path.join(sdir, f"audio.{_audio_ext(spec)}")
         vtmp = os.path.join(sdir, "video.mkv")
-        mux = [si.ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+        mux = [si.ffmpeg, "-n", "-hide_banner", "-loglevel", "error",
                "-i", vtmp, "-i", atmp, "-map", "0:v:0", "-map", "1:a:0",
                "-c", "copy", out_path]
         return RecordPlan(
@@ -2861,7 +2861,7 @@ def build_plan(si: SystemInfo, spec: RecordSpec, preview: bool = False) -> Recor
         ensure_dir(out_dir)
     if is_video and si.os == "linux" and si.display_server == "wayland":
         return _build_wayland_plan(si, spec, preview, out_dir, wants_mic, wants_sys)
-    cmd, out_path = build_command(si, spec)
+    cmd, out_path = build_command(si, spec, preview=preview)
     return RecordPlan(out_path, [("ffmpeg", cmd, "q")],
                       is_video=is_video, self_timed=not streaming, backend="ffmpeg",
                       is_stream=streaming, secret=spec.stream_secret)
@@ -3816,8 +3816,8 @@ def _gui_build_preview(si, spec):
     would (a) create directories merely by opening the GUI / editing the Folder
     field and (b) raise OSError for an unwritable path. The live preview must be a
     pure read of the configuration, so build_plan is invoked with preview=True and
-    we additionally neutralise ensure_dir (build_command, used on the non-Wayland
-    path, calls it unconditionally). Returns a RecordPlan.
+    we additionally neutralise ensure_dir as a defensive guard against future
+    directory-creating builder paths. Returns a RecordPlan.
     """
     g = globals()
     real_ensure_dir = g.get("ensure_dir")
@@ -5023,6 +5023,10 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    if os.name == "posix":
+        # Private defaults for newly created recordings, scratch and child files.
+        # Existing user folders and files retain their permissions.
+        os.umask(0o077)
     # Self-contained builds (Windows .exe) ship ffmpeg alongside the app.
     _use_bundled_binaries()
     # First pass: discover --config without triggering subcommand validation,

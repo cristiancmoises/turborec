@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Software Wayland recording converts to BT.709 instead of only labeling color
   metadata. Intel Mac VideoToolbox recording uses bitrate rate control without
   `-q:v`; Apple Silicon retains the quality-scale path.
+- Stream-key masking occurs before shell quoting, including apostrophe-bearing
+  keys. Final FFmpeg file outputs refuse existing destinations, and generated
+  filenames avoid dangling symlinks. New POSIX recording folders are private;
+  existing user permissions are preserved. Shared-directory path races and
+  external recorder policies still require a trusted output location.
 
 ### Packaging and documentation
 - Replaced the portable Unix, Guix and complete-source `.tar.gz` release assets
@@ -31,6 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   literal integer 23 fps · 4K and English as the default language are retained.
 - Updated the existing English/PT-BR guides and website; clarified chroma,
   upscaling and real-time limits without claiming physical-device validation.
+- Windows setup is per-user and non-elevated, with isolated Python discovery,
+  a per-user Python launcher and CLI exit-code preservation. Legacy machine-wide
+  installations have an explicit documented uninstall migration.
+- Managed appimagetool downloads/cache fail closed on missing pins/verifiers or
+  mismatched bytes. ZUPT publication replaces the exact destination leaf;
+  forge mirrors verify downloaded content, and CI write authority is limited to
+  release publication. Refreshed the public GUI screenshot without personal IDs.
 
 ### Resumo em português do Brasil
 - Novo seletor/`--chroma 444` para gravação H.264/HEVC por CPU em arquivo; o
@@ -42,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interna. Pacotes nativos continuam disponíveis; mantenha a verificação por
   `SHA256SUMS` e extraia primeiro com ZUPT, depois com tar.
 - Mantidos Best · Auto · 23 fps · 4K e inglês padrão; guia PT-BR atualizado.
+- Setup do Windows por usuário, sem elevação, com Python isolado; prévias
+  ocultam chaves antes do quoting. Novas pastas POSIX são privadas, ferramentas
+  baixadas/cache e bytes dos espelhos são verificados, sem alterar permissões de
+  arquivos existentes. Captura da interface sem identificadores pessoais.
 
 ## [3.9.1] — 2026-09-06
 

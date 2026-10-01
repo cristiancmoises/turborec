@@ -18,6 +18,13 @@ verify `SHA256SUMS`, extract with `zupt`, then extract the tar. Standard tar doe
 not understand `.zupt` directly. Do not put gzip-compressed tar files inside
 these release archives.
 
+Archive builders require Python 3 for exact-leaf atomic publication in addition
+to ZUPT and tar. Automatically downloaded or cached appimagetool binaries need
+a valid SHA-256 pin and either `sha256sum` or `shasum`; missing verification is
+an error, never a warning-only bypass. For architectures other than the pinned
+x86_64 release, supply the correct `APPIMAGETOOL_SHA256` or explicitly choose an
+operator-trusted `APPIMAGETOOL`/PATH binary. Keep build/cache folders private.
+
 `turborec.py`'s `VERSION` is the release source of truth. The portable and
 FreeBSD builders derive it automatically; package formats that require literal
 metadata are checked against it by `tests/test_release_metadata.py`. The GitHub
@@ -35,6 +42,11 @@ Actions release workflow builds the Linux artifacts on
   `py` launcher) only when no Python 3.8+ with Tk is already present — so the
   target machine needs **no prerequisites**. The uninstaller removes the app but
   never uninstalls the shared Python.
+  Setup 3.10.0 is non-elevated: app files live in
+  `%LOCALAPPDATA%\Programs\Turbo Recorder`, registry entries and shortcuts belong
+  to the current user, and Python/its launcher are installed per-user. Discovery
+  and launchers use Python isolated mode. Remove a legacy machine-wide install
+  separately through Windows Settings before switching; do not remove shared Python.
 
 ## BSD / portable builders
 
@@ -96,8 +108,12 @@ FJTOKEN=… CBTOKEN=… packaging/publish-release.sh v3.10.0 dist/
 Tokens are read only from the environment. The script requires all **10
 payloads** (including both Windows executables, both RPMs and complete source),
 and `SHA256SUMS`: **11 release assets in total**. It
-mirrors the checksum file, verifies remote byte sizes, and fails on an
-incomplete upload. It is idempotent when re-run.
+mirrors the checksum file, validates each public download URL against the forge
+origin, downloads every asset without sending credentials, and compares remote
+bytes with the locally verified files. Equal name/size alone is not accepted.
+Incomplete uploads or changed bytes fail; identical re-runs are idempotent.
+Requires Bash, curl, Python 3 and `cmp`; `gh` is needed only for automatic
+asset downloads. No GNU `find` or checksum utility is required by the publisher.
 
 ## Debian `.deb` layout
 

@@ -61,12 +61,12 @@ SRC_DESKTOP="${SCRIPT_DIR}/${APP_NAME}.desktop"
 SRC_SVG="${SCRIPT_DIR}/${APP_NAME}.svg"
 SRC_APPRUN="${SCRIPT_DIR}/AppRun"
 
-# appimagetool: pinned to an immutable VERSIONED release (not the rolling
-# "continuous" tag) so both the URL and the bytes are reproducible.
+# appimagetool: fixed VERSIONED URL (not the rolling "continuous" tag).
+# Managed downloads and cache entries must match the independent digest pin.
 APPIMAGETOOL_TAG="1.9.1"
 APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_TAG}/appimagetool-${ARCH}.AppImage"
 # Integrity: the known-good SHA-256 for the x86_64 1.9.1 build is enforced by
-# default (the download is aborted on mismatch). Override APPIMAGETOOL_SHA256 for
+# default (managed bytes are rejected on mismatch). Set APPIMAGETOOL_SHA256 for
 # a different arch/pin, or supply your own APPIMAGETOOL binary to skip the fetch.
 case "${ARCH}" in
     x86_64) _appimagetool_default_sha="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0" ;;
@@ -225,31 +225,43 @@ resolve_appimagetool() {
         command -v appimagetool
         return 0
     fi
-    # 3) previously downloaded into the build tree
+    # Managed bytes, cached or downloaded, always need an independent pin and
+    # a working verifier. Explicit operator-selected tools above remain trusted.
     local cached="${TOOLS_DIR}/appimagetool-${ARCH}.AppImage"
-    if [ -x "${cached}" ]; then
-        printf '%s' "${cached}"
-        return 0
-    fi
-    # 4) download
-    [ "${NO_DOWNLOAD:-0}" = "1" ] && \
-        die "appimagetool not found and NO_DOWNLOAD=1 (set APPIMAGETOOL=/path/to/appimagetool)"
-    log "downloading appimagetool from ${APPIMAGETOOL_URL}" >&2
-    fetch "${APPIMAGETOOL_URL}" "${cached}"
-    chmod +x "${cached}"
-
-    # Integrity: report the digest; verify it if a pin was supplied.
+    [[ "${APPIMAGETOOL_SHA256:-}" =~ ^[0-9a-fA-F]{64}$ ]] || \
+        die "APPIMAGETOOL_SHA256 must be a nonempty 64-hex SHA-256 pin for managed tools"
+    local verifier got expected
+    command -v tr >/dev/null 2>&1 || die "tr is required to normalize the appimagetool pin"
+    # Bash 3.2 is still the stock macOS shell; do not use Bash 4 case modifiers.
+    expected="$(printf '%s' "${APPIMAGETOOL_SHA256}" | tr 'ABCDEF' 'abcdef')" || \
+        die "cannot normalize the appimagetool pin"
     if command -v sha256sum >/dev/null 2>&1; then
-        local got
-        got="$(sha256sum "${cached}" | awk '{print $1}')"
-        log "appimagetool sha256: ${got}" >&2
-        if [ -n "${APPIMAGETOOL_SHA256}" ] && [ "${got}" != "${APPIMAGETOOL_SHA256}" ]; then
-            rm -f "${cached}"
-            die "appimagetool checksum mismatch (expected ${APPIMAGETOOL_SHA256}, got ${got})"
-        fi
+        verifier="sha256sum"
+    elif command -v shasum >/dev/null 2>&1; then
+        verifier="shasum"
     else
-        warn "sha256sum unavailable — cannot verify appimagetool integrity"
+        die "sha256sum or shasum is required to verify managed appimagetool bytes"
     fi
+    # 3) previously downloaded bytes, including an interrupted pre-chmod build.
+    # 4) fetch only if there is no managed file to verify.
+    if [ ! -f "${cached}" ]; then
+        [ "${NO_DOWNLOAD:-0}" = "1" ] && \
+            die "appimagetool not found and NO_DOWNLOAD=1 (set APPIMAGETOOL=/path/to/appimagetool)"
+        log "downloading appimagetool from ${APPIMAGETOOL_URL}" >&2
+        fetch "${APPIMAGETOOL_URL}" "${cached}" || die "appimagetool download failed"
+    fi
+    if [ "${verifier}" = "sha256sum" ]; then
+        got="$(sha256sum "${cached}")" || die "appimagetool SHA-256 verification failed"
+    else
+        got="$(shasum -a 256 "${cached}")" || die "appimagetool SHA-256 verification failed"
+    fi
+    got="${got%% *}"
+    log "appimagetool sha256: ${got}" >&2
+    if [ "${got}" != "${expected}" ]; then
+        rm -f -- "${cached}"
+        die "appimagetool checksum mismatch (expected ${expected}, got ${got})"
+    fi
+    chmod +x -- "${cached}" || die "cannot make verified appimagetool executable"
     printf '%s' "${cached}"
 }
 

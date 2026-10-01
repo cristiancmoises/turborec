@@ -12,6 +12,7 @@ case "${OUTPUT}" in *.zupt) ;; *) die "output must use the .zupt extension" ;; e
 if [ ! -f "${PAYLOAD}" ] || [ ! -s "${PAYLOAD}" ]; then
     die "missing or empty TAR payload"
 fi
+command -v python3 >/dev/null 2>&1 || die "python3 is required for atomic archive publication"
 command -v zupt >/dev/null 2>&1 || die "zupt is required (see packaging/install-zupt.sh)"
 THREADS="${ZUPT_THREADS:-2}"
 case "${THREADS}" in
@@ -47,5 +48,12 @@ cp -- "${PAYLOAD}" "${WORK}/${NAME}"
 PUBLISH_WORK="$(mktemp -d "${OUTPUT_DIR}/.zupt-build.XXXXXX")"
 cp -- "${WORK}/archive.zupt" "${PUBLISH_WORK}/archive.zupt"
 cmp -- "${WORK}/archive.zupt" "${PUBLISH_WORK}/archive.zupt"
-mv -f -- "${PUBLISH_WORK}/archive.zupt" "${OUTPUT}"
+# Replace exactly the requested leaf, including a symlink, never treat a
+# directory destination as a container. Both paths are on the same filesystem.
+python3 - "${PUBLISH_WORK}/archive.zupt" "${OUTPUT}" <<'PY'
+import os
+import sys
+
+os.replace(sys.argv[1], sys.argv[2])
+PY
 printf '%s\n' "${OUTPUT}"
