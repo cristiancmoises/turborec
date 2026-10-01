@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SHELL = shutil.which("sh")
 BASH = shutil.which("bash")
-TOOL_BYTES = b'#!/bin/sh\nprintf tool-ran > "$TOOL_MARKER"\n'
+TOOL_BYTES = f'#!{SHELL}\nprintf tool-ran > "$TOOL_MARKER"\n'.encode("utf-8")
 TOOL_SHA256 = hashlib.sha256(TOOL_BYTES).hexdigest()
 
 
@@ -247,6 +247,24 @@ print(hashlib.sha256(Path(args[0]).read_bytes()).hexdigest(), args[0])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.tool_marker.read_text(), "tool-ran")
         self.assertTrue(self.download_marker.exists())
+
+    def test_matching_download_supports_bsd_chmod_operand_order(self):
+        self.verifier()
+        actual_chmod = shutil.which("chmod")
+        (self.tools / "chmod").unlink()
+        # BSD chmod interprets -- after the mode as a filename. Delegate valid
+        # calls to the host chmod so actual file permissions remain exercised.
+        executable(self.tools / "chmod", f"#!{sys.executable}\n" + f'''
+import os
+import sys
+args = sys.argv[1:]
+if args[:2] == ["+x", "--"]:
+    sys.exit("chmod: --: No such file or directory")
+os.execv({actual_chmod!r}, [{actual_chmod!r}] + args)
+''')
+        result = self.resolve()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.tool_marker.read_text(), "tool-ran")
 
     def test_uppercase_hex_pin_matches_downloaded_bytes(self):
         self.verifier()

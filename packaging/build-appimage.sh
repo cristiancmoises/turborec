@@ -261,7 +261,9 @@ resolve_appimagetool() {
         rm -f -- "${cached}"
         die "appimagetool checksum mismatch (expected ${expected}, got ${got})"
     fi
-    chmod +x -- "${cached}" || die "cannot make verified appimagetool executable"
+    # cached is below absolute REPO_ROOT, so its pathname cannot be an option.
+    # BSD chmod treats -- after the mode as a filename rather than a separator.
+    chmod +x "${cached}" || die "cannot make verified appimagetool executable"
     printf '%s' "${cached}"
 }
 
