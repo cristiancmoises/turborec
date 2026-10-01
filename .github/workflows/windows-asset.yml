@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to build from and attach the .exe to (e.g. v3.9.1)
+        description: Release tag to build from and attach the .exe to (e.g. v3.10.0)
         required: true
-        default: v3.9.1
+        default: v3.10.0
 
 permissions:
   contents: write

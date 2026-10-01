@@ -41,7 +41,7 @@ from datetime import datetime
 from typing import Optional
 
 APP_NAME = "Turbo Recorder"
-VERSION = "3.9.1"
+VERSION = "3.10.0"
 
 _BSD_OSES = frozenset(("freebsd", "openbsd", "netbsd", "dragonfly"))
 _X11_CAPTURE_OSES = frozenset(("linux", *_BSD_OSES))
@@ -1486,6 +1486,7 @@ DEFAULT_RESOLUTION = "4k"
 # (and bitrate budget) from the uploaded resolution, so a 4K upload gets the
 # high-bitrate 4K pipeline even when the source screen is 1080p/1200p.
 RESOLUTIONS = ("native", "720p", "1080p", "1440p", "4k")
+CHROMA_MODES = ("420", "444")
 _RES_DIMS = {"720p": (1280, 720), "1080p": (1920, 1080),
              "1440p": (2560, 1440), "4k": (3840, 2160)}
 
@@ -1500,8 +1501,8 @@ def _scale_chain(resolution: str) -> Optional[str]:
     if not dims:
         return None
     w, h = dims
-    return (f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2")
+    return (f"scale={w}:{h}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,"
+            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1")
 
 
 # ---- Live streaming (OBS-style, YouTube RTMP ingest) ------------------------
@@ -1535,12 +1536,12 @@ def _stream_bitrate_k(w: int, h: int, fps: int) -> int:
     return int(base * 1.5) if fps >= 48 else base
 
 
-def _openh264_recording_bitrate_k(
+def _recording_bitrate_k(
         quality: str, pixrate: Optional[float] = None) -> int:
-    """Quality-first OpenH264 target in kbit/s for the output pixel rate.
+    """Quality-first target for encoders that require bitrate, in kbit/s.
 
-    OpenH264 has no CRF or speed presets. Its supported quality rate-control
-    mode still needs a target bitrate, so scale that target by pixels/second.
+    OpenH264 and Intel-Mac VideoToolbox have no usable CRF/constant-quality
+    control here, so scale their recording target by pixels/second.
     The four values correspond to roughly 0.22/0.16/0.11/0.075 bits per pixel;
     the default 4K/23-fps ``best`` profile therefore receives about 42 Mbit/s.
     """
@@ -1609,7 +1610,20 @@ def _capture_dims(si: SystemInfo, spec: RecordSpec) -> Optional[tuple[int, int]]
 
 
 def _output_dims(si: SystemInfo, spec: RecordSpec) -> Optional[tuple[int, int]]:
-    return _RES_DIMS.get((spec.resolution or "native").lower()) or _capture_dims(si, spec)
+    dims = _RES_DIMS.get((spec.resolution or "native").lower()) or _capture_dims(si, spec)
+    return tuple(n + n % 2 for n in dims) if dims else None
+
+
+def _geometry_filter(si: SystemInfo, spec: RecordSpec) -> Optional[str]:
+    """Fit preset frames, or preserve all native pixels with at most 1px padding."""
+    scale = _scale_chain(spec.resolution)
+    if scale:
+        return scale
+    # Window bounds can differ from the full screen and change during capture.
+    dims = None if spec.win_title or spec.win_hwnd else _capture_dims(si, spec)
+    if dims and all(n % 2 == 0 for n in dims):
+        return None
+    return "pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0"
 
 
 def _pixrate_mp(si: SystemInfo, spec: RecordSpec) -> Optional[float]:
@@ -1648,7 +1662,7 @@ def _speed_tier(pixrate: Optional[float]) -> int:
 
 
 def encoder_args(enc: EncoderChoice, quality: str,
-                 pixrate: Optional[float] = None) -> list[str]:
+                 pixrate: Optional[float] = None, chroma: str = "420") -> list[str]:
     """Real-time-capable, quality-first parameters for the chosen encoder.
 
     Screen capture is a LIVE source: the encoder must keep up with wall-clock
@@ -1696,9 +1710,13 @@ def encoder_args(enc: EncoderChoice, quality: str,
         qp = [18, 22, 25, 28][qi]
         a += ["-quality", usage, "-rc", "cqp", "-qp_i", str(qp), "-qp_p", str(qp)]
     elif enc.kind == "videotoolbox":
-        # Enhanced quality for 4K: lower q:v = better quality
-        vq = [70, 60, 50, 40][qi]
-        a += ["-q:v", str(vq), "-realtime", "1"]
+        # FFmpeg's VideoToolbox qscale is Apple-Silicon-only. Under Rosetta,
+        # platform.machine() is x86_64 too, so conservatively use bitrate there.
+        if platform.machine().lower() in ("arm64", "aarch64"):
+            a += ["-q:v", str([70, 60, 50, 40][qi])]  # higher = better
+        else:
+            a += ["-b:v", f"{_recording_bitrate_k(quality, pixrate)}k"]
+        a += ["-realtime", "1"]
         if enc.codec == "hevc":
             a += ["-tag:v", "hvc1"]
     else:  # software libx264 / libopenh264 / libx265 / libsvtav1
@@ -1706,7 +1724,7 @@ def encoder_args(enc: EncoderChoice, quality: str,
             # OpenH264 exposes quality/bitrate rate-control modes but not CRF
             # or x264-style speed presets. Give quality mode a resolution- and
             # frame-rate-aware target so the fallback remains suitable for 4K.
-            bitrate_k = _openh264_recording_bitrate_k(quality, pixrate)
+            bitrate_k = _recording_bitrate_k(quality, pixrate)
             maxrate_k = int(round(bitrate_k * 1.25))
             a += ["-rc_mode", "quality", "-b:v", f"{bitrate_k}k",
                   "-maxrate", f"{maxrate_k}k", "-profile:v", "high"]
@@ -1722,25 +1740,34 @@ def encoder_args(enc: EncoderChoice, quality: str,
             # Enhanced quality for 4K: lower CRF = better quality
             a += ["-preset", ["medium", "fast", "faster", "veryfast"][st],
                   "-crf", str([18, 20, 23, 26][qi])]
+            if chroma == "444":
+                a += ["-profile:v", "main444-8"]
         else:  # libx264
             # Enhanced quality for 4K: lower CRF = better quality
             a += ["-preset", ["slow", "medium", "fast", "veryfast"][st],
-                  "-crf", str([16, 18, 21, 24][qi]), "-profile:v", "high"]
+                  "-crf", str([16, 18, 21, 24][qi]), "-profile:v",
+                  "high444" if chroma == "444" else "high"]
     return a
 
 
 # ---------------------------------------------------------------------------
 # Pixel format / hwupload glue
 # ---------------------------------------------------------------------------
-def video_filter_for(enc: EncoderChoice) -> Optional[str]:
+def _sdr_video_filter(pix_fmt: str) -> str:
+    """Convert samples and label final frames consistently before encoding."""
+    return (f"scale=out_color_matrix=bt709:out_range=tv,format={pix_fmt},"
+            "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv")
+
+
+def video_filter_for(enc: EncoderChoice, chroma: str = "420") -> Optional[str]:
     if enc.kind == "vaapi":
-        return "format=nv12,hwupload"
+        return _sdr_video_filter("nv12") + ",hwupload"
     if enc.kind == "qsv":
-        return "format=nv12,hwupload=extra_hw_frames=64"
+        return _sdr_video_filter("nv12") + ",hwupload=extra_hw_frames=64"
     if enc.kind == "software":
-        return "format=yuv420p"
+        return _sdr_video_filter("yuv444p" if chroma == "444" else "yuv420p")
     # nvenc / videotoolbox / amf accept yuv420p directly via auto-conversion
-    return "format=yuv420p" if enc.kind in ("nvenc", "amf", "videotoolbox") else None
+    return _sdr_video_filter("yuv420p") if enc.kind in ("nvenc", "amf", "videotoolbox") else None
 
 
 # ---------------------------------------------------------------------------
@@ -2016,6 +2043,28 @@ class RecordSpec:
     camera_position: str = "bottom-right"  # top-left | top-right | bottom-left | bottom-right | center
     # Mic noise suppression (NoiseTorch-style, built in via ffmpeg afftdn).
     denoise: str = "off"               # off | light | medium | strong
+    chroma: str = "420"                # 444: software H.264/HEVC file recordings only
+
+
+def _recording_encoder(si: SystemInfo, spec: RecordSpec) -> EncoderChoice:
+    """Enforce the opt-in detail mode without silently losing its chroma."""
+    if spec.chroma not in CHROMA_MODES:
+        die("--chroma must be 420 or 444")
+    if spec.chroma == "420":
+        return choose_encoder(si, "h264" if spec.stream_url else spec.codec,
+                              spec.force_software, spec.backend)
+    if spec.stream_url:
+        die("--chroma 444 is for file recordings; use --chroma 420 for streaming.")
+    if spec.backend == "gpu":
+        die("--chroma 444 requires software encoding; use --backend auto or cpu, not --gpu.")
+    codec = "h264" if spec.codec == "auto" else spec.codec
+    name = {"h264": "libx264", "hevc": "libx265"}.get(codec)
+    if not name:
+        die("--chroma 444 supports --codec auto, h264 or hevc; AV1 is not supported.")
+    if name not in si.encoders:
+        die(f"--chroma 444 requires {name} in FFmpeg; install a build with it "
+            "or use --chroma 420.")
+    return EncoderChoice(name, "software", codec, "4:4:4 detail mode (CPU)")
 
 
 def _audio_encode_args(spec: RecordSpec) -> list[str]:
@@ -2093,8 +2142,7 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
     cam_index = None
     if is_video:
         # RTMP ingests want H.264; force it for streaming regardless of --codec.
-        enc = choose_encoder(si, "h264" if spec.stream_url else spec.codec,
-                             spec.force_software, spec.backend)
+        enc = _recording_encoder(si, spec)
         geometry = spec.geometry or spec.region
         pre, vin = screen_input_args(
             si, spec.fps, geometry, enc, spec.win_title,
@@ -2126,7 +2174,7 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
     maps: list[str] = []
 
     if is_video:
-        enc_vf = video_filter_for(enc)  # type: ignore[arg-type]  format/hwupload for the encoder
+        enc_vf = video_filter_for(enc, spec.chroma)  # type: ignore[arg-type]
         capture_vf = None
         if si.os == "macos" and geometry:
             region = _parse_wxhxy(geometry)
@@ -2135,7 +2183,7 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
                 capture_vf = f"crop={rw}:{rh}:{rx}:{ry}"
         # Output-resolution scaling runs in software BEFORE any hwupload, so it
         # works identically for software, NVENC, and VAAPI/QSV encoders.
-        sc = _scale_chain(spec.resolution)
+        sc = _geometry_filter(si, spec)
         if cam_index is not None:
             # Composite: scale the screen to the output size, scale the webcam,
             # overlay it at the chosen corner, THEN apply the encoder's format
@@ -2148,6 +2196,7 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
             comp_out = "[v]" if enc_vf else "[comp]"
             filtergraph_parts.append(
                 f"[bg][cam]overlay={_overlay_position_expr(spec.camera_position)}"
+                + (":format=yuv444" if spec.chroma == "444" else "")
                 + (f",{enc_vf}{comp_out}" if enc_vf else comp_out))
             maps += ["-map", comp_out]
         else:
@@ -2187,12 +2236,12 @@ def build_command(si: SystemInfo, spec: RecordSpec) -> tuple[list[str], str]:
             dims = _output_dims(si, spec) or (1920, 1080)
             cmd += _stream_encoder_args(enc, _stream_bitrate_k(*dims, spec.fps), spec.fps)
         else:
-            cmd += encoder_args(enc, spec.quality, _pixrate_mp(si, spec))  # type: ignore[arg-type]
+            cmd += encoder_args(enc, spec.quality, _pixrate_mp(si, spec), spec.chroma)  # type: ignore[arg-type]
         # Force constant frame rate so playback speed is always correct even if
         # the encoder briefly falls behind the live source (no slow-motion).
         cmd += ["-fps_mode", "cfr", "-r", str(spec.fps)]
         # color metadata for fidelity
-        cmd += ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
+        cmd += ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv"]
     if audio_inputs or silent:
         # RTMP ingests (YouTube) require AAC, not FLAC.
         cmd += (["-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2"]
@@ -2248,10 +2297,18 @@ def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False,
     VAAPI is used only on Intel/AMD when available. Presets adapt to the output
     pixel rate: slower/higher-quality when there's headroom, fast at 4K.
     """
+    if spec.chroma not in CHROMA_MODES:
+        die("--chroma must be 420 or 444")
     qi = _quality_index(spec.quality)
     st = _speed_tier(_pixrate_mp(si, spec))
     if qi >= 2:
         st = min(3, st + 1)
+    if spec.chroma == "444":
+        enc = _recording_encoder(si, spec)
+        args = encoder_args(enc, spec.quality, _pixrate_mp(si, spec), spec.chroma)[2:]
+        params = [f"{args[i].lstrip('-').replace(':v', '')}={args[i + 1]}"
+                  for i in range(0, len(args), 2)]
+        return enc.name, params, "software", ""
     codec = spec.codec
     # wf-recorder cannot use NVENC/QSV/AMF.  Its quality-first automatic mode
     # therefore checks the usable VAAPI codecs in the same order as FFmpeg and
@@ -2292,7 +2349,7 @@ def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False,
         die(_software_encoder_error(si, "h264")
             + " A software H.264 encoder is required by wf-recorder here.")
     if sw_h264 == "libopenh264":
-        bitrate_k = _openh264_recording_bitrate_k(
+        bitrate_k = _recording_bitrate_k(
             spec.quality, _pixrate_mp(si, spec))
         maxrate_k = int(round(bitrate_k * 1.25))
         return sw_h264, ["rc_mode=quality", f"b={bitrate_k * 1000}",
@@ -2501,8 +2558,7 @@ def _ffmpeg_compose_cmd(si: SystemInfo, spec: RecordSpec, fifo: str,
     and we are streaming; otherwise it is re-encoded (an overlay changes pixels)."""
     streaming = bool(spec.stream_url)
     cam = bool(spec.camera)
-    enc = choose_encoder(si, "h264" if streaming else spec.codec,
-                         spec.force_software, spec.backend) if cam else None
+    enc = _recording_encoder(si, spec) if cam else None
 
     base = [si.ffmpeg, "-y", "-hide_banner",
             "-loglevel", "info" if streaming else "error", "-stats"]
@@ -2554,8 +2610,9 @@ def _ffmpeg_compose_cmd(si: SystemInfo, spec: RecordSpec, fifo: str,
 
     # ---- video: overlay the webcam, or copy the screen through ----
     if cam:
-        enc_vf = video_filter_for(enc)  # type: ignore[arg-type]
+        enc_vf = video_filter_for(enc, spec.chroma)  # type: ignore[arg-type]
         parts.insert(0, f"[{screen_idx}:v][cam]overlay={_overlay_position_expr(spec.camera_position)}"
+                     + (":format=yuv444" if spec.chroma == "444" else "")
                      + (f",{enc_vf}[v]" if enc_vf else "[v]"))
         parts.insert(0, f"[{cam_idx}:v]{_camera_overlay_size(si, spec)}[cam]")
         vmap = "[v]"
@@ -2574,9 +2631,9 @@ def _ffmpeg_compose_cmd(si: SystemInfo, spec: RecordSpec, fifo: str,
             dims = _output_dims(si, spec) or (1920, 1080)
             cmd += _stream_encoder_args(enc, _stream_bitrate_k(*dims, spec.fps), spec.fps)
         else:
-            cmd += encoder_args(enc, spec.quality, _pixrate_mp(si, spec))  # type: ignore[arg-type]
+            cmd += encoder_args(enc, spec.quality, _pixrate_mp(si, spec), spec.chroma)  # type: ignore[arg-type]
         cmd += ["-fps_mode", "cfr", "-r", str(spec.fps),
-                "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
+                "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv"]
     else:
         cmd += ["-c:v", "copy"]
 
@@ -2613,12 +2670,22 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
     # Output-resolution scaling (wf-recorder -F runs an ffmpeg filter chain).
     # The software scale chain can't feed a VAAPI encoder's hw frames, so when
     # scaling is requested on a VAAPI pick, drop to the software encoder.
-    scale = _scale_chain(spec.resolution)
+    scale = _geometry_filter(si, spec)
     if scale and kind == "vaapi":
         if not preview:
-            warn("Scaled output resolution is not supported with VAAPI on Wayland; "
+            warn("Software scaling/padding is not supported with VAAPI on Wayland; "
                  "using the software encoder for this recording.")
         codec, cparams, kind, drm = wf_codec(si, spec, quiet=True, force_software=True)
+    # wf-recorder's implicit software RGB conversion uses full-range defaults
+    # with no colour tags. Convert explicitly, then label the encoded samples
+    # consistently, including intermediates later stream-copied or composited.
+    color_params = ["color_primaries=bt709", "color_trc=bt709",
+                    "colorspace=bt709", "color_range=tv"]
+    pix_fmt = "yuv444p" if spec.chroma == "444" else "yuv420p"
+    if kind == "software" or spec.camera or spec.stream_url:
+        scale = ",".join(f for f in (scale, _sdr_video_filter(pix_fmt)) if f)
+    if kind == "software":
+        cparams += color_params
     container = spec.container or "mkv"
     ts = timestamp()
     out_path = _unique_output_path(out_dir, f"{spec.mode}_{ts}", container)
@@ -2630,7 +2697,7 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
         # polls its stop flag and finalizes cleanly on stop — even when the screen
         # is static (without it a still screen can hang the stop until SIGKILL,
         # which truncates the file). Also gives correct-speed playback.
-        c = [wf, "-o", output, "-D", "-c", codec, "-r", str(spec.fps), "-x", "yuv420p"]
+        c = [wf, "-o", output, "-D", "-c", codec, "-r", str(spec.fps), "-x", pix_fmt]
         for p in cparams:
             c += ["-p", p]
         if kind == "vaapi" and drm:
@@ -2650,7 +2717,14 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
     # so it encodes the screen into an mpegts FIFO which ffmpeg reads to overlay
     # the webcam, mix + denoise the audio, and write the file (or push the FLV).
     if spec.stream_url or spec.camera:
-        wf_h264 = _first_usable_software_encoder(si, "h264")
+        if spec.chroma == "444":
+            if "libx264" not in si.encoders:
+                die("Wayland --chroma 444 webcam overlays require libx264 for the "
+                    "4:4:4 screen intermediate. Install FFmpeg with libx264, "
+                    "record without --camera, or use --chroma 420.")
+            wf_h264 = "libx264"
+        else:
+            wf_h264 = _first_usable_software_encoder(si, "h264")
         if not wf_h264:
             die(_software_encoder_error(si, "h264")
                 + " Wayland webcam/stream composition requires software H.264.")
@@ -2664,13 +2738,15 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
             # quality after overlaying the webcam (preserves quality across the
             # second encode, at all resolutions).
             vcmd = [wf, "-o", output, "-D", "-c", wf_h264, "-r", str(spec.fps),
-                    "-x", "yuv420p"]
+                    "-x", pix_fmt]
             if wf_h264 == "libx264":
                 vcmd += ["-p", "preset=ultrafast", "-p", "crf=14"]
+                if spec.chroma == "444":
+                    vcmd += ["-p", "profile=high444"]
             else:
                 # The screen stream is encoded again after the webcam overlay,
                 # so keep this OpenH264 intermediate generously provisioned.
-                br = _openh264_recording_bitrate_k(
+                br = _recording_bitrate_k(
                     "best", _pixrate_mp(si, spec))
                 vcmd += ["-p", "rc_mode=quality", "-p", f"b={br * 1000}",
                          "-p", f"maxrate={int(round(br * 1.25)) * 1000}",
@@ -2681,7 +2757,7 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
             dims = _output_dims(si, spec) or (1920, 1080)
             br = _stream_bitrate_k(*dims, spec.fps)
             vcmd = [wf, "-o", output, "-D", "-c", wf_h264, "-r", str(spec.fps),
-                    "-x", "yuv420p"]
+                    "-x", pix_fmt]
             if wf_h264 == "libx264":
                 vcmd += ["-p", "preset=veryfast", "-p", "tune=zerolatency",
                          "-p", f"b={br * 1000}",
@@ -2692,6 +2768,8 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
                          "-p", f"maxrate={int(br * 1070)}",
                          "-p", "profile=high", "-p", "bf=0"]
             vcmd += ["-p", f"g={spec.fps * 2}"]
+        for param in color_params:
+            vcmd += ["-p", param]
         if wl_geom:
             vcmd += ["-g", wl_geom]
         if scale:
@@ -3192,7 +3270,7 @@ def _mode_for_audio(
 # maps to the matching argparse dest; values become argparse defaults so an
 # explicit CLI flag always wins.
 _RC_KEYS = (
-    "mode", "quality", "codec", "fps", "resolution", "stream_url", "out", "region", "audio_rate",
+    "mode", "quality", "codec", "fps", "resolution", "chroma", "stream_url", "out", "region", "audio_rate",
     "audio_codec", "audio_channels", "container", "mic_device", "system_device", "software",
     "duration", "countdown", "open", "quiet", "ffmpeg",
     "camera", "camera_size", "camera_position", "denoise",
@@ -3398,7 +3476,7 @@ def cmd_record(args) -> int:
     stream_url = _stream_target(ingest, key) if key else None
     spec = RecordSpec(
         mode=mode, quality=args.quality, codec=args.codec, fps=args.fps,
-        resolution=args.resolution,
+        resolution=args.resolution, chroma=args.chroma,
         region=args.region, out_dir=args.out or "", audio_rate=args.audio_rate,
         audio_codec=args.audio_codec, audio_channels=args.audio_channels, mic=mic, monitor=mon,
         force_software=args.software, backend=backend, container=args.container,
@@ -3600,6 +3678,10 @@ def build_parser(rc: Optional[dict] = None) -> argparse.ArgumentParser:
                    default=d("codec", DEFAULT_CODEC),
                    help="video codec (default: auto — hardware AV1, HEVC, H.264; "
                         "then software H.264)")
+    r.add_argument("--chroma", choices=CHROMA_MODES, default=d("chroma", "420"),
+                   help="colour detail: 420 (default, compatible) or 444 "
+                        "(CPU libx264/libx265 files; sharper coloured text, "
+                        "higher CPU use, limited player support; no streaming)")
     r.add_argument("-f", "--fps", type=int, default=d("fps", DEFAULT_FPS),
                    help="frames per second (default: 23)")
     r.add_argument("-o", "--out", default=d("out", None), help="output directory")
@@ -3961,6 +4043,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     quality_var = tk.StringVar(value=DEFAULT_QUALITY)
     res_var = tk.StringVar(value=DEFAULT_RESOLUTION)
     codec_var = tk.StringVar(value=DEFAULT_CODEC)
+    chroma_var = tk.StringVar(value="420")
     fps_var = tk.StringVar(value=str(DEFAULT_FPS))
     acodec_var = tk.StringVar(value="flac")
     achan_var = tk.StringVar(value="stereo")
@@ -4040,6 +4123,11 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     res_hint = label(grid, "native = capture size · 4k best for YouTube",
                      fg=C["faint"], font=F["hint"])
     res_hint.grid(row=1, column=2, columnspan=4, sticky="w", pady=4)
+    label(grid, "Chroma", fg=C["muted"]).grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+    chroma_cb = _combo(grid, chroma_var, CHROMA_MODES)
+    chroma_cb.grid(row=2, column=1, sticky="ew", padx=(0, 14), pady=4)
+    label(grid, "444 = finer colour detail · CPU files only",
+          fg=C["muted"], font=F["hint"]).grid(row=2, column=2, columnspan=4, sticky="w", pady=4)
 
     # encoder transparency chip
     enc_chip = label(inner, "", fg=C["muted"], font=F["chip"])
@@ -4425,7 +4513,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
 
         # video-only rows
         vid_state = "readonly" if is_video else "disabled"
-        for cb in (quality_cb, codec_cb, fps_cb, res_cb):
+        for cb in (quality_cb, codec_cb, fps_cb, res_cb, chroma_cb):
             cb.configure(state=vid_state)
         region_entry.configure(state=("normal" if is_video else "disabled"))
         region_hint.configure(
@@ -4444,15 +4532,18 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
                 except Exception:  # noqa: BLE001
                     spec = RecordSpec(mode=mode_var.get(), codec=codec_var.get(),
                                       backend=backend_var.get())
-                name, _p, kind, _d = wf_codec(si, spec)
-                fg = C["warn"] if kind == "software" else C["accent"]
-                enc_chip.configure(text=f"{name}  ·  {kind}  ·  wf-recorder (Wayland)", fg=fg)
+                try:
+                    name, _p, kind, _d = wf_codec(si, spec)
+                    fg = C["warn"] if kind == "software" else C["accent"]
+                    enc_chip.configure(text=f"{name}  ·  {kind}  ·  wf-recorder (Wayland)", fg=fg)
+                except (SystemExit, ValueError):
+                    enc_chip.configure(text="unsupported codec / chroma / backend combination", fg=C["warn"])
             else:
                 try:
-                    ec = choose_encoder(si, codec_var.get(), False, backend_var.get())
+                    ec = _recording_encoder(si, _current_spec())
                     fg = C["warn"] if ec.kind == "software" else C["accent"]
                     enc_chip.configure(text=f"{ec.name}  ·  {ec.kind}  ·  {ec.note}", fg=fg)
-                except SystemExit:
+                except (SystemExit, ValueError):
                     enc_chip.configure(text="no usable encoder for this codec", fg=C["warn"])
         else:
             enc_chip.configure(text="audio-only — no video encoder", fg=C["faint"])
@@ -4501,6 +4592,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             quality=quality_var.get(),
             resolution=res_var.get(),
             codec=codec_var.get(),
+            chroma=chroma_var.get(),
             fps=fps,
             out_dir=out_var.get(),
             audio_codec=acodec_var.get(),
@@ -4899,11 +4991,11 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     root.bind("<Escape>", _on_escape)
 
     # ---- wire traces (live preview + dependent state) ---------------------
-    for v in (mode_var, quality_var, res_var, codec_var, fps_var, acodec_var, achan_var,
+    for v in (mode_var, quality_var, res_var, codec_var, chroma_var, fps_var, acodec_var, achan_var,
               region_var, mic_var, mon_var, out_var, backend_var, source_var, stream_var,
               denoise_var, camera_var, camsize_var, campos_var):
         v.trace_add("write", schedule_preview)
-    for v in (mode_var, codec_var, acodec_var, backend_var):
+    for v in (mode_var, codec_var, chroma_var, stream_var, acodec_var, backend_var):
         v.trace_add("write", _refresh_dependent)
     mode_var.trace_add("write", _restyle_segments)
     backend_var.trace_add("write", _restyle_backend)

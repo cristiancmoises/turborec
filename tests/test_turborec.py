@@ -1,6 +1,8 @@
 import argparse
 import io
+import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -611,6 +613,219 @@ class OpenH264FallbackTests(unittest.TestCase):
         self.assertFalse(any(
             item.startswith(("crf=", "preset=", "tune=", "bufsize="))
             for item in params))
+
+
+class VideoFidelityTests(unittest.TestCase):
+    def spec(self, **kwargs):
+        return tr.RecordSpec(mode="video_only", out_dir="/unused", **kwargs)
+
+    def command(self, spec, **kwargs):
+        si = tr.SystemInfo(os="linux", display_server="x11", screen="1279x719",
+                           encoders={"libx264", "libx265"}, **kwargs)
+        with mock.patch.object(tr, "ensure_dir"):
+            return tr.build_command(si, spec)[0]
+
+    def test_default_chroma_remains_compatible_420(self):
+        self.assertEqual(getattr(tr.RecordSpec(mode="video_only"), "chroma", None), "420")
+        args = tr.build_parser().parse_args(["record"])
+        self.assertEqual(getattr(args, "chroma", None), "420")
+
+    def test_chroma_cli_and_config_are_explicit_and_overridable(self):
+        self.assertEqual(tr.build_parser().parse_args(["record", "--chroma", "444"]).chroma, "444")
+        parser = tr.build_parser({"chroma": "444"})
+        self.assertEqual(parser.parse_args(["record"]).chroma, "444")
+        self.assertEqual(parser.parse_args(["record", "--chroma", "420"]).chroma, "420")
+
+    def test_444_auto_uses_x264_high444_without_hardware_probe(self):
+        si = tr.SystemInfo(os="windows", gpu_vendor="nvidia", has_gpu=True,
+                           encoders={"h264_nvenc", "libx264"})
+        with mock.patch.object(tr, "ensure_dir"), \
+                mock.patch.object(tr, "_hardware_encoder_usable", return_value=True):
+            cmd, _out = tr.build_command(si, self.spec(chroma="444"))
+        self.assertEqual(cmd[cmd.index("-c:v") + 1], "libx264")
+        self.assertEqual(cmd[cmd.index("-profile:v") + 1], "high444")
+        self.assertIn("format=yuv444p", cmd[cmd.index("-filter_complex") + 1])
+
+    def test_444_hevc_uses_x265_main444_8(self):
+        cmd = self.command(self.spec(codec="hevc", chroma="444", backend="cpu"))
+        self.assertEqual(cmd[cmd.index("-c:v") + 1], "libx265")
+        self.assertIn("-profile:v", cmd)
+        self.assertEqual(cmd[cmd.index("-profile:v") + 1], "main444-8")
+        self.assertIn("format=yuv444p", cmd[cmd.index("-filter_complex") + 1])
+
+    def test_444_rejects_stream_av1_and_explicit_gpu(self):
+        for options in ({"stream_url": "rtmps://example.invalid/live/test"},
+                        {"codec": "av1"}, {"backend": "gpu"}):
+            with self.subTest(options=options), self.assertRaises(SystemExit), \
+                    mock.patch("sys.stderr", new_callable=io.StringIO):
+                self.command(self.spec(chroma="444", **options))
+
+    def test_444_does_not_fall_back_to_420_only_openh264(self):
+        si = tr.SystemInfo(os="linux", encoders={"libopenh264"})
+        with mock.patch.object(tr, "ensure_dir"), \
+                mock.patch.object(tr, "_hardware_encoder_usable", return_value=True), \
+                mock.patch("sys.stderr", new_callable=io.StringIO), \
+                self.assertRaises(SystemExit):
+            tr.build_command(si, self.spec(chroma="444"))
+
+    def test_native_odd_region_is_padded_before_pixel_conversion(self):
+        cmd = self.command(self.spec(resolution="native"))
+        vf = cmd[cmd.index("-filter_complex") + 1]
+        self.assertIn("pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0", vf)
+        self.assertLess(vf.index("pad="), vf.index("format=yuv420p"))
+
+    def test_native_windows_capture_pads_even_if_screen_size_is_even(self):
+        si = tr.SystemInfo(os="windows", screen="1920x1080", encoders={"libx264"})
+        with mock.patch.object(tr, "ensure_dir"):
+            cmd, _out = tr.build_command(si, self.spec(resolution="native", win_hwnd="123"))
+        self.assertIn("pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0", cmd[cmd.index("-filter_complex") + 1])
+
+    def test_444_webcam_overlay_does_not_subsample_before_encode(self):
+        cmd = self.command(self.spec(chroma="444", camera="/dev/video0"))
+        self.assertIn(":format=yuv444", cmd[cmd.index("-filter_complex") + 1])
+
+    def test_fitted_scaling_uses_even_dimensions_and_square_pixels(self):
+        chain = tr._scale_chain("4k")
+        self.assertIn("force_divisible_by=2", chain)
+        self.assertIn("setsar=1", chain)
+
+    def test_wayland_444_uses_444_intermediate_for_webcam(self):
+        si = tr.SystemInfo(os="linux", display_server="wayland",
+                           encoders={"libx264"}, wayland_recorder="wf-recorder",
+                           wl_default_output="DP-1", screen="1920x1080")
+        plan = tr._build_wayland_plan(si, self.spec(chroma="444", camera="/dev/video0"),
+                                     True, "/unused", False, False)
+        cmd = plan.procs[0][1]
+        self.assertEqual(cmd[cmd.index("-x") + 1], "yuv444p")
+        self.assertIn("profile=high444", cmd)
+        self.assertIn("high444", plan.procs[1][1])
+
+    def test_wayland_hevc_444_webcam_requires_444_capable_intermediate(self):
+        si = tr.SystemInfo(os="linux", display_server="wayland",
+                           encoders={"libx265", "libopenh264"},
+                           wayland_recorder="wf-recorder", wl_default_output="DP-1",
+                           screen="1920x1080")
+        with mock.patch.object(tr, "_hardware_encoder_usable", return_value=True), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as stderr, \
+                self.assertRaises(SystemExit):
+            tr._build_wayland_plan(si, self.spec(codec="hevc", chroma="444", camera="/dev/video0"),
+                                   True, "/unused", False, False)
+        self.assertIn("libx264", stderr.getvalue())
+        self.assertIn("--chroma 420", stderr.getvalue())
+
+    def test_wayland_software_conversion_matches_bt709_metadata(self):
+        si = tr.SystemInfo(os="linux", display_server="wayland",
+                           encoders={"libx264"}, wayland_recorder="wf-recorder",
+                           wl_default_output="DP-1", screen="1920x1080")
+        plan = tr._build_wayland_plan(si, self.spec(resolution="native"),
+                                     True, "/unused", False, False)
+        cmd = plan.procs[0][1]
+        self.assertIn("-F", cmd)
+        self.assertIn("out_color_matrix=bt709:out_range=tv", cmd[cmd.index("-F") + 1])
+        self.assertIn("colorspace=bt709", cmd)
+        self.assertIn("color_range=tv", cmd)
+
+    def test_wayland_native_odd_hardware_falls_back_before_padding(self):
+        si = tr.SystemInfo(os="linux", display_server="wayland", gpu_vendor="intel",
+                           vaapi_device="/dev/dri/renderD128", screen="1279x719",
+                           encoders={"h264_vaapi", "libx264"},
+                           wayland_recorder="wf-recorder", wl_default_output="DP-1")
+        with mock.patch.object(tr, "_hardware_encoder_usable", return_value=True):
+            plan = tr._build_wayland_plan(si, self.spec(codec="h264", resolution="native"),
+                                         True, "/unused", False, False)
+        cmd = plan.procs[0][1]
+        self.assertEqual(cmd[cmd.index("-c") + 1], "libx264")
+        self.assertIn("pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0", cmd[cmd.index("-F") + 1])
+
+    def test_intel_videotoolbox_uses_bitrate_not_unsupported_qscale(self):
+        enc = tr.EncoderChoice("h264_videotoolbox", "videotoolbox", "h264")
+        with mock.patch.object(tr.platform, "machine", return_value="x86_64"):
+            args = tr.encoder_args(enc, "best", 190.7712)
+        self.assertNotIn("-q:v", args)
+        self.assertIn("-b:v", args)
+        self.assertGreaterEqual(int(args[args.index("-b:v") + 1][:-1]), 40000)
+
+    def test_apple_silicon_videotoolbox_keeps_quality_control(self):
+        enc = tr.EncoderChoice("hevc_videotoolbox", "videotoolbox", "hevc")
+        with mock.patch.object(tr.platform, "machine", return_value="arm64"):
+            best = tr.encoder_args(enc, "best", 190.7712)
+            compact = tr.encoder_args(enc, "compact", 190.7712)
+        self.assertGreater(int(best[best.index("-q:v") + 1]),
+                           int(compact[compact.index("-q:v") + 1]))
+        self.assertIn("hvc1", best)
+
+    def test_streaming_stays_h264_420_with_two_second_gop(self):
+        cmd = self.command(self.spec(stream_url="rtmps://example.invalid/live/test"))
+        self.assertEqual(cmd[cmd.index("-c:v") + 1], "libx264")
+        self.assertEqual(cmd[cmd.index("-pix_fmt") + 1], "yuv420p")
+        self.assertEqual(cmd[cmd.index("-g") + 1], "46")
+        self.assertEqual(cmd[-2:], ["flv", "rtmps://example.invalid/live/test"])
+
+    def test_wayland_native_even_hardware_does_not_receive_software_filter(self):
+        si = tr.SystemInfo(os="linux", display_server="wayland", gpu_vendor="intel",
+                           vaapi_device="/dev/dri/renderD128", screen="1920x1080",
+                           encoders={"h264_vaapi", "libx264"},
+                           wayland_recorder="wf-recorder", wl_default_output="DP-1")
+        with mock.patch.object(tr, "_hardware_encoder_usable", return_value=True):
+            plan = tr._build_wayland_plan(si, self.spec(codec="h264", resolution="native"),
+                                         True, "/unused", False, False)
+        cmd = plan.procs[0][1]
+        self.assertEqual(cmd[cmd.index("-c") + 1], "h264_vaapi")
+        self.assertNotIn("-F", cmd)
+
+    def test_wayland_rejects_invalid_chroma_from_config(self):
+        si = tr.SystemInfo(os="linux", display_server="wayland",
+                           encoders={"libx264"}, wayland_recorder="wf-recorder",
+                           wl_default_output="DP-1", screen="1920x1080")
+        with mock.patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+            tr._build_wayland_plan(si, self.spec(chroma="invalid"), True, "/unused", False, False)
+
+
+@unittest.skipUnless(os.environ.get("TURBOREC_FFMPEG_TESTS") == "1",
+                     "set TURBOREC_FFMPEG_TESTS=1 for synthetic CPU encode checks")
+class SyntheticVideoFidelityTests(unittest.TestCase):
+    def test_cpu_encodes_have_expected_geometry_chroma_and_color_tags(self):
+        ffmpeg, ffprobe = shutil.which("ffmpeg"), shutil.which("ffprobe")
+        if not ffmpeg or not ffprobe:
+            self.skipTest("FFmpeg and FFprobe are required")
+        encoders = tr.list_encoders(ffmpeg)
+        for codec, chroma, source_size, resolution, width, height, pix_fmt in (
+                ("h264", "420", "127x71", "native", 128, 72, "yuv420p"),
+                ("h264", "444", "127x71", "native", 128, 72, "yuv444p"),
+                ("hevc", "420", "127x71", "native", 128, 72, "yuv420p"),
+                ("hevc", "444", "127x71", "native", 128, 72, "yuv444p"),
+                ("h264", "420", "101x199", "720p", 1280, 720, "yuv420p"),
+                ("h264", "444", "101x199", "720p", 1280, 720, "yuv444p")):
+            with self.subTest(codec=codec, chroma=chroma, resolution=resolution):
+                required = "libx264" if codec == "h264" else "libx265"
+                if required not in encoders:
+                    self.skipTest(f"{required} is required")
+                si = tr.SystemInfo(os="linux", display_server="x11", ffmpeg=ffmpeg,
+                                   screen=source_size, encoders=encoders)
+                spec = tr.RecordSpec(mode="video_only", codec=codec, chroma=chroma,
+                                     resolution=resolution, backend="cpu", out_dir="/unused")
+                with mock.patch.object(tr, "ensure_dir"):
+                    built, _out = tr.build_command(si, spec)
+                cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                       "-i", f"testsrc=s={source_size}:r=23"]
+                cmd += built[built.index("-filter_complex"):-1]
+                cmd += ["-frames:v", "1", "-threads", "2"]
+                if codec == "hevc":
+                    cmd += ["-x265-params", "pools=2:frame-threads=1:log-level=error"]
+                encoded = subprocess.run(cmd + ["-f", "matroska", "pipe:1"],
+                                         capture_output=True, timeout=30)
+                self.assertEqual(encoded.returncode, 0, encoded.stderr.decode(errors="replace"))
+                probed = subprocess.run([ffprobe, "-v", "error", "-show_streams", "-of", "json", "pipe:0"],
+                                        input=encoded.stdout, capture_output=True, timeout=15)
+                self.assertEqual(probed.returncode, 0, probed.stderr.decode(errors="replace"))
+                stream = json.loads(probed.stdout)["streams"][0]
+                self.assertEqual((stream["width"], stream["height"], stream["pix_fmt"]),
+                                 (width, height, pix_fmt))
+                self.assertEqual(stream["sample_aspect_ratio"], "1:1")
+                self.assertEqual(stream["color_space"], "bt709")
+                self.assertEqual(stream.get("color_transfer"), "bt709")
+                self.assertEqual(stream.get("color_primaries"), "bt709")
+                self.assertEqual(stream["color_range"], "tv")
 
 
 class DurationParsingTests(unittest.TestCase):

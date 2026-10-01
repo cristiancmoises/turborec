@@ -29,11 +29,27 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Build pinned ZUPT for Linux archive round-trip tests
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh packaging/install-zupt.sh "${RUNNER_TEMP}/zupt/bin"
+          echo "${RUNNER_TEMP}/zupt/bin" >> "${GITHUB_PATH}"
+
       - name: Run release-gate tests
         run: |
           python -m py_compile turborec.py
           python -m unittest discover -s tests -v
           python turborec.py --version
+
+      - name: Validate real CPU video output
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          TURBOREC_FFMPEG_TESTS=1 python -m unittest discover -s tests -p test_turborec.py -v
 
       - name: Require the tag and source version to match
         shell: bash
@@ -43,7 +59,7 @@ jobs:
           test "${GITHUB_REF_NAME}" = "v${VERSION}"
 
   linux:
-    name: Build Linux packages + portable tarball
+    name: Build Linux packages + portable ZUPT archives
     runs-on: ubuntu-latest
     needs: test
 
@@ -57,7 +73,13 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             dpkg-dev rpm fakeroot file libfuse2 wget \
             librsvg2-bin desktop-file-utils imagemagick \
-            nsis p7zip-full
+            nsis p7zip-full build-essential curl
+
+      - name: Build the verified pinned ZUPT compressor
+        run: |
+          set -eu
+          sh packaging/install-zupt.sh "${RUNNER_TEMP}/zupt/bin"
+          echo "${RUNNER_TEMP}/zupt/bin" >> "${GITHUB_PATH}"
 
       - name: Build packages
         env:
@@ -70,32 +92,36 @@ jobs:
           packaging/build-rpm.sh
           packaging/build-appimage.sh
           packaging/build-windows.sh
-          # Architecture-independent tarball — installs on any Unix (incl. the BSDs).
+          # Architecture-independent TAR-in-ZUPT — portable Unix payload.
           packaging/build-tarball.sh
           # Complete immutable source tree for downstream repositories.
           packaging/build-source-tarball.sh
 
-      - name: Collect artifacts
+      - name: Test the actual portable and source archive round trips
+        run: python3 -m unittest discover -s tests -p test_release_metadata.py -v
+
+      - name: Collect only the required Linux-built release assets
         run: |
-          mkdir -p dist
-          # Exclude the downloaded appimagetool itself (it is an *.AppImage too).
-          find . -path ./dist -prune -o \
-            \( -name '*.deb' -o -name '*.rpm' -o -iname '*.AppImage' \
-               -o -iname '*-windows-x64-setup.exe' \) \
-            ! -iname 'appimagetool*' -type f -print -exec cp -f {} dist/ \;
-          echo "Artifacts:"
-          ls -l dist
+          set -eu
+          VERSION="$(sed -n 's/^VERSION = "\(.*\)"/\1/p' turborec.py | head -1)"
+          mkdir -p "${RUNNER_TEMP}/release-linux"
+          for name in \
+            "Turbo_Recorder-${VERSION}-windows-x64-setup.exe" \
+            "Turbo_Recorder-${VERSION}-x86_64.AppImage" \
+            "turborec-${VERSION}-1.noarch.rpm" \
+            "turborec-${VERSION}-1.src.rpm" \
+            "turborec-${VERSION}-source.zupt" \
+            "turborec-${VERSION}.zupt" \
+            "turborec_${VERSION}_all.deb"; do
+            test -s "dist/${name}"
+            cp "dist/${name}" "${RUNNER_TEMP}/release-linux/${name}"
+          done
 
       - name: Upload Linux build artifacts
         uses: actions/upload-artifact@v5
         with:
           name: release-linux
-          path: |
-            dist/*.deb
-            dist/*.rpm
-            dist/*.AppImage
-            dist/*-windows-x64-setup.exe
-            dist/*.tar.gz
+          path: ${{ runner.temp }}/release-linux/*
           if-no-files-found: error
 
   freebsd:
@@ -162,6 +188,12 @@ jobs:
           cp "$(find . -type f -name ffprobe.exe | head -1)" ffprobe.exe
           ./ffmpeg.exe -version | head -1
 
+      - name: Validate pixel fidelity with the bundled FFmpeg build
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATH="${PWD}:${PATH}" TURBOREC_FFMPEG_TESTS=1 python -m unittest discover -s tests -p test_turborec.py -v
+
       - name: Build a self-contained .exe (ffmpeg bundled) with PyInstaller
         shell: bash
         run: |
@@ -219,14 +251,26 @@ jobs:
       - name: Install GNU Guix
         uses: PromyLOPh/guix-install-action@v1
 
-      - name: Build a relocatable (-RR) binary tarball
+      - name: Build the verified pinned ZUPT compressor
         run: |
-          set -eux
-          guix pack -RR -S /bin=bin -e "(primitive-load \"$PWD/guix.scm\")" > pack.txt
+          set -eu
+          sh packaging/install-zupt.sh "${RUNNER_TEMP}/zupt/bin"
+          echo "${RUNNER_TEMP}/zupt/bin" >> "${GITHUB_PATH}"
+
+      - name: Build a relocatable (-RR) TAR and compress it once with ZUPT
+        run: |
+          set -eu
+          guix pack -RR --compression=none --system=x86_64-linux -S /bin=bin \
+            -e "(primitive-load \"$PWD/guix.scm\")" > pack.txt
           PACK="$(tail -1 pack.txt)"
           VER="$(sed -n 's/^VERSION = "\(.*\)"/\1/p' turborec.py | head -1)"
+          WORK="$(mktemp -d "${RUNNER_TEMP}/guix-zupt.XXXXXX")"
+          trap 'rm -rf -- "${WORK}"' EXIT
+          cp "$PACK" "${WORK}/turborec-${VER}-guix-x86_64.tar"
           mkdir -p out
-          cp "$PACK" "out/turborec-${VER}-guix-x86_64.tar.gz"
+          sh packaging/build-zupt-archive.sh \
+            "${WORK}/turborec-${VER}-guix-x86_64.tar" \
+            "$PWD/out/turborec-${VER}-guix-x86_64.zupt"
           ls -l out
 
       - name: Upload Guix build artifact
@@ -234,7 +278,7 @@ jobs:
         with:
           name: release-guix
           path: |
-            out/*.tar.gz
+            out/*.zupt
           if-no-files-found: error
 
   publish:
@@ -244,6 +288,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+
+      - name: Build the verified pinned ZUPT validator
+        run: |
+          set -eu
+          sh packaging/install-zupt.sh "${RUNNER_TEMP}/zupt/bin"
+          echo "${RUNNER_TEMP}/zupt/bin" >> "${GITHUB_PATH}"
 
       - name: Download every platform artifact
         uses: actions/download-artifact@v5
@@ -263,10 +313,10 @@ jobs:
           Turbo_Recorder-${VERSION}-x86_64.AppImage
           turborec-${VERSION}-1.noarch.rpm
           turborec-${VERSION}-1.src.rpm
-          turborec-${VERSION}-guix-x86_64.tar.gz
+          turborec-${VERSION}-guix-x86_64.zupt
           turborec-${VERSION}.pkg
-          turborec-${VERSION}-source.tar.gz
-          turborec-${VERSION}.tar.gz
+          turborec-${VERSION}-source.zupt
+          turborec-${VERSION}.zupt
           turborec_${VERSION}_all.deb"
           for name in ${EXPECTED}; do
             test -s "release-assets/${name}" || {
@@ -283,21 +333,47 @@ jobs:
           }
           (
             cd release-assets
+            for archive in *.zupt; do zupt test "${archive}"; done
             sha256sum ${EXPECTED} | LC_ALL=C sort -k2 > SHA256SUMS
+            sha256sum -c SHA256SUMS
           )
 
-      - name: Publish the release atomically
+      - name: Prepare public release notes from only this changelog section
+        shell: bash
+        run: |
+          set -eu
+          VERSION="$(sed -n 's/^VERSION = "\(.*\)"/\1/p' turborec.py | head -1)"
+          mkdir -p .git/release-work
+          python3 - "$VERSION" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+          version = sys.argv[1]
+          text = Path('CHANGELOG.md').read_text(encoding='utf-8')
+          match = re.search(r'^## \[' + re.escape(version) + r'\][^\n]*\n(.*?)(?=^## \[|\Z)',
+                            text, re.MULTILINE | re.DOTALL)
+          if not match or not match.group(1).strip():
+              raise SystemExit('Current version is missing from CHANGELOG.md')
+          Path('.git/release-work/release-notes.txt').write_text(
+              'Turbo Recorder ' + version + '\n\n' + match.group(1).strip() + '\n',
+              encoding='utf-8')
+          PY
+
+      - name: Stage all assets on a draft release
+        id: draft_release
         uses: softprops/action-gh-release@v2
         with:
+          draft: true
+          body_path: .git/release-work/release-notes.txt
           files: |
             release-assets/*
           fail_on_unmatched_files: true
-          generate_release_notes: true
 
-      - name: Verify every GitHub release asset
+      - name: Verify every draft asset name and downloaded checksum
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.draft_release.outputs.id }}
         run: |
           set -eu
           VERSION="$(sed -n 's/^VERSION = "\(.*\)"/\1/p' turborec.py | head -1)"
@@ -308,15 +384,39 @@ jobs:
           Turbo_Recorder-${VERSION}-x86_64.AppImage
           turborec-${VERSION}-1.noarch.rpm
           turborec-${VERSION}-1.src.rpm
-          turborec-${VERSION}-guix-x86_64.tar.gz
+          turborec-${VERSION}-guix-x86_64.zupt
           turborec-${VERSION}.pkg
-          turborec-${VERSION}-source.tar.gz
-          turborec-${VERSION}.tar.gz
+          turborec-${VERSION}-source.zupt
+          turborec-${VERSION}.zupt
           turborec_${VERSION}_all.deb"
-          ACTUAL="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \
+          ACTUAL="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
             --jq '.assets[].name' | LC_ALL=C sort)"
           WANTED="$(printf '%s\n' ${EXPECTED} | LC_ALL=C sort)"
           test "${ACTUAL}" = "${WANTED}" || {
             diff -u <(printf '%s\n' "${WANTED}") <(printf '%s\n' "${ACTUAL}") || true
             exit 1
           }
+          VERIFY="$(mktemp -d "${RUNNER_TEMP}/release-verify.XXXXXX")"
+          trap 'rm -rf -- "${VERIFY}"' EXIT
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+            --jq '.assets[] | [.id, .name] | @tsv' > "${VERIFY}/assets.tsv"
+          while IFS=$'\t' read -r asset_id name; do
+            gh api -H 'Accept: application/octet-stream' \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" > "${VERIFY}/${name}"
+          done < "${VERIFY}/assets.tsv"
+          cmp release-assets/SHA256SUMS "${VERIFY}/SHA256SUMS"
+          (cd "${VERIFY}" && sha256sum -c SHA256SUMS)
+
+      - name: Promote the fully verified release as latest
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          make_latest: true
+          body_path: .git/release-work/release-notes.txt
+
+      - name: Verify the public latest-release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name')" = "${GITHUB_REF_NAME}"

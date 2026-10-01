@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!--
-  Turbo Recorder v3.9.1 — static documentation and landing page.
+  Turbo Recorder v3.10.0 — static documentation and landing page.
 
   Security properties of this document:
     * no JavaScript
@@ -28,10 +28,10 @@
 <meta name="referrer" content="no-referrer">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#000000">
-<meta name="description" content="Turbo Recorder 3.9.1: quality-first screen and audio recording with distinct FreeBSD, OpenBSD, NetBSD and DragonFly detection, native BSD audio fallbacks, 4K at 23 FPS, GUI and CLI.">
+<meta name="description" content="Turbo Recorder 3.10.0: quality-first screen and audio recording, optional CPU 4:4:4 chroma, pixel-preserving padding, BT.709 Wayland conversion, native packages and ZUPT archives. GUI and CLI, 4K at 23 FPS.">
 <link rel="canonical" href="https://turborec.securityops.co/">
 <link rel="icon" href="/favicon.ico" sizes="any">
-<title>Turbo Recorder 3.9.1 — BSD portability, recording and streaming</title>
+<title>Turbo Recorder 3.10.0 — chroma detail, recording and streaming</title>
 <style>
 :root {
   color-scheme: dark;
@@ -344,7 +344,7 @@ h3 { margin-bottom: 8px; color: var(--ink); font: 780 1rem/1.35 var(--mono); }
 }
 .card .tag.solid { color: #001513; background: var(--cyan); border-color: var(--cyan); }
 .new-card { position: relative; overflow: hidden; }
-.new-card::after { content: "3.9.1"; position: absolute; right: 13px; top: 11px; color: #154448; font: 850 1.1rem var(--mono); }
+.new-card::after { content: "3.10.0"; position: absolute; right: 13px; top: 11px; color: #154448; font: 850 1.1rem var(--mono); }
 
 .downloads { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 .download {
@@ -501,7 +501,7 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
   <div class="shell header-inner">
     <a class="brand" href="#top" aria-label="Turbo Recorder home"><span class="brand-mark" aria-hidden="true"></span>TURBO RECORDER</a>
     <nav class="nav-desktop" aria-label="Primary navigation">
-      <a href="#new">New in 3.9.1</a>
+      <a href="#new">New in 3.10.0</a>
       <a href="#features">Features</a>
       <a href="#download">Download</a>
       <a href="#platforms">Platforms</a>
@@ -512,7 +512,7 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
     <details class="nav-mobile">
       <summary aria-label="Open navigation">Menu</summary>
       <nav class="mobile-panel" aria-label="Mobile navigation">
-        <a href="#new">New in 3.9.1</a>
+        <a href="#new">New in 3.10.0</a>
         <a href="#features">Features</a>
         <a href="#download">Download</a>
         <a href="#interface">Interface</a>
@@ -531,12 +531,12 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
   <section class="hero" id="top">
     <div class="shell hero-grid">
       <div>
-        <p class="eyebrow">Version 3.9.1 · GPL-3.0 · FFmpeg engine</p>
+        <p class="eyebrow">Version 3.10.0 · GPL-3.0 · FFmpeg engine</p>
         <h1>Record. Mix. Overlay. Go <span>live.</span></h1>
         <p class="lede">Turbo Recorder detects the machine, validates the encoder, selects the available audio sources and builds a real-time capture pipeline. Record the screen, microphone and system audio, add a webcam, suppress mic noise, or stream over RTMP — without configuring an OBS scene.</p>
         <p class="platform-line"><strong>Linux</strong> · <strong>macOS</strong> · <strong>Windows</strong> · <strong>FreeBSD</strong> · <strong>OpenBSD</strong> · <strong>NetBSD</strong> · <strong>DragonFly</strong> · <strong>GNU Guix</strong> &nbsp;•&nbsp; GUI + CLI</p>
         <div class="actions">
-          <a class="button primary" href="#download">Download v3.9.1</a>
+          <a class="button primary" href="#download">Download v3.10.0</a>
           <a class="button" href="https://github.com/cristiancmoises/turborec" rel="noopener noreferrer external">View source ↗</a>
           <a class="button" href="https://github.com/cristiancmoises/turborec/blob/main/docs/README.pt-BR.md" rel="noopener noreferrer external">Guia em português ↗</a>
         </div>
@@ -573,8 +573,8 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
 
   <div class="release-band">
     <div class="shell release-band-inner">
-      <div class="release-label"><b>v3.9.1</b><span>release · 6 September 2026</span></div>
-      <div class="release-points"><span>distinct BSD detection</span><span>native sndio / OSS audio</span><span>Best · Auto · 23 FPS · 4K retained</span><span>11 verified release assets</span></div>
+      <div class="release-label"><b>v3.10.0</b><span>release · 30 September 2026</span></div>
+      <div class="release-points"><span>optional CPU 4:4:4</span><span>pixel-preserving padding</span><span>Best · Auto · 23 FPS · 4K retained</span><span>native packages + ZUPT archives</span></div>
     </div>
   </div>
 
@@ -582,39 +582,39 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
     <div class="shell">
       <div class="section-head">
         <p class="section-kicker">Latest changes</p>
-        <h2><span class="number">01</span>What changed in 3.9.1</h2>
-        <p>This portability patch identifies each major BSD correctly, selects audio and camera inputs from actual FFmpeg capabilities and device nodes, and preserves the Best · Auto · 23 FPS · 4K first-run profile plus the recent Windows fixes.</p>
+        <h2><span class="number">01</span>What changed in 3.10.0</h2>
+        <p>This quality release adds optional full-chroma CPU file recording, preserves edge pixels in odd-sized captures and corrects software Wayland color conversion. English remains the default language; Best · Auto · 23 FPS · 4K and compatible 4:2:0 remain the first-run profile.</p>
       </div>
       <div class="grid grid-3">
         <article class="card new-card">
-          <span class="tag solid">BSD IDENTITY</span>
-          <h3>Four systems, four identities</h3>
-          <p>FreeBSD, OpenBSD, NetBSD and DragonFly are no longer folded into Linux. X11 retains full-screen, monitor, visible-window and signed-region targets; XWayland can capture the screen/region exposed by its compatibility server.</p>
+          <span class="tag solid">FULL CHROMA</span>
+          <h3>4:4:4 for colored text</h3>
+          <p>Choose Chroma 444 in the GUI or --chroma 444 for CPU H.264/HEVC file recording. It preserves full chroma resolution but costs CPU time, can increase file size and needs compatible players/editors. It is not lossless RGB.</p>
         </article>
         <article class="card new-card">
-          <span class="tag">NATIVE BSD AUDIO</span>
-          <h3>sndio and OSS when present</h3>
-          <p>OpenBSD prefers sndio; FreeBSD, NetBSD and DragonFly prefer OSS. Pulse is selected only when FFmpeg supports it, pactl reaches the server and real sources exist; a Pulse monitor remains the BSD path for desktop audio.</p>
+          <span class="tag">NO EDGE CROPPING</span>
+          <h3>Keep every captured pixel</h3>
+          <p>Native odd dimensions are padded on the right and bottom instead of cutting source pixels. Fitted output uses even dimensions and square pixels while retaining aspect-ratio-preserving scaling.</p>
         </article>
         <article class="card new-card">
-          <span class="tag">REAL DEVICES</span>
-          <h3>Capabilities before assumptions</h3>
-          <p>Native audio paths must resolve to character devices, so directories and guessed aliases are not advertised. BSD cameras likewise require an FFmpeg V4L2 input and a real capturable video node.</p>
+          <span class="tag">WAYLAND COLOR</span>
+          <h3>BT.709 conversion, not just a label</h3>
+          <p>Software Wayland recording performs BT.709 color conversion as well as writing color metadata. This improves consistency without promising identical appearance in every player or display pipeline.</p>
         </article>
         <article class="card new-card">
-          <span class="tag">FEDORA</span>
-          <h3>OpenH264 fallback for ffmpeg-free</h3>
-          <p>If libx264 is absent, H.264 paths can try libopenh264 only after a real one-frame initialization succeeds. This covers compatible Fedora ffmpeg-free installations while rejecting its advertised but unusable noopenh264 shim.</p>
+          <span class="tag">MAC ENCODING</span>
+          <h3>Intel-aware VideoToolbox control</h3>
+          <p>Intel Mac file recording uses bitrate rate control without -q:v; Apple Silicon retains the quality-scale path. Optional 4:4:4 still requires software libx264 or libx265, not VideoToolbox.</p>
         </article>
         <article class="card new-card">
-          <span class="tag">SOURCE RELEASE</span>
-          <h3>Complete input for downstream ports</h3>
-          <p>The release adds an immutable complete-source archive, including tests, beside the portable end-user tarball. Nine platform payloads, that source archive and SHA256SUMS make 11 verified assets.</p>
+          <span class="tag">ZUPT DISTRIBUTIONS</span>
+          <h3>New archives, native packages retained</h3>
+          <p>Portable Unix, Guix and complete source now use genuine .zupt archives, each holding one uncompressed tar payload for Unix modes and symlinks. Ten payloads plus SHA256SUMS make 11 release assets.</p>
         </article>
         <article class="card new-card">
           <span class="tag">NO REGRESSIONS</span>
-          <h3>Quality and Windows fixes stay put</h3>
-          <p>Best quality, Auto codec, a literal 23 FPS and 4K remain the defaults. The self-contained Windows builds retain Unicode DirectShow names, stable IDs, native window handles and signed multi-monitor geometry.</p>
+          <h3>Familiar defaults and platform safeguards</h3>
+          <p>Best, Auto, a literal 23 FPS, 4K and Chroma 420 remain the defaults. BSD capability checks and Windows Unicode DirectShow IDs, native window handles and signed multi-monitor fixes stay in place.</p>
         </article>
       </div>
     </div>
@@ -639,7 +639,7 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
         <article class="card"><span class="tag">AUDIO</span><h3>FLAC, mixing and channel repair</h3><p>Lossless FLAC is the file default, with AAC and Opus alternatives. Clone left/right, average to mono or preserve stereo.</p></article>
         <article class="card"><span class="tag">ADAPTIVE Q</span><h3>Quality follows pixel throughput</h3><p>Slow, quality-heavy presets are used when there is headroom; 4K and high frame rates step toward faster real-time settings.</p></article>
         <article class="card"><span class="tag">GUI + CLI</span><h3>Interactive and scriptable</h3><p>A focused Tk interface and a complete command line share the same detection and pipeline builder. Python uses the standard library only.</p></article>
-        <article class="card"><span class="tag">PACKAGED</span><h3>Install where you work</h3><p>Debian, RPM, AppImage, FreeBSD, Guix, portable Unix tarball, Windows portable EXE and installer, plus a complete source archive for packagers.</p></article>
+        <article class="card"><span class="tag">PACKAGED</span><h3>Install where you work</h3><p>Debian, RPM, AppImage, FreeBSD and Windows EXE/installer retain native formats. Guix, portable Unix and complete source are distributed as .zupt archives.</p></article>
       </div>
     </div>
   </section>
@@ -648,84 +648,85 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
     <div class="shell">
       <div class="section-head">
         <p class="section-kicker">Official release</p>
-        <h2><span class="number">03</span>Download Turbo Recorder 3.9.1</h2>
-        <p>The release contains nine platform payloads, one complete source archive and <span class="mono">SHA256SUMS</span> — 11 assets in total. Choose the build for your operating system and verify its checksum before use.</p>
+        <h2><span class="number">03</span>Download Turbo Recorder 3.10.0</h2>
+        <p>The release contains 10 payloads and <span class="mono">SHA256SUMS</span> — 11 assets in total. Choose the build for your operating system and verify its checksum before use. English is the default; the complete PT-BR guide is linked below.</p>
       </div>
       <div class="downloads">
-        <a class="download featured" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/Turbo_Recorder-3.9.1-windows-x64-setup.exe" rel="noopener noreferrer external">
+        <a class="download featured" href="https://github.com/cristiancmoises/turborec/releases/download/v3.10.0/Turbo_Recorder-3.10.0-windows-x64-setup.exe" rel="noopener noreferrer external">
           <span class="os">Windows x64 <span class="badge">RECOMMENDED</span></span>
-          <span class="file">Turbo_Recorder-3.9.1-windows-x64-setup.exe</span>
+          <span class="file">Turbo_Recorder-3.10.0-windows-x64-setup.exe</span>
           <span class="meta">Windows 10/11 · guided install and shortcuts · Python, Tk and FFmpeg bundled</span>
           <span class="go">Download installer ↓</span>
         </a>
-        <a class="download featured" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/Turbo_Recorder-3.9.1-windows-x64.exe" rel="noopener noreferrer external">
+        <a class="download featured" href="https://github.com/cristiancmoises/turborec/releases/download/v3.10.0/Turbo_Recorder-3.10.0-windows-x64.exe" rel="noopener noreferrer external">
           <span class="os">Windows x64 <span class="badge">PORTABLE</span></span>
-          <span class="file">Turbo_Recorder-3.9.1-windows-x64.exe</span>
+          <span class="file">Turbo_Recorder-3.10.0-windows-x64.exe</span>
           <span class="meta">Windows 10/11 · Python, Tk and FFmpeg bundled · no admin installation</span>
           <span class="go">Download executable ↓</span>
         </a>
-        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/turborec_3.9.1_all.deb" rel="noopener noreferrer external">
+        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.10.0/turborec_3.10.0_all.deb" rel="noopener noreferrer external">
           <span class="os">Debian / Ubuntu</span>
-          <span class="file">turborec_3.9.1_all.deb</span>
-          <span class="meta"><span class="mono">sudo apt install ./turborec_3.9.1_all.deb</span></span>
+          <span class="file">turborec_3.10.0_all.deb</span>
+          <span class="meta"><span class="mono">sudo apt install ./turborec_3.10.0_all.deb</span></span>
           <span class="go">Download .deb ↓</span>
         </a>
-        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/turborec-3.9.1-1.noarch.rpm" rel="noopener noreferrer external">
+        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.10.0/turborec-3.10.0-1.noarch.rpm" rel="noopener noreferrer external">
           <span class="os">Fedora / RHEL / openSUSE</span>
-          <span class="file">turborec-3.9.1-1.noarch.rpm</span>
-          <span class="meta"><span class="mono">sudo dnf install ./turborec-3.9.1-1.noarch.rpm</span></span>
+          <span class="file">turborec-3.10.0-1.noarch.rpm</span>
+          <span class="meta"><span class="mono">sudo dnf install ./turborec-3.10.0-1.noarch.rpm</span></span>
           <span class="go">Download .rpm ↓</span>
         </a>
-        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/turborec-3.9.1-1.src.rpm" rel="noopener noreferrer external">
+        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.10.0/turborec-3.10.0-1.src.rpm" rel="noopener noreferrer external">
           <span class="os">RPM packagers</span>
-          <span class="file">turborec-3.9.1-1.src.rpm</span>
+          <span class="file">turborec-3.10.0-1.src.rpm</span>
           <span class="meta">RPM recipe and sources · rebuild with <span class="mono">rpmbuild --rebuild</span></span>
           <span class="go">Download source RPM ↓</span>
         </a>
-        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/Turbo_Recorder-3.9.1-x86_64.AppImage" rel="noopener noreferrer external">
+        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.10.0/Turbo_Recorder-3.10.0-x86_64.AppImage" rel="noopener noreferrer external">
           <span class="os">Linux AppImage</span>
-          <span class="file">Turbo_Recorder-3.9.1-x86_64.AppImage</span>
+          <span class="file">Turbo_Recorder-3.10.0-x86_64.AppImage</span>
           <span class="meta">Portable launcher · uses system Python, Tk and FFmpeg</span>
           <span class="go">Download AppImage ↓</span>
         </a>
-        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/turborec-3.9.1-guix-x86_64.tar.gz" rel="noopener noreferrer external">
+        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.10.0/turborec-3.10.0-guix-x86_64.zupt" rel="noopener noreferrer external">
           <span class="os">GNU Guix pack</span>
-          <span class="file">turborec-3.9.1-guix-x86_64.tar.gz</span>
-          <span class="meta">Relocatable Guix store + CLI/GUI wrapper · Python Tk import validated headlessly</span>
+          <span class="file">turborec-3.10.0-guix-x86_64.zupt</span>
+          <span class="meta">ZUPT → uncompressed tar · relocatable Guix store + CLI/GUI wrapper</span>
           <span class="go">Download Guix pack ↓</span>
         </a>
-        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/turborec-3.9.1.pkg" rel="noopener noreferrer external">
+        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.10.0/turborec-3.10.0.pkg" rel="noopener noreferrer external">
           <span class="os">FreeBSD</span>
-          <span class="file">turborec-3.9.1.pkg</span>
-          <span class="meta"><span class="mono">pkg add ./turborec-3.9.1.pkg</span> · install Python and FFmpeg separately</span>
+          <span class="file">turborec-3.10.0.pkg</span>
+          <span class="meta"><span class="mono">pkg add ./turborec-3.10.0.pkg</span> · install Python and FFmpeg separately</span>
           <span class="go">Download .pkg ↓</span>
         </a>
-        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/turborec-3.9.1.tar.gz" rel="noopener noreferrer external">
+        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.10.0/turborec-3.10.0.zupt" rel="noopener noreferrer external">
           <span class="os">macOS / BSD / Unix</span>
-          <span class="file">turborec-3.9.1.tar.gz</span>
-          <span class="meta">Portable end-user tarball · install to <span class="mono">/usr/local</span> or <span class="mono">~/.local</span></span>
-          <span class="go">Download tarball ↓</span>
+          <span class="file">turborec-3.10.0.zupt</span>
+          <span class="meta">ZUPT → uncompressed portable tar · install to <span class="mono">/usr/local</span> or <span class="mono">~/.local</span></span>
+          <span class="go">Download portable archive ↓</span>
         </a>
-        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/turborec-3.9.1-source.tar.gz" rel="noopener noreferrer external">
+        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/download/v3.10.0/turborec-3.10.0-source.zupt" rel="noopener noreferrer external">
           <span class="os">Downstream packagers</span>
-          <span class="file">turborec-3.9.1-source.tar.gz</span>
-          <span class="meta">Immutable complete tracked source tree · includes tests</span>
+          <span class="file">turborec-3.10.0-source.zupt</span>
+          <span class="meta">ZUPT → uncompressed complete release source tar · includes tests</span>
           <span class="go">Download complete source ↓</span>
         </a>
-        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/tag/v3.9.1" rel="noopener noreferrer external">
+        <a class="download" href="https://github.com/cristiancmoises/turborec/releases/tag/v3.10.0" rel="noopener noreferrer external">
           <span class="os">All assets</span>
-          <span class="file">Release v3.9.1</span>
+          <span class="file">Release v3.10.0</span>
           <span class="meta">Platform artifacts, source RPM, checksums and release metadata</span>
           <span class="go">Open release page ↗</span>
         </a>
       </div>
       <div class="download-foot">
-        <a href="https://github.com/cristiancmoises/turborec/releases/download/v3.9.1/SHA256SUMS" rel="noopener noreferrer external">SHA256SUMS ↗</a>
+        <a href="https://github.com/cristiancmoises/turborec/releases/download/v3.10.0/SHA256SUMS" rel="noopener noreferrer external">SHA256SUMS ↗</a>
         <a href="https://github.com/cristiancmoises/turborec/releases/latest" rel="noopener noreferrer external">Latest release ↗</a>
         <a href="https://github.com/cristiancmoises/turborec/blob/main/CHANGELOG.md" rel="noopener noreferrer external">Changelog ↗</a>
         <a href="#install">Install commands</a>
       </div>
-      <p class="note"><strong>Release integrity.</strong> Version 3.9.1 gates publication on a Linux, Windows and macOS test matrix plus a FreeBSD VM packaging smoke check. The publishing job requires nine platform payloads and the complete source archive to be non-empty, generates <span class="mono">SHA256SUMS</span>, and verifies all 11 asset names and byte sizes across GitHub, Codeberg and Forgejo. These automated checks do not claim visual GUI or physical BSD/Windows capture-device testing.</p>
+      <p class="note"><strong>Archive reader.</strong> Get ZUPT from its <a href="https://github.com/cristiancmoises/zupt/releases" rel="noopener noreferrer external">official releases ↗</a>. Standard tar cannot open .zupt. Verify SHA256SUMS, extract with ZUPT, then extract the enclosed uncompressed tar to preserve Unix modes and links. See the exact commands below.</p>
+      <p class="note"><strong>Release integrity.</strong> Version 3.10.0 gates publication on a Linux, Windows and macOS test matrix plus a FreeBSD VM packaging smoke check. The publishing job requires all 10 payloads to be non-empty, generates <span class="mono">SHA256SUMS</span>, and verifies all 11 asset names and byte sizes across GitHub, Codeberg and Forgejo. These automated checks do not claim physical BSD/Windows capture-device testing.</p>
     </div>
   </section>
 
@@ -739,13 +740,13 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
       <figure class="shot">
         <div class="shot-bar" aria-hidden="true"><span class="shot-dot active"></span><span class="shot-dot"></span><span class="shot-dot"></span><span>turborec-gui.png · repository screenshot</span></div>
         <img src="turborec-gui.png" width="1000" height="575" alt="Turbo Recorder dark graphical interface showing its capture, quality, codec, frame-rate, device, audio and output controls.">
-        <figcaption>Official repository screenshot. The current GUI exposes output resolution, audio channels, webcam, denoise, masked stream key, output folder and live filename controls; v3.9.1 retains the quality-first profile.</figcaption>
+        <figcaption>Official repository screenshot. Version 3.10.0 also offers a Chroma 420/444 selector while retaining the quality-first profile. The screenshot may predate that selector.</figcaption>
       </figure>
       <ul class="control-list">
         <li>Automatic or strict capture modes</li>
         <li>Full screen, monitor, window and region targets</li>
         <li>Auto, GPU or CPU encoder selection</li>
-        <li>Quality, codec, FPS and output resolution</li>
+        <li>Quality, codec, FPS, output resolution and Chroma 420/444</li>
         <li>Microphone and system-audio selectors</li>
         <li>FLAC, AAC or Opus audio</li>
         <li>Stereo, mono, left or right channel handling</li>
@@ -846,7 +847,7 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
       <div class="section-head">
         <p class="section-kicker">Output and encoder tuning</p>
         <h2><span class="number">08</span>Quality that scales with the workload</h2>
-        <p>The selected quality level and actual output pixel throughput determine the encoder speed tier, preserving detail at common resolutions without letting 4K/high-FPS live capture fall behind.</p>
+        <p>The quality level and output pixel throughput determine the encoder speed tier. These presets target live capture, but cannot guarantee real-time performance on every machine; reduce resolution/FPS when the encoder cannot keep up.</p>
       </div>
       <div class="pills" aria-label="Quality and resolution presets">
         <span class="pill active">best</span><span class="pill">high</span><span class="pill">balanced</span><span class="pill">compact</span>
@@ -857,19 +858,23 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
           <div class="data-row"><span class="key">pixel tiers</span><span class="value">Up to roughly 65, 130 and 260 megapixels/second, then the high-throughput tier above 260 MP/s.</span></div>
           <div class="data-row"><span class="key">NVENC</span><span class="value">Quality VBR with spatial AQ; P7/P6/P5 presets selected by throughput, with temporal AQ and look-ahead when there is headroom.</span></div>
           <div class="data-row"><span class="key">software</span><span class="value">x264 scales from slow to veryfast, x265 from medium to veryfast, and SVT-AV1 from preset 6 toward 11 as throughput rises.</span></div>
-          <div class="data-row"><span class="key">resolution</span><span class="value">Lanczos fits the capture inside the target, preserves aspect ratio and pads to exactly 1280×720, 1920×1080, 2560×1440 or 3840×2160.</span></div>
-          <div class="data-row"><span class="key">fidelity</span><span class="value">Constant-frame-rate output, BT.709 metadata, lossless FLAC by default and high-quality soxr resampling.</span></div>
+          <div class="data-row"><span class="key">resolution</span><span class="value">Lanczos fits the capture with even dimensions and square pixels, then pads to the exact target frame. Native odd dimensions are padded right/bottom without cutting pixels. Upscaling adds no captured detail.</span></div>
+          <div class="data-row"><span class="key">chroma</span><span class="value">420 is the compatible default. 444 requires CPU libx264 (Auto/H.264, High 4:4:4) or libx265 (HEVC, Main 4:4:4 8-bit), using yuv444p. AV1, RTMP(S), missing software encoders and explicit GPU requests fail. Not lossless RGB.</span></div>
+          <div class="data-row"><span class="key">fidelity</span><span class="value">Constant-frame-rate output, BT.709 metadata and software Wayland conversion, lossless FLAC by default and high-quality soxr resampling.</span></div>
         </div>
         <div class="terminal">
           <div class="terminal-head"><span class="shot-dot active"></span><span class="shot-dot"></span><span class="shot-dot"></span><span>quality recipes</span></div>
 <pre><span class="comment"># native size, safe automatic sources, best quality</span>
-<span class="prompt">$</span> turborec record
+<span class="prompt">$</span> turborec record -R native
 
 <span class="comment"># true 4K frame, HEVC, 23 fps</span>
 <span class="prompt">$</span> turborec record -R 4k -c hevc -f 23
 
 <span class="comment"># 1440p H.264 with explicit GPU preference</span>
-<span class="prompt">$</span> turborec record -R 1440p --gpu
+<span class="prompt">$</span> turborec record -R 1440p -c h264 --gpu
+
+<span class="comment"># CPU H.264 file with full chroma resolution</span>
+<span class="prompt">$</span> turborec record -R native --chroma 444 -c h264
 
 <span class="comment"># lossless audio-only mix</span>
 <span class="prompt">$</span> turborec record -m audio_both \
@@ -894,40 +899,42 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
         <div class="terminal">
           <div class="terminal-head"><span class="shot-dot active"></span><span class="shot-dot"></span><span class="shot-dot"></span><span>Linux packages</span></div>
 <pre><span class="comment"># Debian / Ubuntu</span>
-<span class="prompt">$</span> sudo apt install ./turborec_3.9.1_all.deb
+<span class="prompt">$</span> sudo apt install ./turborec_3.10.0_all.deb
 
 <span class="comment"># Fedora / RHEL</span>
-<span class="prompt">$</span> sudo dnf install ./turborec-3.9.1-1.noarch.rpm
+<span class="prompt">$</span> sudo dnf install ./turborec-3.10.0-1.noarch.rpm
 
 <span class="comment"># openSUSE</span>
-<span class="prompt">$</span> sudo zypper install ./turborec-3.9.1-1.noarch.rpm
+<span class="prompt">$</span> sudo zypper install ./turborec-3.10.0-1.noarch.rpm
 
 <span class="comment"># portable AppImage</span>
-<span class="prompt">$</span> chmod +x Turbo_Recorder-3.9.1-x86_64.AppImage
-<span class="prompt">$</span> ./Turbo_Recorder-3.9.1-x86_64.AppImage</pre>
+<span class="prompt">$</span> chmod +x Turbo_Recorder-3.10.0-x86_64.AppImage
+<span class="prompt">$</span> ./Turbo_Recorder-3.10.0-x86_64.AppImage</pre>
         </div>
         <div class="terminal">
           <div class="terminal-head"><span class="shot-dot active"></span><span class="shot-dot"></span><span class="shot-dot"></span><span>Guix, FreeBSD and Unix</span></div>
 <pre><span class="comment"># GNU Guix from the repository</span>
 <span class="prompt">$</span> guix package -f guix.scm
 
-<span class="comment"># relocatable Guix release pack</span>
-<span class="prompt">$</span> sudo tar xf turborec-3.9.1-guix-x86_64.tar.gz -C /
+<span class="comment"># Guix pack: verify SHA256SUMS BEFORE extraction to /</span>
+<span class="prompt">$</span> zupt extract -o guix-unpack turborec-3.10.0-guix-x86_64.zupt
+<span class="prompt">$</span> sudo tar xf guix-unpack/turborec-3.10.0-guix-x86_64.tar -C /
 
 <span class="comment"># FreeBSD package</span>
-<span class="prompt">$</span> pkg add ./turborec-3.9.1.pkg
+<span class="prompt">$</span> pkg add ./turborec-3.10.0.pkg
 <span class="prompt">$</span> pkg install python3 ffmpeg
 
-<span class="comment"># macOS / BSD / Unix tarball, user-local prefix</span>
-<span class="prompt">$</span> tar xzf turborec-3.9.1.tar.gz
-<span class="prompt">$</span> cd turborec-3.9.1
+<span class="comment"># macOS / BSD / Unix archive, user-local prefix</span>
+<span class="prompt">$</span> zupt extract -o unpack turborec-3.10.0.zupt
+<span class="prompt">$</span> tar xf unpack/turborec-3.10.0.tar
+<span class="prompt">$</span> cd turborec-3.10.0
 <span class="prompt">$</span> PREFIX="$HOME/.local" ./install.sh</pre>
         </div>
         <div class="terminal">
           <div class="terminal-head"><span class="shot-dot active"></span><span class="shot-dot"></span><span class="shot-dot"></span><span>Windows and source</span></div>
 <pre><span class="comment"># Windows: double-click, or use PowerShell</span>
-<span class="prompt">&gt;</span> .\Turbo_Recorder-3.9.1-windows-x64.exe gui
-<span class="prompt">&gt;</span> .\Turbo_Recorder-3.9.1-windows-x64.exe detect
+<span class="prompt">&gt;</span> .\Turbo_Recorder-3.10.0-windows-x64.exe gui
+<span class="prompt">&gt;</span> .\Turbo_Recorder-3.10.0-windows-x64.exe detect
 
 <span class="comment"># source checkout, every platform</span>
 <span class="prompt">$</span> git clone https://github.com/cristiancmoises/turborec
@@ -1045,8 +1052,8 @@ td:first-child { color: var(--ink); font-family: var(--mono); font-weight: 700; 
       </div>
       <div class="docs">
         <a class="doc-link" href="https://github.com/cristiancmoises/turborec/blob/main/docs/TUTORIAL.md" rel="noopener noreferrer external"><strong>Complete user guide ↗</strong><p>Installation, 60-second start, capture modes, quality, recipes, troubleshooting and FAQ.</p></a>
-        <a class="doc-link" href="https://github.com/cristiancmoises/turborec/blob/main/docs/README.pt-BR.md" hreflang="pt-BR" lang="pt-BR" rel="noopener noreferrer external"><strong>Documentação em português do Brasil ↗</strong><p>Guia completo da versão 3.9.1: instalação, primeiros passos, BSDs, permissões do Windows, dispositivos, diagnóstico e solução de problemas.</p></a>
-        <a class="doc-link" href="https://github.com/cristiancmoises/turborec/blob/main/CHANGELOG.md" rel="noopener noreferrer external"><strong>Changelog ↗</strong><p>All notable changes, including the v3.9.1 BSD portability, Fedora fallback and complete source release.</p></a>
+        <a class="doc-link" href="https://github.com/cristiancmoises/turborec/blob/main/docs/README.pt-BR.md" hreflang="pt-BR" lang="pt-BR" rel="noopener noreferrer external"><strong>Documentação em português do Brasil ↗</strong><p>Guia completo 3.10.0: chroma 4:4:4, arquivos ZUPT, instalação, dispositivos, diagnóstico e compatibilidade.</p></a>
+        <a class="doc-link" href="https://github.com/cristiancmoises/turborec/blob/main/CHANGELOG.md" rel="noopener noreferrer external"><strong>Changelog ↗</strong><p>All notable changes, including v3.10.0 chroma, padding, color conversion and ZUPT distributions.</p></a>
         <a class="doc-link" href="https://github.com/cristiancmoises/turborec/blob/main/SECURITY.md" rel="noopener noreferrer external"><strong>Security policy ↗</strong><p>Supported versions and private vulnerability-reporting process.</p></a>
         <a class="doc-link" href="https://github.com/cristiancmoises/turborec/releases/latest" rel="noopener noreferrer external"><strong>Releases and checksums ↗</strong><p>Official binaries, portable packages, SHA256SUMS and previous versions.</p></a>
         <a class="doc-link" href="https://youtu.be/mlf531Da9Qo?si=RTaSB9dJ4NSbGsOm" rel="noopener noreferrer external"><strong>Sample recording ↗</strong><p>A real capture produced by Turbo Recorder.</p></a>

@@ -4,7 +4,12 @@
 > on Linux, macOS, Windows, FreeBSD, OpenBSD, NetBSD or DragonFly. Turbo Recorder
 > probes your machine and configures everything (OS, GPU, encoder, screen, mic,
 > system audio) automatically, then builds a real-time, correct-speed FFmpeg
-> pipeline. Use the **GUI** or the **CLI**.
+> pipeline. Use the **GUI** or the **CLI**. English is the default interface and
+> documentation language; [the complete PT-BR guide](README.pt-BR.md) is also available.
+
+This guide covers **3.10.0**: optional CPU 4:4:4 recording, pixel-preserving
+padding/scaling fixes, BT.709 software Wayland conversion, and `.zupt` release
+archives. Best · Auto · 23 fps · 4K and default 4:2:0 remain unchanged.
 
 ---
 
@@ -44,20 +49,20 @@ Hyprland, river, …) screen capture additionally needs
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.9.1_all.deb        # pulls ffmpeg, python3, python3-tk
+sudo apt install ./turborec_3.10.0_all.deb        # pulls ffmpeg, python3, python3-tk
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.9.1-1.noarch.rpm   # accepts any RPM provider of /usr/bin/ffmpeg
+sudo dnf install ./turborec-3.10.0-1.noarch.rpm   # accepts any RPM provider of /usr/bin/ffmpeg
 
 # Any Linux — portable AppImage (uses your host ffmpeg/python/tk)
-chmod +x Turbo_Recorder-3.9.1-x86_64.AppImage
-./Turbo_Recorder-3.9.1-x86_64.AppImage
+chmod +x Turbo_Recorder-3.10.0-x86_64.AppImage
+./Turbo_Recorder-3.10.0-x86_64.AppImage
 ```
 
 Get these from the project **Releases** page, or build them yourself with the
 scripts in [`packaging/`](../packaging/).
 
-Fedora's `ffmpeg-free` can omit `libx264`. In v3.9.1 the automatic, explicit
+Fedora's `ffmpeg-free` can omit `libx264`. In v3.10.0 the automatic, explicit
 H.264, CPU and streaming paths can fall through to `libopenh264`, but only after
 Turbo Recorder proves that encoder with a real one-frame test. Fedora's
 `noopenh264` compatibility shim is deliberately rejected. With the Cisco
@@ -75,22 +80,24 @@ enabled. Alternatively, use another compatible `/usr/bin/ffmpeg` provider.
 ### BSD and other Unix
 
 FreeBSD has a native package; every other Unix (OpenBSD, NetBSD, DragonFly,
-illumos, macOS, or Linux) can use the portable tarball. Turbo Recorder is pure
+illumos, macOS, or Linux) can use the portable `.zupt` archive. Turbo Recorder is pure
 Python plus a POSIX shell front-end, so one archive runs everywhere.
 
 ```sh
 # FreeBSD — native package
-pkg add ./turborec-3.9.1.pkg
+pkg add ./turborec-3.10.0.pkg
 pkg install python3 ffmpeg          # runtime prerequisites; screen via X11/XWayland
 
-# Any Unix — portable tarball (installs to /usr/local by default)
-tar xzf turborec-3.9.1.tar.gz && cd turborec-3.9.1
+# Any Unix — portable archive (installs to /usr/local by default)
+zupt extract -o unpack turborec-3.10.0.zupt
+tar xf unpack/turborec-3.10.0.tar
+cd turborec-3.10.0
 sudo ./install.sh                   # or: PREFIX="$HOME/.local" ./install.sh
 ```
 
 On **OpenBSD** install the prerequisites with `pkg_add python3 ffmpeg`. Use the
 equivalent Python 3, Tk and FFmpeg packages on NetBSD and DragonFly. The
-tarball's `install.sh` prints any missing core prerequisite it detects.
+portable archive's `install.sh` prints any missing core prerequisite it detects.
 
 Turbo Recorder identifies FreeBSD, OpenBSD, NetBSD and DragonFly separately.
 BSD screen capture uses FFmpeg `x11grab` in an X11 session or through XWayland.
@@ -100,11 +107,17 @@ FreeBSD, NetBSD and DragonFly. PulseAudio is optional on BSD and is used only
 when FFmpeg's Pulse input, a working `pactl` connection and real sources are all
 available. A Pulse monitor source is required for BSD desktop/system audio.
 
-Release archives have two different purposes: `turborec-3.9.1.tar.gz` is the
-portable end-user installer above, while `turborec-3.9.1-source.tar.gz` is the
-complete immutable tracked source tree, including tests, intended for ports and
-distribution maintainers. Together with nine platform payloads and
-`SHA256SUMS`, the release contains 11 assets in total.
+Get the reader from the [official ZUPT releases](https://github.com/cristiancmoises/zupt/releases)
+and verify each download against the release `SHA256SUMS` before extracting it.
+Standard `tar` does **not** read `.zupt`. Each `.zupt` holds one uncompressed tar
+payload so that the second extraction preserves Unix modes and symlinks.
+
+`turborec-3.10.0.zupt` is the portable end-user installer;
+`turborec-3.10.0-source.zupt` holds `turborec-3.10.0-source.tar`, the complete
+release source and tests for ports/distribution maintainers. Extract the source
+in the same two steps, substituting those exact filenames. The release offers
+10 payloads plus `SHA256SUMS`: 11 assets in total, including the unchanged native
+package types.
 
 ### Linux — from source (works everywhere)
 
@@ -120,7 +133,7 @@ Install Tk for the GUI: `sudo apt install python3-tk` (Debian/Ubuntu),
 ### GNU Guix
 
 **Easiest — the package definition or the relocatable pack.** The repo ships a
-`guix.scm`, and every release ships a relocatable pack tarball. Both give you a
+`guix.scm`, and every release ships a relocatable pack inside `.zupt`. Both give you a
 working `turborec` CLI and Tk GUI with `ffmpeg`, `wf-recorder`, `pactl` and the
 Python `tk` output wired into the environment:
 
@@ -131,8 +144,9 @@ guix package -f guix.scm          # install it into your profile
 guix shell   -f guix.scm -- turborec detect   # run it ad-hoc
 
 # Or the prebuilt relocatable pack from the Releases page (no Guix daemon needed
-# to run it; unpacks the /gnu/store closure + a /bin/turborec launcher)
-tar xf turborec-3.9.1-guix-x86_64.tar.gz -C /
+# to run it; verify SHA256SUMS BEFORE the privileged tar extraction)
+zupt extract -o guix-unpack turborec-3.10.0-guix-x86_64.zupt
+sudo tar xf guix-unpack/turborec-3.10.0-guix-x86_64.tar -C /
 /bin/turborec record -m video_both
 ```
 
@@ -163,7 +177,7 @@ It is **fully self-contained** — Python, Tk **and FFmpeg are bundled inside th
 admin rights needed:
 
 ```powershell
-Turbo_Recorder-3.9.1-windows-x64.exe gui        # or: detect / record / --help
+Turbo_Recorder-3.10.0-windows-x64.exe gui        # or: detect / record / --help
 ```
 
 Prefer a classic install with Start-Menu shortcuts and an uninstaller? Use
@@ -206,9 +220,9 @@ like `video_mic_2026-07-24_14-22-09.mkv`. Stop a CLI recording with **`q`** or
 - **It auto-detects everything.** Run `turborec detect` to see your OS, display
   server, CPU vendor, GPU, the best usable codec/encoder candidates, your
   screen resolution, and your microphone + system-audio (loopback) sources.
-- **Real-time, correct-speed capture.** Presets are tuned to keep up with a live
-  source, and the output is forced to constant frame rate — so recordings always
-  play back at the right speed and stay smooth, even at high resolution/fps.
+- **Real-time-oriented capture.** Presets adapt to live encoding load and output
+  uses constant frame rate. Reduce resolution/FPS when hardware cannot keep up;
+  no preset guarantees smooth capture on every machine.
 - **Quality-first defaults.** Best quality, Auto codec, 23 fps and 4K output.
   Auto prefers usable hardware AV1 → HEVC → H.264, then safely falls back to
   software H.264. Audio is lossless FLAC and video carries BT.709 color metadata.
@@ -234,6 +248,7 @@ Recorder** from your application menu.
 │ Source [ Full screen (3280x1200)        ▾] ⟳                  │  ← screen / monitor / window
 │ Region [________]  blank = full screen                        │  ← optional exact override
 │ Output resolution [4K (3840×2160) ▾]                           │
+│ Chroma [420 ▾]  compatible / 444 CPU file recording            │
 │ AUDIO                                                      ⟳   │
 │ ● Microphone   [ Built-in / your mic           ▾]            │
 │ ● System audio [ ...monitor                     ▾]            │
@@ -260,6 +275,8 @@ Recorder** from your application menu.
   re-probes devices. Dots show whether a real device is selected.
 - **OUTPUT** — choose the folder; the filename preview updates live.
 - **Encoder** — `Auto` (default), `GPU` (request hardware) or `CPU` (force software).
+- **Chroma** — `420` is the compatible default. `444` uses software H.264/HEVC
+  for file recording only; see [4:4:4 chroma](#444-chroma-for-colored-text).
 - **command preview** — expand to see (and `copy`) the exact FFmpeg command.
 - **Footer** — press **● START** to record. While recording you get a live
   **timer**, a pulsing **REC** indicator and the growing **file size**. Press
@@ -288,6 +305,7 @@ Most-used `record` options:
 | `-m, --mode` | what to capture (see [modes](#6-capture-modes)) | `auto` |
 | `-q, --quality` | `best` · `high` · `balanced` · `compact` | `best` |
 | `-c, --codec` | `auto` · `h264` · `hevc` · `av1` | `auto` |
+| `--chroma` | `420` · `444` (CPU H.264/HEVC file recording) | `420` |
 | `-f, --fps` | frames per second | `23` |
 | `-R, --resolution` | `native` · `720p` · `1080p` · `1440p` · `4k` | `4k` |
 | `-o, --out` | output folder | `~/Videos` or `~/Audio` |
@@ -362,7 +380,7 @@ windows). Notes:
   Pick an output with `--monitor <name>` (or the Source dropdown); a region with
   `--region`; a sway window with `--window`. NVENC isn't available through
   `wf-recorder`, so encoding is software `libx264`/`libx265` (real-time at 1080p).
-  `video_both` records perfectly A/V-synced via a temporary PipeWire combined
+  `video_both` records synchronized audio via a temporary PipeWire combined
   source. (Install `wf-recorder` if it's missing.)
 - On the **BSDs**, use an X11 session or XWayland. X11 retains the `x11grab`
   screen, monitor, visible-window and region targets. XWayland can capture the
@@ -386,8 +404,9 @@ encoding is the universal fallback and is fine for smaller regions / lower fps.
 
 ### Quality presets
 
-`-q best|high|balanced|compact` (highest → smallest). All presets are tuned to
-record in **real time**; `best` favors quality, `compact` favors file size.
+`-q best|high|balanced|compact` (highest → smallest). Presets target live capture;
+`best` favors quality, `compact` favors file size. Actual throughput depends on
+the hardware and current load.
 
 ### Codec
 
@@ -402,12 +421,37 @@ them. See what your machine exposes:
 turborec encoders          # shows the best h264/hevc/av1 encoder for your machine
 ```
 
+### 4:4:4 chroma for colored text
+
+`--chroma 420` is the default, retaining broad compatibility and automatic
+hardware encoding. Choose `--chroma 444` (or **Chroma → 444** in the GUI) to
+retain full chroma resolution for colored text and desktop graphics:
+
+```bash
+turborec record -R native --chroma 444 -c h264
+turborec record --chroma 444 -c hevc --cpu
+```
+
+This is **CPU file recording only**. Auto/H.264 requires `libx264` and uses the
+High 4:4:4 profile; HEVC requires `libx265` and uses Main 4:4:4 8-bit, both with
+`yuv444p`. Missing software encoders, AV1, RTMP/RTMPS streaming and explicit
+`--backend gpu` / `--gpu` requests fail rather than silently reducing chroma.
+Expect higher CPU load, potentially larger files, and limited player/editor
+support. 4:4:4 is not lossless RGB; test your playback/editing workflow first.
+
+On Intel Macs, VideoToolbox file recording uses bitrate rate control without
+`-q:v`; Apple Silicon retains its quality-scale path. This does not add 4:4:4
+hardware support.
+
 ### Output resolution (record in 4K)
 
 `-R native|720p|1080p|1440p|4k` (GUI: the **Output** dropdown). `4k` is the
 default and produces an exact 3840×2160 frame. Turbo Recorder scales with
 high-quality **lanczos** while preserving aspect ratio and padding as needed.
-Choose `native` to preserve the captured dimensions and reduce processing load:
+Fitted content has even dimensions and square pixels. With `native`, odd capture
+dimensions are padded on the right/bottom rather than cropping source pixels.
+Software Wayland recording uses BT.709 conversion as well as color metadata.
+Choose `native` to avoid resizing the captured content and reduce processing load:
 
 ```bash
 turborec record                          # Best · Auto codec · 23 fps · 4K
@@ -415,11 +459,10 @@ turborec record -R native                # preserve the source dimensions
 turborec record -R 1080p                 # normalize to 1920×1080
 ```
 
-> **Why upscale to 4K for YouTube?** YouTube picks the quality tier — and,
-> crucially, the **bitrate budget** — from the *uploaded* resolution. A native
-> 1920×1200 screen capture can land at a low tier (720p/1080p) with heavy
-> compression, while the same content uploaded as 4K gets the high-bitrate 4K
-> pipeline and looks dramatically better at every playback quality.
+> **What does upscaling to 4K do?** It produces a 3840×2160 upload, but does not
+> create source detail that was never captured. Platform transcoding can vary;
+> compare a short native and 4K upload for your content rather than assuming a
+> guaranteed improvement at every playback quality.
 
 ---
 
@@ -636,11 +679,10 @@ turborec record -m video_both --dry-run
 - **HEVC/AV1** (`-c hevc` / `-c av1`) for much smaller files at the same quality,
   if your players support them.
 - **4K output is the default** for a quality-first master and YouTube upload.
-  Use **`-R native`** to preserve source pixels or reduce encoding load. YouTube
-  assigns its quality tier and bitrate budget from the uploaded resolution, so
-  a 4K upload keeps your video sharp (see
+  Use **`-R native`** to avoid resizing source pixels or reduce encoding load.
+  Upscaling adds no captured detail; compare results in your target platform (see
   [§8 Output resolution](#output-resolution-record-in-4k)).
-- If a recording is ever choppy, drop to `-q high`/`-f 30` or a smaller `--region`
+- If a recording is choppy, use `-q high`, lower FPS/resolution, or a smaller `--region`
   to give the encoder more headroom (see Troubleshooting).
 
 ---
@@ -705,11 +747,12 @@ monitor; capture one with `--monitor NAME` or pick it in the GUI **Source** menu
 `-m audio_both`.
 
 **How do I stop a CLI recording?** Press **`q`** or **Ctrl-C**, or use `-t` for a
-fixed length. The file is always finalized cleanly.
+fixed length. A normal stop finalizes the file cleanly; interruption or system
+failure can still affect recovery.
 
 **Is it really lossless?** Audio is lossless with FLAC (default). Video uses
-visually-lossless constant-quality encoding at `-q best`; for true lossless video,
-use `--cpu -c h264` and a low CRF via a custom FFmpeg command (see `--dry-run`).
+lossy quality-oriented encoding at `-q best`; 4:4:4 does not make it lossless RGB.
+There is no dedicated lossless-video preset.
 
 ---
 

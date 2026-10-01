@@ -26,14 +26,16 @@ builds a **real-time, correct-speed** FFmpeg pipeline and records.
 The ready-to-record profile is quality-first: **Best** quality, **Auto** codec,
 **23 fps**, and **4K (3840×2160)** output. Auto uses the most efficient usable
 hardware codec in this order: **AV1 → HEVC → H.264**. If hardware encoding is
-not available, Turbo Recorder falls back safely to software H.264. You can
-override every choice in the GUI, CLI, or JSON configuration.
+not available, Turbo Recorder falls back safely to software H.264. English is
+the default interface and documentation language; the complete PT-BR guide is
+linked below. You can override recording choices in the GUI, CLI, or JSON configuration.
 
-> **v3.9.1 portability release:** FreeBSD, OpenBSD, NetBSD and DragonFly are now
-> identified separately. X11 keeps the existing `x11grab` targets; XWayland can
-> capture the screen/region exposed by its compatibility server. Audio and
-> cameras are offered only when the local FFmpeg build and real device nodes
-> support them.
+> **v3.10.0 quality release:** optional CPU 4:4:4 recording preserves more
+> chroma detail in colored text, native odd-sized captures are padded rather
+> than cropped, and software Wayland conversion uses BT.709. Portable, Guix and
+> complete-source distributions now use real `.zupt` archives; native package
+> formats remain available. BSD capability checks and the recent Windows fixes
+> are retained.
 
 ### ✨ Highlights
 
@@ -42,25 +44,26 @@ override every choice in the GUI, CLI, or JSON configuration.
   gracefully falls back to mic, loopback, or video-only when a source is absent
 - ⚡ **Hardware accelerated** — NVENC · Quick Sync · VAAPI · AMF · VideoToolbox, with automatic CPU fallback
 - 💎 **Quality-first defaults** — Best quality · Auto codec · 23 fps · 4K output, ready from the first launch
-- 🎞️ **Real-time, correct-speed capture** — constant frame rate, so recordings never play back in slow motion
+- 🎞️ **Real-time-oriented capture** — adaptive presets and constant-frame-rate output; reduce resolution/FPS if the encoder cannot keep up
 - 🌊 **Linux Wayland _and_ X11** — wlroots (sway/Hyprland/river) capture
-  via `wf-recorder`, with perfectly A/V-synced mic+system audio; BSD uses
+  via `wf-recorder`, with synchronized mic+system audio; BSD uses
   X11/XWayland
 - 🖥️ **OBS-style capture** — full screen, a specific monitor, a window, or an exact region
 - 🎚️ **Smart or manual codec choice** — Auto prefers hardware AV1 → HEVC → H.264; explicit H.264 / H.265 / AV1 and CPU/GPU controls remain available
 - 🔊 **Fix one-sided audio** — clone a live channel to both sides (`--audio-channels left/right/mono`)
-- 📐 **Record in 720p / 1080p / 1440p / 4K** — `-R 4k` upscales any screen to true 4K, so YouTube serves its high-bitrate 4K tier
+- 📐 **Record in 720p / 1080p / 1440p / 4K** — exact output frames with aspect-ratio-preserving scaling; upscaling does not add captured detail
+- 🎨 **Optional 4:4:4 chroma** — CPU H.264/HEVC file recording for colored text, with higher encoding and compatibility costs
 - 📡 **Go live to YouTube (OBS-style)** — paste your stream key (`--stream KEY` or the GUI field) and stream; keys are always redacted from output
 - 🎥 **Webcam overlay (picture-in-picture)** — overlay your camera on the recording *or* stream, with your choice of device, size and corner (`--camera`)
 - 🔇 **Built-in noise suppression** — NoiseTorch-style mic denoise (`--denoise light/medium/strong`), no extra app or virtual device needed
-- 🧠 **Adaptive quality** — presets scale with the pixel rate: best-quality at 1080p, fast enough to stay real-time at 4K
+- 🧠 **Adaptive quality** — presets scale with pixel throughput to balance detail and live encoding load
 - 🪟 **Reliable Windows capture** — Unicode microphones/cameras, stable DirectShow
   device IDs, multi-monitor layouts, and native window handles
 - 🐡 **Native BSD audio discovery** — sndio on OpenBSD and OSS on
   FreeBSD/NetBSD/DragonFly, with optional PulseAudio monitor sources for desktop
   sound and no fabricated devices
 - 📦 **Zero-install Windows app** — a single `.exe` with Python, Tk **and FFmpeg bundled in**: download, double-click, record. The classic **setup.exe installer bundles Python 3.12, Tk and FFmpeg too**, so it needs nothing pre-installed either
-- 🖤 **Beautiful dark GUI _and_ a powerful CLI** — packaged as `.deb` / `.rpm` / AppImage / FreeBSD `.pkg` / Guix pack / Windows `.exe` / portable tarball
+- 🖤 **Beautiful dark GUI _and_ a powerful CLI** — `.deb` / `.rpm` / AppImage / FreeBSD `.pkg` / Windows `.exe`, plus portable and Guix `.zupt` distributions
 
 Two front-ends, one engine:
 
@@ -120,11 +123,11 @@ scene-compositing studio you configure by hand (OBS).
   100 MB studio or a video-editing suite.
 - **True Linux Wayland support.** OBS relies on the desktop portal and Simple­Screen­Recorder
   is X11-only; Turbo Recorder captures wlroots compositors (sway/Hyprland/river)
-  natively via `wf-recorder`, with perfectly A/V-synced audio.
+  natively via `wf-recorder`, with synchronized audio.
 - **Scriptable.** A real CLI means you can record from a keybind, a cron job, or
   CI — impossible with the GUI-only tools.
 - **Runs everywhere, installs anywhere.** Linux (`.deb`/`.rpm`/AppImage/Guix),
-  the BSDs (`.pkg`/tarball), macOS, and a **self-contained Windows `.exe`** with
+  the BSDs (`.pkg`/`.zupt`), macOS, and a **self-contained Windows `.exe`** with
   Python + Tk + FFmpeg bundled in — download and run, nothing else to install.
 - **Best-quality by default & security-minded.** Adaptive encoder tuning per
   resolution, a 23 fps / 4K quality-first profile, automatic codec selection,
@@ -174,31 +177,39 @@ free/open-source building blocks — no reinventing the wheel:
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.9.1_all.deb
+sudo apt install ./turborec_3.10.0_all.deb
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.9.1-1.noarch.rpm
+sudo dnf install ./turborec-3.10.0-1.noarch.rpm
 
 # Any Linux — portable, no install
-chmod +x Turbo_Recorder-3.9.1-x86_64.AppImage
-./Turbo_Recorder-3.9.1-x86_64.AppImage
+chmod +x Turbo_Recorder-3.10.0-x86_64.AppImage
+./Turbo_Recorder-3.10.0-x86_64.AppImage
 
 # FreeBSD — native package
-pkg add ./turborec-3.9.1.pkg
+pkg add ./turborec-3.10.0.pkg
 
-# Any Unix (BSD / illumos / Linux / macOS) — portable tarball
-tar xzf turborec-3.9.1.tar.gz && cd turborec-3.9.1
+# Any Unix (BSD / illumos / Linux / macOS) — portable ZUPT archive
+zupt extract -o unpack turborec-3.10.0.zupt
+tar xf unpack/turborec-3.10.0.tar
+cd turborec-3.10.0
 sudo ./install.sh            # installs to /usr/local (PREFIX=… to change)
 
-# GNU Guix — relocatable pack (any distro, unprivileged) or the package file
-tar xf turborec-3.9.1-guix-x86_64.tar.gz -C /   # unpacks /gnu/store + /bin
+# GNU Guix — verify the release checksum BEFORE extraction to /
+zupt extract -o guix-unpack turborec-3.10.0-guix-x86_64.zupt
+sudo tar xf guix-unpack/turborec-3.10.0-guix-x86_64.tar -C / # /gnu/store + /bin
 guix package -f guix.scm                        # or install from the repo
 
 # Windows — self-contained: Python, Tk AND ffmpeg bundled, nothing to install
-Turbo_Recorder-3.9.1-windows-x64.exe gui          # zero-install portable app
-Turbo_Recorder-3.9.1-windows-x64-setup.exe        # classic installer (also bundles
+Turbo_Recorder-3.10.0-windows-x64.exe gui          # zero-install portable app
+Turbo_Recorder-3.10.0-windows-x64-setup.exe        # classic installer (also bundles
                                                   #   Python 3.12 + Tk + FFmpeg)
 ```
+
+Install the reader from the [official ZUPT releases](https://github.com/cristiancmoises/zupt/releases).
+Verify the downloaded asset against `SHA256SUMS` before extraction. Each `.zupt`
+contains one **uncompressed tar payload**, preserving Unix executable modes and
+symlinks when that tar is extracted. Standard `tar` cannot open `.zupt` directly.
 
 The Guix definition includes Python's `tk` output and validates that `_tkinter`
 imports, so both the local package and relocatable pack are intended to run the
@@ -206,7 +217,7 @@ GUI. CI performs this build/import validation headlessly; it is not presented as
 a visual GUI or physical capture-device test.
 
 Packages install `turborec` and `turborecorder` to `/usr/bin` (`/usr/local/bin`
-for the BSD/tarball route), plus a desktop launcher and icon. Runtime needs:
+for the BSD/portable route), plus a desktop launcher and icon. Runtime needs:
 `ffmpeg`, `python3` (≥ 3.8), and `python3-tk` (`python3-tkinter` on Fedora) for
 the GUI. Linux Pulse/PipeWire discovery uses `pactl` (`pulseaudio-utils`). On
 BSD, microphone capture uses a native FFmpeg sndio or OSS input when its real
@@ -218,7 +229,7 @@ PulseAudio monitor for desktop/system sound. On a **Linux Wayland session**, ins
 **FreeBSD**: `pkg install python3 ffmpeg`; on **OpenBSD**:
 `pkg_add python3 ffmpeg`.
 
-Fedora's `ffmpeg-free` can lack `libx264`, so Turbo Recorder 3.9.1 falls through
+Fedora's `ffmpeg-free` can lack `libx264`, so Turbo Recorder 3.10.0 falls through
 to `libopenh264` only after a real one-frame initialization succeeds; Fedora's
 listed-but-unusable `noopenh264` shim is rejected even when general encoder
 probes are disabled. A normal enabled Cisco OpenH264 repository lets
@@ -237,19 +248,19 @@ python3 turborec.py gui      # or: detect / record / devices
 **Build the packages yourself** — scripts live in [`packaging/`](packaging/):
 
 ```bash
-packaging/build-deb.sh        # → dist/turborec_3.9.1_all.deb  (works even without dpkg-deb)
-packaging/build-rpm.sh        # → dist/turborec-3.9.1-1.noarch.rpm
-packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.9.1-x86_64.AppImage
-packaging/build-tarball.sh    # → dist/turborec-3.9.1.tar.gz   (portable; any Unix incl. the BSDs)
-packaging/build-freebsd-pkg.sh # → dist/turborec-3.9.1.pkg      (run on FreeBSD; pkg add)
-packaging/build-source-tarball.sh # → dist/turborec-3.9.1-source.tar.gz (complete tracked source)
-guix build -f guix.scm        # GNU Guix package (guix pack -RR … for a tarball)
+packaging/build-deb.sh        # → dist/turborec_3.10.0_all.deb  (works even without dpkg-deb)
+packaging/build-rpm.sh        # → dist/turborec-3.10.0-1.noarch.rpm
+packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.10.0-x86_64.AppImage
+packaging/build-tarball.sh    # → dist/turborec-3.10.0.zupt     (portable; any Unix incl. the BSDs)
+packaging/build-freebsd-pkg.sh # → dist/turborec-3.10.0.pkg      (run on FreeBSD; pkg add)
+packaging/build-source-tarball.sh # → dist/turborec-3.10.0-source.zupt (complete release source)
+guix build -f guix.scm        # GNU Guix package; release packs are wrapped in .zupt
 ```
 
-> Every release ships **nine platform payloads** — `.deb`, binary/source
-> `.rpm`, AppImage, a portable tarball, a FreeBSD `.pkg`, a GNU Guix relocatable
-> pack, a Windows `.exe`, and a Windows **setup.exe installer** — plus a complete
-> immutable `-source.tar.gz` for downstream packagers and **`SHA256SUMS`**:
+> Every release ships **10 payloads** — `.deb`, binary/source `.rpm`, AppImage,
+> portable `.zupt`, FreeBSD `.pkg`, Guix `.zupt`, Windows `.exe`, Windows
+> **setup.exe installer**, and complete `-source.zupt` for downstream packagers —
+> plus **`SHA256SUMS`**:
 > **11 total release assets**, all built and verified by GitHub
 > Actions on each `v*` tag. Both Windows artifacts are **fully self-contained** —
 > Python, Tk **and FFmpeg are bundled** (the `.exe` inside the binary, the
@@ -265,6 +276,7 @@ auto-detected hardware up top and keeps every control one click away:
 - A ready-to-record **Best · Auto codec · 23 fps · 4K** profile
 - **Source** picker (OBS-style): full screen, a specific monitor, or a window — with refresh
 - **Encoder** selector: Auto · GPU · CPU
+- **Chroma** selector: compatible `420` (default) or CPU-file `444`
 - Microphone / system-audio pickers with presence dots, and a re-probe button
 - A prominent **Start / Stop** with a live elapsed timer, pulsing REC indicator,
   and running output-file size
@@ -301,14 +313,24 @@ Both front-ends auto-detect and configure:
 ## Quality
 
 - Quality presets (`best`/`high`/`balanced`/`compact`) mapped to real-time-capable
-  parameters for each encoder (NVENC `p4`–`p6` + constant-quality VBR + spatial AQ,
-  QSV/VAAPI constant-quality, x264 `veryfast`/`ultrafast` + CRF).
+  parameters for each encoder (NVENC `p7`/`p6`/`p5` + quality VBR + spatial AQ,
+  QSV/VAAPI constant-quality, x264 `slow` through `veryfast` + CRF).
 - BT.709 color metadata for faithful color reproduction.
 - Lossless **FLAC** audio by default (AAC 320k / Opus 256k optional), high-quality
   **soxr** resampler, automatic mic-channel detection, and clean mic + system mixing.
-- **Real-time, correct-speed capture:** presets are tuned to sustain live capture
-  and the output is forced to constant frame rate, so recordings always play back
-  at the right speed (no slow-motion) and stay smooth even at high resolution/fps.
+- **Real-time-oriented capture:** presets adapt to output pixel throughput and
+  output uses constant frame rate. Hardware load still matters; lower resolution
+  or FPS when capture drops frames.
+- Native odd dimensions are padded on the right/bottom without cutting captured
+  pixels. Fitted output uses even dimensions and square pixels; software Wayland
+  conversion uses BT.709 rather than only attaching color metadata.
+- **4:4:4 chroma:** `--chroma 444` uses CPU `libx264` (Auto/H.264, High 4:4:4) or
+  `libx265` (HEVC, Main 4:4:4 8-bit) with `yuv444p`. The software encoder must be
+  installed. AV1, RTMP/RTMPS and explicit GPU requests are rejected in this mode.
+  Expect more CPU/file-size pressure and narrower player/editor support; it is
+  not lossless RGB. Default `--chroma 420` keeps the compatible hardware path.
+- Intel Mac VideoToolbox recording uses bitrate rate control without `-q:v`;
+  Apple Silicon retains the quality-scale path.
 - **Default recording profile:** Best quality, Auto codec, 23 fps, and exact
   3840×2160 output. Use `-R native`, another FPS, or an explicit codec whenever
   compatibility, file size, or capture load matters more than the default.
@@ -348,6 +370,10 @@ python3 turborec.py record -m video_mic --audio-channels right   # or left / mon
 
 # Override the defaults explicitly (4K upscales smaller sources)
 python3 turborec.py record -R 4k -c hevc -f 23  # also: native / 720p / 1080p / 1440p
+
+# CPU file recording with full chroma resolution (requires libx264 / libx265)
+python3 turborec.py record -R native --chroma 444 -c h264
+python3 turborec.py record --chroma 444 -c hevc --cpu
 
 # Go live to YouTube (OBS-style) — paste your stream key; it's redacted from all output
 python3 turborec.py record -m video_both --stream YOUR_YT_STREAM_KEY

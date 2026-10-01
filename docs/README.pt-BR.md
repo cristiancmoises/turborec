@@ -4,7 +4,9 @@ O **Turbo Recorder** grava a tela, o microfone e o áudio do sistema com o
 FFmpeg. Ele detecta o sistema operacional, a tela, os dispositivos de áudio, a
 GPU e os codificadores disponíveis e oferece duas interfaces:
 
-Este guia corresponde ao **Turbo Recorder 3.9.1**.
+Este guia corresponde ao **Turbo Recorder 3.10.0**. O inglês continua sendo o
+idioma padrão da interface e da documentação principal; este documento oferece
+o guia completo em português do Brasil.
 
 - `turborec`: interface gráfica e linha de comando para Windows, macOS, Linux,
   FreeBSD, OpenBSD, NetBSD e DragonFly;
@@ -14,7 +16,7 @@ Este guia corresponde ao **Turbo Recorder 3.9.1**.
 Para começar, use `turborec`. Nos exemplos genéricos, substitua `*` ou `VERSÃO`
 pelo número mostrado na
 [página de lançamentos (Releases)](https://github.com/cristiancmoises/turborec/releases/latest).
-Os exemplos específicos deste lançamento usam 3.9.1.
+Os exemplos específicos deste lançamento usam 3.10.0.
 
 Ao abrir o aplicativo, o perfil inicial já prioriza qualidade: **Qualidade
 Best**, **Codec Auto**, **23 fps** e saída **4K (3840×2160)**. No modo Auto, o
@@ -23,10 +25,13 @@ nesta ordem: **AV1 → HEVC/H.265 → H.264**. Se nenhum deles funcionar, usa H.
 por software, que é a alternativa mais segura e compatível. Todos esses valores
 podem ser alterados pela GUI, CLI ou configuração JSON.
 
-A versão 3.9.1 mantém esse perfil e todas as correções recentes do Windows —
-nomes Unicode, identificadores estáveis do DirectShow, janelas nativas e
-coordenadas de vários monitores — e acrescenta detecção portátil dos quatro
-sistemas BSD sem anunciar dispositivos inexistentes.
+A versão 3.10.0 acrescenta gravação opcional 4:4:4 por CPU, preenchimento de
+dimensões ímpares sem cortar pixels e conversão BT.709 no Wayland por software.
+Os arquivos portáteis, Guix e de código-fonte passam a usar `.zupt`; os formatos
+nativos de pacotes permanecem disponíveis. O perfil inicial, as verificações
+dos quatro BSDs e as correções recentes do Windows — nomes Unicode,
+identificadores estáveis do DirectShow, janelas nativas e coordenadas de vários
+monitores — são mantidos.
 
 Documentos relacionados:
 
@@ -58,9 +63,9 @@ Documentos relacionados:
 | Linux X11 | `x11grab` | PulseAudio/PipeWire e V4L2 | `wmctrl` é opcional para listar janelas |
 | Linux Wayland/wlroots | `wf-recorder` | PipeWire/PulseAudio e V4L2 | Compatível com sway, Hyprland, river e outros compositores wlroots |
 | FreeBSD | X11/XWayland (`x11grab`) | OSS; Pulse opcional; V4L2 quando disponível | Há pacote `.pkg`; Python, FFmpeg e Tk são instalados separadamente |
-| OpenBSD | X11/XWayland (`x11grab`) | sndio; Pulse opcional; V4L2 quando disponível | O tarball portátil usa as ferramentas nativas disponíveis |
-| NetBSD | X11/XWayland (`x11grab`) | OSS; Pulse opcional; V4L2 quando disponível | Use o tarball portátil e os pacotes do sistema |
-| DragonFly | X11/XWayland (`x11grab`) | OSS; Pulse opcional; V4L2 quando disponível | Use o tarball portátil e os pacotes do sistema |
+| OpenBSD | X11/XWayland (`x11grab`) | sndio; Pulse opcional; V4L2 quando disponível | O arquivo portátil ZUPT usa as ferramentas nativas disponíveis |
+| NetBSD | X11/XWayland (`x11grab`) | OSS; Pulse opcional; V4L2 quando disponível | Use o arquivo portátil ZUPT e os pacotes do sistema |
+| DragonFly | X11/XWayland (`x11grab`) | OSS; Pulse opcional; V4L2 quando disponível | Use o arquivo portátil ZUPT e os pacotes do sistema |
 
 Requisitos quando não se usa o executável/instalador autossuficiente do Windows:
 
@@ -145,7 +150,7 @@ Em Wayland/wlroots, instale também `wf-recorder`. O pacote que fornece `pactl`
 normalmente se chama `pulseaudio-utils`; o nome pode variar conforme a
 distribuição.
 
-O Fedora pode fornecer `ffmpeg-free` sem `libx264`. No Turbo Recorder 3.9.1, os
+O Fedora pode fornecer `ffmpeg-free` sem `libx264`. No Turbo Recorder 3.10.0, os
 caminhos Auto, H.264 explícito, CPU e transmissão podem usar `libopenh264` como
 última alternativa H.264, mas somente depois de um teste real de codificação de
 um quadro. O pacote de compatibilidade `noopenh264`, que anuncia o codificador
@@ -189,23 +194,28 @@ Arch Linux, por exemplo:
 sudo pacman -S python tk ffmpeg libpulse
 ```
 
-Depois use o tarball portátil ou o código-fonte:
+Depois use o arquivo portátil `.zupt` ou o código-fonte:
 
 ```bash
-tar xzf turborec-*.tar.gz
-cd turborec-*/
+zupt extract -o unpack turborec-3.10.0.zupt
+tar xf unpack/turborec-3.10.0.tar
+cd turborec-3.10.0
 PREFIX="$HOME/.local" ./install.sh
 "$HOME/.local/bin/turborec" --version
 ```
 
 Adicione `$HOME/.local/bin` ao `PATH` para chamar apenas `turborec`.
 
-O lançamento também inclui `turborec-3.9.1-source.tar.gz`, um arquivo imutável
-com toda a árvore rastreada do código-fonte e os testes, destinado a quem mantém
-ports e pacotes de distribuições. Para instalar e usar o programa, prefira o
-tarball portátil `turborec-3.9.1.tar.gz` mostrado acima. Ao todo, o lançamento
-contém nove artefatos de plataforma, o arquivo completo do código-fonte e
-`SHA256SUMS`: 11 artefatos.
+Instale o leitor pelos [lançamentos oficiais do ZUPT](https://github.com/cristiancmoises/zupt/releases)
+e confira o arquivo baixado com `SHA256SUMS` antes da extração. O `tar` comum
+**não** abre `.zupt`: cada arquivo contém um único tar **sem compressão interna**.
+A segunda extração preserva permissões Unix e links simbólicos.
+
+O lançamento também inclui `turborec-3.10.0-source.zupt`, contendo
+`turborec-3.10.0-source.tar` com o código-fonte completo do lançamento e os
+testes, destinado a quem mantém ports e pacotes. Use os mesmos dois passos com
+esses nomes exatos. Para instalar e usar, prefira `turborec-3.10.0.zupt`.
+São 10 payloads mais `SHA256SUMS`: 11 artefatos, mantendo os pacotes nativos.
 
 ### GNU Guix
 
@@ -217,8 +227,9 @@ caminhos previstos nas duas formas de instalação:
 guix package -f guix.scm
 turborec gui
 
-# ou o pack do lançamento
-sudo tar xf turborec-3.9.1-guix-x86_64.tar.gz -C /
+# ou o pack do lançamento: confira SHA256SUMS ANTES de extrair como root
+zupt extract -o guix-unpack turborec-3.10.0-guix-x86_64.zupt
+sudo tar xf guix-unpack/turborec-3.10.0-guix-x86_64.tar -C /
 /bin/turborec gui
 ```
 
@@ -237,11 +248,12 @@ instalar o FFmpeg com:
 brew install ffmpeg
 ```
 
-Use o tarball portátil:
+Use o arquivo portátil `.zupt`:
 
 ```bash
-tar xzf turborec-*.tar.gz
-cd turborec-*/
+zupt extract -o unpack turborec-3.10.0.zupt
+tar xf unpack/turborec-3.10.0.tar
+cd turborec-3.10.0
 PREFIX="$HOME/.local" ./install.sh
 "$HOME/.local/bin/turborec" gui
 ```
@@ -284,17 +296,18 @@ procure e instale o pacote Tk correspondente ao Python:
 pkg search tkinter
 ```
 
-No OpenBSD, instale os requisitos e use o tarball portátil:
+No OpenBSD, instale os requisitos e use o arquivo portátil `.zupt`:
 
 ```sh
 pkg_add python3 ffmpeg
-tar xzf turborec-3.9.1.tar.gz
-cd turborec-3.9.1
+zupt extract -o unpack turborec-3.10.0.zupt
+tar xf unpack/turborec-3.10.0.tar
+cd turborec-3.10.0
 doas ./install.sh
 ```
 
 No NetBSD e no DragonFly, instale Python 3, FFmpeg e Tk pelos repositórios do
-sistema e use o mesmo tarball. Os nomes exatos dos pacotes Python/Tk podem
+sistema e use o mesmo arquivo portátil. Os nomes exatos dos pacotes Python/Tk podem
 acompanhar a versão padrão oferecida pelo sistema.
 
 O Turbo Recorder registra cada sistema como `freebsd`, `openbsd`, `netbsd` ou
@@ -392,7 +405,7 @@ Na GUI:
 2. escolha uma fonte em **Source** e atualize a lista após conectar dispositivos
    ou abrir novas janelas;
 3. para o perfil recomendado, mantenha **Best · Auto · 23 fps · 4K** e
-   **Encoder: Auto**;
+   **Encoder: Auto** e **Chroma: 420**;
 4. confirme o microfone e o áudio do sistema;
 5. escolha a pasta de saída;
 6. clique em **Start** e, ao terminar, em **Stop**.
@@ -492,6 +505,7 @@ Opções importantes:
 | `-q, --quality` | `best`, `high`, `balanced`, `compact` | `best` |
 | `-R, --resolution` | `native`, `720p`, `1080p`, `1440p`, `4k` | `4k` |
 | `-c, --codec` | `auto`, `h264`, `hevc`, `av1` | `auto` |
+| `--chroma` | `420`, `444` (CPU, H.264/HEVC, somente arquivo) | `420` |
 | `-f, --fps` | `23`, `30`, `60` ou outro inteiro | `23` |
 | `-o, --out` | pasta de saída | `~/Videos` ou `~/Audio` |
 | `--backend` | `auto`, `gpu`, `cpu` | `auto` |
@@ -833,10 +847,38 @@ quando nenhum candidato funciona; `--cpu` força o caminho por software.
   **30 fps** é uma boa escolha para aulas, apresentações e demonstrações;
   **60 fps** é mais indicado para movimento rápido e exige mais processamento.
 - `-R 4k` é o padrão e produz um quadro exato de 3840×2160, ampliando a origem
-  quando necessário. `-R native` preserva a resolução capturada e reduz a carga.
+  quando necessário, sem criar detalhes que não foram capturados. `-R native`
+  evita redimensionar o conteúdo e reduz a carga. Dimensões nativas ímpares
+  recebem preenchimento à direita/embaixo, sem cortar pixels da captura.
+- A saída ajustada usa dimensões pares e pixels quadrados; a gravação Wayland
+  por software faz conversão BT.709, além de registrar os metadados de cor.
+- As predefinições procuram acompanhar a captura ao vivo, mas não garantem
+  fluidez em qualquer hardware. Se houver perda de quadros, reduza resolução/FPS.
 - FLAC é o padrão e não perde qualidade; AAC e Opus geram arquivos menores.
 - MKV tolera melhor interrupções durante a gravação do que contêineres menos
   resilientes.
+
+### Chroma 4:4:4 para texto colorido
+
+`--chroma 420` continua sendo o padrão compatível, com seleção automática de
+hardware. Use `--chroma 444` ou o seletor **Chroma → 444** da GUI para preservar
+a resolução completa da cor em texto colorido e gráficos de desktop:
+
+```bash
+turborec record -R native --chroma 444 -c h264
+turborec record --chroma 444 -c hevc --cpu
+```
+
+Esse modo grava **somente em arquivo, por CPU**. Auto/H.264 requer `libx264`
+(perfil High 4:4:4); HEVC requer `libx265` (Main 4:4:4 de 8 bits), ambos com
+`yuv444p`. Sem o codificador de software necessário, a gravação falha. AV1,
+transmissão RTMP/RTMPS e pedidos explícitos `--backend gpu` / `--gpu` também são
+rejeitados, sem reduzir a cor silenciosamente. Há maior carga de CPU, possível
+aumento do arquivo e menor compatibilidade com reprodutores/editores. Não é RGB
+sem perdas; teste seu fluxo de reprodução e edição antes de uma gravação longa.
+
+Nos Macs Intel, a gravação VideoToolbox usa controle por bitrate sem `-q:v`;
+Apple Silicon mantém a escala de qualidade. Isso não acrescenta 4:4:4 por hardware.
 
 Para confirmar que o arquivo final contém os fluxos esperados:
 
@@ -862,6 +904,7 @@ Exemplo:
   "mode": "auto",
   "quality": "best",
   "codec": "auto",
+  "chroma": "420",
   "fps": 23,
   "resolution": "4k",
   "backend": "auto",

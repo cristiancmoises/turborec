@@ -1,5 +1,5 @@
 Name:           turborec
-Version:        3.9.1
+Version:        3.10.0
 Release:        1%{?dist}
 Summary:        State-of-the-art hardware-accelerated screen and audio recorder
 
@@ -83,6 +83,13 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/%{name}.desktop
 %{_datadir}/icons/hicolor/256x256/apps/%{name}.png
 
 %changelog
+* Wed Sep 30 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.10.0-1
+- Offer software 4:4:4 recording for fine coloured text and correct capture
+  geometry without cropping odd-sized regions or distorting pixel aspect ratio.
+- Distribute portable, complete-source and relocatable Guix releases in ZUPT
+  archives, preserving permissions and symlinks in uncompressed TAR payloads.
+- Update English and Brazilian Portuguese user guides.
+
 * Sun Sep 06 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.9.1-1
 - Add native BSD platform identities, X11/XWayland capture, sndio/OSS audio,
   and FreeBSD package smoke coverage.

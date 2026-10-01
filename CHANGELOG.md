@@ -5,6 +5,44 @@ All notable changes to Turbo Recorder are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.0] — 2026-09-30
+
+### Added
+- Optional `--chroma 420|444` and GUI Chroma selector; `420` remains the default.
+  `444` records files through CPU `libx264` (Auto/H.264, High 4:4:4) or `libx265`
+  (HEVC, Main 4:4:4 8-bit), using `yuv444p`. Missing software encoders, AV1,
+  RTMP/RTMPS and explicit GPU requests are rejected. This trades CPU load,
+  potential file size and player/editor compatibility for full chroma resolution;
+  it does not provide lossless RGB.
+
+### Fixed
+- Native odd-sized captures are padded on the right/bottom without cutting
+  captured pixels. Fitted output uses even dimensions and square sample aspect.
+- Software Wayland recording converts to BT.709 instead of only labeling color
+  metadata. Intel Mac VideoToolbox recording uses bitrate rate control without
+  `-q:v`; Apple Silicon retains the quality-scale path.
+
+### Packaging and documentation
+- Replaced the portable Unix, Guix and complete-source `.tar.gz` release assets
+  with genuine `.zupt` archives, each containing one uncompressed tar payload to
+  preserve Unix modes and symlinks. Extraction requires ZUPT, then tar; native
+  packages and both Windows executables remain available.
+- The release has 10 payloads plus `SHA256SUMS` (11 assets). Best · Auto · the
+  literal integer 23 fps · 4K and English as the default language are retained.
+- Updated the existing English/PT-BR guides and website; clarified chroma,
+  upscaling and real-time limits without claiming physical-device validation.
+
+### Resumo em português do Brasil
+- Novo seletor/`--chroma 444` para gravação H.264/HEVC por CPU em arquivo; o
+  padrão continua `420`. Exige `libx264`/`libx265`, não aceita AV1, RTMP ou GPU
+  explícita e não significa RGB sem perdas.
+- Capturas ímpares recebem preenchimento sem corte; saída ajustada usa dimensões
+  pares/pixels quadrados e o Wayland por software converte para BT.709.
+- Portátil, Guix e código-fonte passam a `.zupt` com um tar sem compressão
+  interna. Pacotes nativos continuam disponíveis; mantenha a verificação por
+  `SHA256SUMS` e extraia primeiro com ZUPT, depois com tar.
+- Mantidos Best · Auto · 23 fps · 4K e inglês padrão; guia PT-BR atualizado.
+
 ## [3.9.1] — 2026-09-06
 
 ### Fixed

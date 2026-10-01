@@ -2,7 +2,8 @@
 ;;;
 ;;; Build a local binary:        guix build -f guix.scm
 ;;; Install into your profile:   guix package -f guix.scm
-;;; Relocatable binary tarball:  guix pack -RR -S /bin=bin -e '(load "guix.scm")'
+;;; Relocatable payload:        guix pack -RR -S /bin=bin -e '(load "guix.scm")'
+;;; Public releases wrap the uncompressed TAR payload in a .zupt archive.
 ;;;
 ;;; This installs the `turborec` (Python CLI) and `turborecorder` (shell CLI)
 ;;; recorders with ffmpeg, wf-recorder (Wayland) and pulseaudio wrapped onto
@@ -34,20 +35,15 @@
 (define turborec
   (package
     (name "turborec")
-    (version "3.9.1")
+    (version "3.10.0")
     (source
      (let ((tracked? (git-predicate %source-dir)))
        (local-file %source-dir
                    "turborec-checkout"
                    #:recursive? #t
-                   ;; Keep generated build/dist files out of the source, while
-                   ;; allowing newly created release files to be tested before
-                   ;; their first commit.  Once committed, tracked? selects them.
-                   #:select? (lambda (file stat)
-                               (or (tracked? file stat)
-                                   (member (basename file)
-                                           '("README.pt-BR.md"
-                                             "build-source-tarball.sh")))))))
+                   ;; Only version-controlled project inputs enter the store.
+                   ;; Local notes, issue archives and credentials stay private.
+                   #:select? tracked?)))
     (build-system copy-build-system)
     (arguments
      (list

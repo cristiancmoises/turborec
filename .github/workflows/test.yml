@@ -35,6 +35,14 @@ jobs:
           python -m unittest discover -s tests -v
           python turborec.py --version
 
+      - name: Validate real CPU video output
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          TURBOREC_FFMPEG_TESTS=1 python -m unittest discover -s tests -p test_turborec.py -v
+
       - name: Validate shell entry points
         if: runner.os != 'Windows'
         shell: bash

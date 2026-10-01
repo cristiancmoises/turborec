@@ -1,6 +1,6 @@
 #!/bin/sh
 # =============================================================================
-#  build-tarball.sh — build dist/turborec-<version>.tar.gz
+#  build-tarball.sh — build dist/turborec-<version>.zupt (a TAR payload)
 #
 #  A portable, architecture-independent binary release that installs on any
 #  Unix with a POSIX shell and Python 3: FreeBSD, OpenBSD, NetBSD, DragonFly,
@@ -34,7 +34,7 @@ die() { printf '[build-tarball] ERROR: %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "required tool not found: $1"; }
 
 need tar
-need gzip
+need zupt
 
 [ -f "${REPO_ROOT}/turborec.py" ]   || die "missing ${REPO_ROOT}/turborec.py"
 [ -f "${REPO_ROOT}/turborecorder" ] || die "missing ${REPO_ROOT}/turborecorder"
@@ -169,21 +169,32 @@ UNINSTALL_EOF
 chmod 0755 "${STAGE}/uninstall.sh"
 
 # =============================================================================
-#  Assemble the tarball (deterministic where the tar supports it)
+#  Assemble the metadata-preserving TAR, then compress it with ZUPT.
 # =============================================================================
 mkdir -p -- "${DIST_DIR}"
-TARBALL="${DIST_DIR}/${TOP}.tar.gz"
-rm -f -- "${TARBALL}"
+PAYLOAD="${BUILD_DIR}/${TOP}.tar"
+ARCHIVE="${DIST_DIR}/${TOP}.zupt"
 
 # GNU tar accepts reproducibility flags; BSD/base tar does not — detect and adapt.
 if tar --version 2>/dev/null | grep -qi 'gnu tar'; then
-    SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(date +%s)}"
+    # An extracted source release has no .git directory and need not have Git
+    # installed. Honour an explicit epoch, prefer a commit timestamp when
+    # available, and otherwise keep the portable source-build path working.
+    if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
+        if command -v git >/dev/null 2>&1 \
+            && COMMIT_EPOCH="$(git -C "${REPO_ROOT}" log -1 --format=%ct 2>/dev/null)" \
+            && [ -n "${COMMIT_EPOCH}" ]; then
+            SOURCE_DATE_EPOCH="${COMMIT_EPOCH}"
+        else
+            SOURCE_DATE_EPOCH="$(date +%s)"
+        fi
+    fi
     tar --owner=0 --group=0 --numeric-owner \
         --mtime="@${SOURCE_DATE_EPOCH}" --sort=name --format=gnu \
-        -C "${BUILD_DIR}" -cf - "${TOP}" | gzip -9 -n > "${TARBALL}"
+        -C "${BUILD_DIR}" -cf "${PAYLOAD}" "${TOP}"
 else
-    ( cd "${BUILD_DIR}" && tar -cf - "${TOP}" ) | gzip -9 > "${TARBALL}"
+    ( cd "${BUILD_DIR}" && tar -cf "${PAYLOAD}" "${TOP}" )
 fi
 
-log "built: ${TARBALL}"
-printf '%s\n' "${TARBALL}"
+sh "${SCRIPT_DIR}/build-zupt-archive.sh" "${PAYLOAD}" "${ARCHIVE}"
+log "built: ${ARCHIVE}"
