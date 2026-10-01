@@ -93,6 +93,13 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIn("permissions:\n      contents: write", publish)
         self.assertIn("$PSNativeCommandUseErrorActionPreference = $false", workflow)
 
+    def test_cross_platform_test_gates_stop_on_python_failure(self):
+        for relative, name in ((".github/workflows/test.yml", "Compile and run unit tests"),
+                               (".github/workflows/release.yml", "Run release-gate tests")):
+            workflow = (ROOT / relative).read_text(encoding="utf-8")
+            step = workflow.split("- name: " + name, 1)[1].split("- name:", 1)[0]
+            self.assertIn("shell: bash", step)
+
     def test_release_includes_distribution_source_archive(self):
         name = "turborec-${VERSION}-source.zupt"
         workflow = (ROOT / ".github/workflows/release.yml").read_text(

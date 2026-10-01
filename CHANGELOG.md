@@ -5,6 +5,72 @@ All notable changes to Turbo Recorder are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.1] — 2026-09-30
+
+Quality-release follow-up retaining the 3.10.0 features below. The Windows
+release-gate failure was a test-fixture path assumption, not a recorder defect.
+
+### Quality and runtime
+
+- Optional CPU H.264/HEVC `--chroma 444` and GUI selection retain full chroma
+  resolution; `420` stays the default. This is not lossless RGB and costs CPU,
+  potential file size and player/editor compatibility. AV1, RTMP/RTMPS and
+  explicit GPU requests remain unsupported in 4:4:4 mode.
+- Odd native captures are padded without cropping; fitted output uses even
+  dimensions and square pixels. Software Wayland converts to BT.709; Intel Mac
+  VideoToolbox uses bitrate control while Apple Silicon retains quality-scale
+  control. BSD capability checks and Windows device/monitor fixes are retained.
+- Stream keys are masked before shell quoting. Final FFmpeg file outputs refuse
+  overwrite; generated filenames avoid dangling symlinks. New POSIX recording
+  folders are private without changing existing permissions. These controls do
+  not guarantee safety in hostile shared directories or validate physical
+  capture devices.
+- Best · Auto · the literal integer 23 fps · 4K, default 4:2:0 and English remain
+  unchanged. English/PT-BR guides and the simulated, generic-path GUI screenshot
+  are updated for 3.10.1.
+
+### Packaging and release validation
+
+- Portable Unix, Guix and complete-source distributions use genuine `.zupt`
+  archives, each carrying one uncompressed tar to preserve modes and symlinks.
+  Native packages and both Windows executables remain available: 10 payloads
+  plus `SHA256SUMS`, 11 release assets total. Extract with ZUPT, then tar.
+- Windows setup remains per-user and non-elevated, with isolated Python
+  discovery, a per-user launcher and preserved CLI exit codes; legacy
+  machine-wide installations require the documented uninstall migration.
+- Managed appimagetool downloads/cache require pins and working checksum
+  verification. ZUPT publication replaces the exact destination leaf. Forge
+  mirroring validates the exact local set/checksums and compares all 11 public
+  downloads with local bytes without sending credentials; Python checksum
+  validation and file listing no longer require GNU tools. CI release-write
+  authority stays limited to publication.
+- Fixed the output-naming test fixture to accept native Windows path separators
+  during actual FFmpeg validation; recorder filename generation is unchanged.
+  The earlier 3.10.0 tag is retained rather than force-overwritten.
+- Cross-platform unit and release gates use a fail-fast Bash shell, so a Python
+  test failure cannot be hidden by a later successful version command on Windows.
+
+### Resumo em português do Brasil
+
+- Mantidos o seletor/`--chroma 444` por CPU para H.264/HEVC, preenchimento sem
+  corte, pixels quadrados, BT.709 no Wayland e os ajustes de VideoToolbox no Mac.
+  4:4:4 não significa RGB sem perdas e exige mais CPU/compatibilidade; o padrão
+  continua Best · Auto · 23 fps · 4K · 4:2:0, com inglês como idioma padrão.
+- Portátil, Guix e código-fonte usam `.zupt` genuíno com um tar sem compressão
+  interna; pacotes nativos e ambos os executáveis Windows continuam disponíveis.
+  São 10 payloads mais `SHA256SUMS`, 11 arquivos; extraia com ZUPT e depois tar.
+- Setup do Windows por usuário, sem elevação, com Python isolado e códigos de
+  saída preservados. Prévias ocultam chaves antes do quoting; novos diretórios
+  POSIX são privados, sem alterar permissões existentes. Ferramentas gerenciadas
+  e bytes dos espelhos são verificados; isso não é garantia de segurança nem
+  validação de dispositivos físicos.
+- Corrigido o teste de nomes de saída para separadores nativos do Windows na
+  validação com FFmpeg real, sem mudar os nomes gerados pelo gravador. Guias e
+  captura simulada da interface atualizados para 3.10.1; o tag 3.10.0 permanece
+  no histórico, sem sobrescrita forçada.
+- As etapas de teste usam Bash com parada na primeira falha: um comando de
+  versão bem-sucedido não pode esconder erros anteriores de teste no Windows.
+
 ## [3.10.0] — 2026-09-30
 
 ### Added

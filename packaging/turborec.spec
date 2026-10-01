@@ -1,5 +1,5 @@
 Name:           turborec
-Version:        3.10.0
+Version:        3.10.1
 Release:        1%{?dist}
 Summary:        State-of-the-art hardware-accelerated screen and audio recorder
 
@@ -83,6 +83,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/%{name}.desktop
 %{_datadir}/icons/hicolor/256x256/apps/%{name}.png
 
 %changelog
+* Wed Sep 30 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.10.1-1
+- Preserve quality/privacy updates and validate native Windows output paths
+
 * Wed Sep 30 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.10.0-1
 - Offer software 4:4:4 recording for fine coloured text and correct capture
   geometry without cropping odd-sized regions or distorting pixel aspect ratio.

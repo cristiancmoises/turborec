@@ -11,7 +11,7 @@
 
 <img src="docs/turborec-gui.png" alt="Turbo Recorder — dark, hardware-accelerated screen recorder GUI" width="860">
 
-<sub>Version 3.10.0 interface, captured with simulated system metadata and a generic user path.</sub>
+<sub>Version 3.10.1 interface, captured with simulated system metadata and a generic user path.</sub>
 
 🌐 **[Official website](https://turborec.securityops.co)** &nbsp;·&nbsp;
 📺 **[Watch a sample recording](https://youtu.be/mlf531Da9Qo?si=RTaSB9dJ4NSbGsOm)** &nbsp;·&nbsp;
@@ -32,7 +32,7 @@ not available, Turbo Recorder falls back safely to software H.264. English is
 the default interface and documentation language; the complete PT-BR guide is
 linked below. You can override recording choices in the GUI, CLI, or JSON configuration.
 
-> **v3.10.0 quality release:** optional CPU 4:4:4 recording preserves more
+> **v3.10.1 quality release:** optional CPU 4:4:4 recording preserves more
 > chroma detail in colored text, native odd-sized captures are padded rather
 > than cropped, and software Wayland conversion uses BT.709. Portable, Guix and
 > complete-source distributions now use real `.zupt` archives; native package
@@ -186,32 +186,32 @@ free/open-source building blocks — no reinventing the wheel:
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.10.0_all.deb
+sudo apt install ./turborec_3.10.1_all.deb
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.10.0-1.noarch.rpm
+sudo dnf install ./turborec-3.10.1-1.noarch.rpm
 
 # Any Linux — portable, no install
-chmod +x Turbo_Recorder-3.10.0-x86_64.AppImage
-./Turbo_Recorder-3.10.0-x86_64.AppImage
+chmod +x Turbo_Recorder-3.10.1-x86_64.AppImage
+./Turbo_Recorder-3.10.1-x86_64.AppImage
 
 # FreeBSD — native package
-pkg add ./turborec-3.10.0.pkg
+pkg add ./turborec-3.10.1.pkg
 
 # Any Unix (BSD / illumos / Linux / macOS) — portable ZUPT archive
-zupt extract -o unpack turborec-3.10.0.zupt
-tar xf unpack/turborec-3.10.0.tar
-cd turborec-3.10.0
+zupt extract -o unpack turborec-3.10.1.zupt
+tar xf unpack/turborec-3.10.1.tar
+cd turborec-3.10.1
 sudo ./install.sh            # installs to /usr/local (PREFIX=… to change)
 
 # GNU Guix — verify the release checksum BEFORE extraction to /
-zupt extract -o guix-unpack turborec-3.10.0-guix-x86_64.zupt
-sudo tar xf guix-unpack/turborec-3.10.0-guix-x86_64.tar -C / # /gnu/store + /bin
+zupt extract -o guix-unpack turborec-3.10.1-guix-x86_64.zupt
+sudo tar xf guix-unpack/turborec-3.10.1-guix-x86_64.tar -C / # /gnu/store + /bin
 guix package -f guix.scm                        # or install from the repo
 
 # Windows — self-contained: Python, Tk AND ffmpeg bundled, nothing to install
-Turbo_Recorder-3.10.0-windows-x64.exe gui          # zero-install portable app
-Turbo_Recorder-3.10.0-windows-x64-setup.exe        # classic installer (also bundles
+Turbo_Recorder-3.10.1-windows-x64.exe gui          # zero-install portable app
+Turbo_Recorder-3.10.1-windows-x64-setup.exe        # classic installer (also bundles
                                                   #   Python 3.12 + Tk + FFmpeg)
 ```
 
@@ -238,7 +238,7 @@ PulseAudio monitor for desktop/system sound. On a **Linux Wayland session**, ins
 **FreeBSD**: `pkg install python3 ffmpeg`; on **OpenBSD**:
 `pkg_add python3 ffmpeg`.
 
-Fedora's `ffmpeg-free` can lack `libx264`, so Turbo Recorder 3.10.0 falls through
+Fedora's `ffmpeg-free` can lack `libx264`, so Turbo Recorder 3.10.1 falls through
 to `libopenh264` only after a real one-frame initialization succeeds; Fedora's
 listed-but-unusable `noopenh264` shim is rejected even when general encoder
 probes are disabled. A normal enabled Cisco OpenH264 repository lets
@@ -257,12 +257,12 @@ python3 turborec.py gui      # or: detect / record / devices
 **Build the packages yourself** — scripts live in [`packaging/`](packaging/):
 
 ```bash
-packaging/build-deb.sh        # → dist/turborec_3.10.0_all.deb  (works even without dpkg-deb)
-packaging/build-rpm.sh        # → dist/turborec-3.10.0-1.noarch.rpm
-packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.10.0-x86_64.AppImage
-packaging/build-tarball.sh    # → dist/turborec-3.10.0.zupt     (portable; any Unix incl. the BSDs)
-packaging/build-freebsd-pkg.sh # → dist/turborec-3.10.0.pkg      (run on FreeBSD; pkg add)
-packaging/build-source-tarball.sh # → dist/turborec-3.10.0-source.zupt (complete release source)
+packaging/build-deb.sh        # → dist/turborec_3.10.1_all.deb  (works even without dpkg-deb)
+packaging/build-rpm.sh        # → dist/turborec-3.10.1-1.noarch.rpm
+packaging/build-appimage.sh   # → dist/Turbo_Recorder-3.10.1-x86_64.AppImage
+packaging/build-tarball.sh    # → dist/turborec-3.10.1.zupt     (portable; any Unix incl. the BSDs)
+packaging/build-freebsd-pkg.sh # → dist/turborec-3.10.1.pkg      (run on FreeBSD; pkg add)
+packaging/build-source-tarball.sh # → dist/turborec-3.10.1-source.zupt (complete release source)
 guix build -f guix.scm        # GNU Guix package; release packs are wrapped in .zupt
 ```
 

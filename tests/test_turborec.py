@@ -860,7 +860,7 @@ class DurationParsingTests(unittest.TestCase):
 
 class OutputNamingTests(unittest.TestCase):
     def test_same_second_recordings_do_not_overwrite(self):
-        # ffmpeg runs with -y and the timestamp is second-granularity, so a
+        # The timestamp is second-granularity, so a
         # quick second recording must never silently overwrite the first
         # (the first recording's file already exists on disk by then).
         with tempfile.TemporaryDirectory() as d:
@@ -882,9 +882,10 @@ class OutputNamingTests(unittest.TestCase):
         spec = tr.RecordSpec(mode="video_only", out_dir="/nonexistent-unused")
         with mock.patch.object(tr, "ensure_dir"):
             _cmd, out = tr.build_command(si, spec)
+        self.assertEqual(os.path.dirname(out), spec.out_dir)
         self.assertRegex(
-            out,
-            r"/nonexistent-unused/video_only_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.mkv",
+            os.path.basename(out),
+            r"^video_only_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.mkv$",
         )
 
 

@@ -38,6 +38,7 @@ jobs:
           echo "${RUNNER_TEMP}/zupt/bin" >> "${GITHUB_PATH}"
 
       - name: Run release-gate tests
+        shell: bash
         run: |
           python -m py_compile turborec.py
           python -m unittest discover -s tests -v

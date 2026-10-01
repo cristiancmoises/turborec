@@ -41,7 +41,7 @@ from datetime import datetime
 from typing import Optional
 
 APP_NAME = "Turbo Recorder"
-VERSION = "3.10.0"
+VERSION = "3.10.1"
 
 _BSD_OSES = frozenset(("freebsd", "openbsd", "netbsd", "dragonfly"))
 _X11_CAPTURE_OSES = frozenset(("linux", *_BSD_OSES))
