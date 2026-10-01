@@ -309,6 +309,62 @@ class ReleaseArchiveTests(unittest.TestCase):
                 self.assertIn("ZUPT_THREADS must be 1-64", result.stderr)
                 self.assertEqual(output.read_bytes(), b"previous verified release")
 
+    @unittest.skipIf(getattr(os, "geteuid", lambda: 0)() == 0, "root bypasses directory permissions")
+    def test_archive_can_publish_below_search_only_ancestor(self):
+        payload = self.repo / "payload.tar"
+        with tarfile.open(payload, "w") as archive:
+            archive.add(self.repo / "LICENSE", arcname="LICENSE")
+        restricted = Path(self.temporary.name) / "search-only"
+        output_dir = restricted / "release-assets"
+        output_dir.mkdir(parents=True)
+        scratch = Path(self.temporary.name) / "private-tmp"
+        scratch.mkdir(mode=0o700)
+        restricted.chmod(0o111)
+        self.addCleanup(restricted.chmod, 0o700)
+        self.assertFalse(os.access(restricted, os.R_OK))
+        output = output_dir / "release.zupt"
+        self.run_command(
+            "sh", "packaging/build-zupt-archive.sh", str(payload), str(output),
+            env=dict(os.environ, TMPDIR=str(scratch)),
+        )
+        # Read/copy through the searchable ancestor, but ask ZUPT to open only
+        # fully readable temporary ancestors when validating the published copy.
+        readable_archive = self.repo / "published.zupt"
+        shutil.copy2(output, readable_archive)
+        restored = self.unpack_tar(readable_archive, self.repo / "published-extracted")
+        self.assertEqual(restored.read_bytes(), payload.read_bytes())
+        self.assertEqual(list(scratch.iterdir()), [])
+        self.assertEqual(list(output_dir.glob(".zupt-build.*")), [])
+
+    def test_failed_validation_preserves_existing_archive_and_cleans_staging(self):
+        payload = self.repo / "payload.tar"
+        with tarfile.open(payload, "w") as archive:
+            archive.add(self.repo / "LICENSE", arcname="LICENSE")
+        output_dir = self.repo / "output"
+        output_dir.mkdir()
+        output = output_dir / "release.zupt"
+        output.write_bytes(b"previous verified archive")
+        scratch = self.repo / "private-tmp"
+        scratch.mkdir(mode=0o700)
+        tools = self.repo / "failure-tools"
+        tools.mkdir()
+        checker = tools / "zupt"
+        checker.write_text(
+            '#!/bin/sh\nif [ "$1" = test ]; then\n'
+            '  printf "injected verification failure\\n" >&2\n  exit 1\nfi\n'
+            'exec "$REAL_ZUPT" "$@"\n', encoding="utf-8",
+        )
+        checker.chmod(0o755)
+        result = self.run_command(
+            "sh", "packaging/build-zupt-archive.sh", str(payload), str(output), expected=1,
+            env=dict(os.environ, TMPDIR=str(scratch), REAL_ZUPT=shutil.which("zupt"),
+                     PATH=str(tools) + os.pathsep + os.environ["PATH"]),
+        )
+        self.assertIn("injected verification failure", result.stderr)
+        self.assertEqual(output.read_bytes(), b"previous verified archive")
+        self.assertEqual(list(scratch.iterdir()), [])
+        self.assertEqual(list(output_dir.iterdir()), [output])
+
 
 if __name__ == "__main__":
     unittest.main()

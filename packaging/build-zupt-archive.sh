@@ -23,8 +23,16 @@ OUTPUT_DIR="$(dirname -- "${OUTPUT}")"
 mkdir -p -- "${OUTPUT_DIR}"
 OUTPUT_DIR="$(cd -- "${OUTPUT_DIR}" && pwd -P)"
 OUTPUT="${OUTPUT_DIR}/$(basename -- "${OUTPUT}")"
-WORK="$(mktemp -d "${OUTPUT_DIR}/.zupt-build.XXXXXX")"
-trap 'rm -rf -- "${WORK}"' EXIT INT HUP TERM
+# ZUPT pins output parents by opening every absolute ancestor for reading. A
+# destination may legitimately sit below a search-only ancestor (such as
+# /home), so compress/validate in private TMPDIR space, not beside that output.
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/turborec-zupt-build.XXXXXX")"
+PUBLISH_WORK=""
+cleanup() {
+    rm -rf -- "${WORK}"
+    if [ -n "${PUBLISH_WORK}" ]; then rm -rf -- "${PUBLISH_WORK}"; fi
+}
+trap cleanup EXIT INT HUP TERM
 NAME="$(basename -- "${PAYLOAD}")"
 cp -- "${PAYLOAD}" "${WORK}/${NAME}"
 (
@@ -34,5 +42,10 @@ cp -- "${PAYLOAD}" "${WORK}/${NAME}"
     zupt extract -o verified archive.zupt
     cmp -- "${NAME}" "verified/${NAME}"
 ) >&2
-mv -f -- "${WORK}/archive.zupt" "${OUTPUT}"
+# Copy verified bytes to a private directory on the destination filesystem;
+# the last rename remains atomic even when TMPDIR lives on another mount.
+PUBLISH_WORK="$(mktemp -d "${OUTPUT_DIR}/.zupt-build.XXXXXX")"
+cp -- "${WORK}/archive.zupt" "${PUBLISH_WORK}/archive.zupt"
+cmp -- "${WORK}/archive.zupt" "${PUBLISH_WORK}/archive.zupt"
+mv -f -- "${PUBLISH_WORK}/archive.zupt" "${OUTPUT}"
 printf '%s\n' "${OUTPUT}"
