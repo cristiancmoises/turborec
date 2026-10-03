@@ -74,14 +74,16 @@ detect_gpu(){
   if have nvidia-smi && nvidia-smi -L >/dev/null 2>&1; then
     GPU_VENDOR="nvidia"
   else
-    local pci; pci="$(lspci 2>/dev/null | grep -iE 'vga|3d|display' || true)"
-    case "${pci,,}" in
+    local pci; pci="$(lspci 2>/dev/null | grep -iE 'vga|3d|display' | LC_ALL=C tr '[:upper:]' '[:lower:]' || true)"
+    case "$pci" in
       *nvidia*) GPU_VENDOR="nvidia" ;;
       *"advanced micro devices"*|*"amd/ati"*|*radeon*) GPU_VENDOR="amd" ;;
       *intel*) GPU_VENDOR="intel" ;;
     esac
   fi
-  [ -z "$VAAPI_DEVICE" ] && VAAPI_DEVICE="$(detect_first_render_node)"
+  if [ -z "$VAAPI_DEVICE" ]; then
+    VAAPI_DEVICE="$(detect_first_render_node)"
+  fi
 }
 
 # Map QUALITY preset -> a single index 0..3
@@ -262,17 +264,18 @@ audio_internal_and_mic(){
     -map "[a]" "${AUDIO_ARGS[@]}" "$out"
 }
 
+# Bash 3.2 nounset requires a guard when optional PRE_INPUT is an empty array.
 video_without_audio(){
   ensure_dir "$VID_DIR"; local out; out="${VID_DIR}/video_noaudio_$(timestamp).mkv"
   ffmpeg -n -hide_banner -loglevel info -stats \
-    "${PRE_INPUT[@]}" "${X11_ARGS[@]}" \
+    ${PRE_INPUT[@]+"${PRE_INPUT[@]}"} "${X11_ARGS[@]}" \
     -vf "$VFILTER" "${VENC_ARGS[@]}" "$out"
 }
 
 video_with_internal_audio(){
   ensure_dir "$VID_DIR"; local out; out="${VID_DIR}/video_internal_$(timestamp).mkv"
   ffmpeg -n -hide_banner -loglevel info -stats \
-    "${PRE_INPUT[@]}" "${X11_ARGS[@]}" \
+    ${PRE_INPUT[@]+"${PRE_INPUT[@]}"} "${X11_ARGS[@]}" \
     -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
     -filter_complex "[0:v]${VFILTER}[v];[1:a]${ARESAMPLE},pan=${PAN}[a]" \
     -map "[v]" -map "[a]" "${VENC_ARGS[@]}" "${AUDIO_ARGS[@]}" "$out"
@@ -281,7 +284,7 @@ video_with_internal_audio(){
 video_with_microphone(){
   ensure_dir "$VID_DIR"; local out; out="${VID_DIR}/video_mic_$(timestamp).mkv"
   ffmpeg -n -hide_banner -loglevel info -stats \
-    "${PRE_INPUT[@]}" "${X11_ARGS[@]}" \
+    ${PRE_INPUT[@]+"${PRE_INPUT[@]}"} "${X11_ARGS[@]}" \
     -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
     -filter_complex "[0:v]${VFILTER}[v];[1:a]${ARESAMPLE},pan=${PAN}[a]" \
     -map "[v]" -map "[a]" "${VENC_ARGS[@]}" "${AUDIO_ARGS[@]}" "$out"
@@ -290,7 +293,7 @@ video_with_microphone(){
 video_with_both(){
   ensure_dir "$VID_DIR"; local out; out="${VID_DIR}/video_both_$(timestamp).mkv"
   ffmpeg -n -hide_banner -loglevel info -stats \
-    "${PRE_INPUT[@]}" "${X11_ARGS[@]}" \
+    ${PRE_INPUT[@]+"${PRE_INPUT[@]}"} "${X11_ARGS[@]}" \
     -f pulse -thread_queue_size 1024 -i "$MONITOR_SOURCE" \
     -f pulse -thread_queue_size 1024 -i "$MIC_SOURCE" \
     -filter_complex \
@@ -390,7 +393,12 @@ print("\n".join(values))
   while IFS= read -r line; do selected+=( "$line" ); done <<< "$data"
   [ "${#selected[@]}" -ge 4 ] || die "Invalid Wayland recording plan from companion."
   WF_CODEC="${selected[0]}"; WF_KIND="${selected[1]}"; WF_RECORDER="${selected[2]}"
-  WF_BASE=( "${selected[@]:3}" )
+  # Bash 3.2 joins quoted array slices when IFS does not contain a space.
+  WF_BASE=()
+  local index
+  for ((index=3; index<${#selected[@]}; index++)); do
+    WF_BASE+=( "${selected[index]}" )
+  done
   case "$AUDIO_CODEC" in
     opus) WF_ACODEC="libopus" ;; aac) WF_ACODEC="aac" ;; *) WF_ACODEC="flac" ;;
   esac

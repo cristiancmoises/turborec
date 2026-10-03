@@ -13,8 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   optional Manual Chroma and bounded completed-media validation.
 - The legacy Wayland helper also recognizes Python 3 installations whose
   interpreter is named `python`; Python 2/lookalike headers remain rejected.
-- Read the validated recording plan without `mapfile`, retaining compatibility
-  with older Bash versions and preserving argument boundaries.
+- Read the validated recording plan without `mapfile` or quoted array slicing,
+  preserving argument boundaries and paths with spaces on Bash 3.2 as well.
+- Keep optional X11 input arguments and PCI vendor detection compatible with
+  older Bash; a manually selected VAAPI device no longer aborts discovery.
 - Native Windows backend-contract tests execute their synthetic Python fixtures
   through Python, rather than relying on POSIX shebang execution. Linux-only
   legacy-launcher integration tests remain active on POSIX platforms.
@@ -27,9 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opcional e validação limitada da mídia antes de confirmar o salvamento.
 - O auxiliar legado do Wayland aceita instalações Python 3 cujo interpretador
   se chama `python`, sem aceitar cabeçalhos Python 2 ou nomes semelhantes.
-- O plano de gravação não depende de `mapfile`, preservando os argumentos em
-  versões antigas do Bash. Os testes do backend no Windows usam fixtures
+- O plano de gravação não depende de `mapfile` nem de recortes de arrays,
+  preservando argumentos e caminhos com espaços também no Bash 3.2.
+  Os testes do backend no Windows usam fixtures
   Python executáveis nesse sistema; a integração legado/POSIX continua ativa.
+- Argumentos opcionais do X11 e detecção de GPU por PCI funcionam no Bash
+  antigo; selecionar um dispositivo VAAPI manualmente não aborta a detecção.
 - A tag assinada 3.10.3 foi preservada. A CI bloqueou seus binários; a 3.10.4
   reúne as correções de portabilidade.
 

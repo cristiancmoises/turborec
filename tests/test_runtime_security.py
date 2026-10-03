@@ -218,6 +218,51 @@ ensure_dir "$1/existing"
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(stat.S_IMODE((directory / "recording.mkv").stat().st_mode), 0o600)
 
+    def test_gpu_discovery_preserves_vendor_and_manual_render_device(self):
+        for description, vendor in (("VGA Intel GRAPHICS", "intel"),
+                                    ("VGA ADVANCED MICRO DEVICES Radeon", "amd"),
+                                    ("3D NVIDIA Graphics", "nvidia")):
+            for configured, device in (("", "/fixture/auto-render"),
+                                       ("/fixture/manual render", "/fixture/manual render")):
+                with self.subTest(vendor=vendor, configured=configured), \
+                        tempfile.TemporaryDirectory() as scratch:
+                    result = self.run_functions(Path(scratch), '''
+have(){ return 1; }
+lspci(){ printf '%s\\n' "''' + description + '''"; }
+detect_first_render_node(){ printf '%s' /fixture/auto-render; }
+VAAPI_DEVICE="''' + configured + '''"
+detect_gpu
+printf '%s\\n%s\\n' "$GPU_VENDOR" "$VAAPI_DEVICE"
+''')
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.splitlines(), [vendor, device])
+
+    def test_x11_optional_pre_input_preserves_argument_boundaries(self):
+        functions = ("video_without_audio", "video_with_internal_audio",
+                     "video_with_microphone", "video_with_both")
+        for function in functions:
+            for setup, expected in (("PRE_INPUT=()", []),
+                                    ("PRE_INPUT=(-vaapi_device '/fixture/render node')",
+                                     ["-vaapi_device", "/fixture/render node"])):
+                with self.subTest(function=function, setup=setup), \
+                        tempfile.TemporaryDirectory() as scratch:
+                    directory = Path(scratch)
+                    result = self.run_functions(directory, r'''
+VID_DIR="$1/recordings"
+ARESAMPLE=aresample=48000; PAN=stereo
+MONITOR_SOURCE=dummy.monitor; MIC_SOURCE=dummy.mic
+AUDIO_ARGS=(-c:a flac); X11_ARGS=(-f lavfi -i dummy)
+VFILTER=format=yuv420p; VENC_ARGS=(-c:v libx264)
+timestamp(){ printf fixed; }
+ARGV_FILE="$1/argv"
+ffmpeg(){ printf '%s\0' "$@" > "$ARGV_FILE"; : > "${@: -1}"; }
+''' + setup + '\n' + function + '\n')
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    argv = (directory / "argv").read_bytes().decode("utf-8").split("\0")[:-1]
+                    prefix = ["-n", "-hide_banner", "-loglevel", "info", "-stats",
+                              *expected, "-f", "lavfi", "-i", "dummy"]
+                    self.assertEqual(argv[:len(prefix)], prefix)
+
     def test_all_public_file_recorders_refuse_overwrite_and_create_private_files(self):
         functions = ("audio_internal_only", "audio_microphone_only", "audio_internal_and_mic",
                      "video_without_audio", "video_with_internal_audio", "video_with_microphone",

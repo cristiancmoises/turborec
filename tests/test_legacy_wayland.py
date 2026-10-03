@@ -116,6 +116,7 @@ class LegacyWaylandTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 command = json.loads(self.log.read_text())
                 self.assertEqual(command[0], self.env["TURBOREC_WF_RECORDER"])
+                self.assertIn('-c', command, command)
                 self.assertEqual(command[command.index('-c') + 1], 'hevc_nvenc')
                 self.assertEqual(command[command.index('-r') + 1], '23')
                 self.assertIn('cq=19', command)
@@ -178,6 +179,21 @@ class LegacyWaylandTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         command = json.loads(self.log.read_text(encoding="utf-8"))
         self.assertEqual(command[command.index('-c') + 1], 'h264_nvenc')
+        self.assertIn('Saved:', result.stderr)
+
+    def test_wayland_plan_preserves_argument_boundaries_and_spaces(self):
+        self.env["TURBOREC_WF_RECORDER"] = str(self.fixture("wf matched", self.wf_body()))
+        self.env["TURBOREC_WF_FFMPEG"] = str(self.fixture("ff matched", self.ff_body()))
+        result = self.run_script(self.layout("recording tools"), "-f", "23", "-s", "320x240")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        command = json.loads(self.log.read_text(encoding="utf-8"))
+        self.assertEqual(command[0], self.env["TURBOREC_WF_RECORDER"])
+        self.assertIn('-c', command, command)
+        self.assertEqual(command[command.index('-c') + 1], 'h264_nvenc')
+        self.assertEqual(command[command.index('-r') + 1], '23')
+        self.assertEqual(command[command.index('-g') + 1], '0,0 320x240')
+        self.assertEqual(Path(command[command.index('-f') + 1]).parent,
+                         self.output / 'recording tools')
         self.assertIn('Saved:', result.stderr)
 
     def test_python2_or_lookalike_header_is_not_imported_as_companion(self):
