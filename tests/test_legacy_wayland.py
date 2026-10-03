@@ -12,6 +12,8 @@ from pathlib import Path
 PROJECT = Path(__file__).resolve().parents[1]
 
 
+@unittest.skipUnless(os.name == "posix" and shutil.which("bash"),
+                     "Legacy Wayland launcher requires POSIX executable scripts and Bash")
 class LegacyWaylandTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -38,7 +40,7 @@ class LegacyWaylandTests(unittest.TestCase):
 
     def fixture(self, name, body):
         path = self.bin / name
-        path.write_text(f"#!{sys.executable}\n" + body + "\n")
+        path.write_text(f"#!{sys.executable}\n" + body + "\n", encoding="utf-8")
         path.chmod(0o700)
         return path
 
@@ -155,15 +157,41 @@ class LegacyWaylandTests(unittest.TestCase):
     def test_extensionless_python_interpreter_headers_support_installed_and_env_split_layouts(self):
         self.pair()
         for name, header in (("absolute-python", f"#!{sys.executable}"),
+                              ("generic-python", "#!/usr/bin/python"),
                               ("env-split-python", "#!/usr/bin/env -S python3 -Es")):
             with self.subTest(header=header):
                 script = self.layout(name, "turborec")
                 engine = script.parent / "turborec"
-                engine.write_text(header + "\n" + engine.read_text().split("\n", 1)[1])
+                engine.write_text(header + "\n" + engine.read_text(encoding="utf-8").split("\n", 1)[1],
+                                  encoding="utf-8")
                 result = self.run_script(script)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 command = json.loads(self.log.read_text())
                 self.assertEqual(command[command.index('-c') + 1], 'h264_nvenc')
+
+    def test_wayland_plan_does_not_require_mapfile_builtin(self):
+        self.pair()
+        startup = self.root / "bash-startup"
+        startup.write_text("enable -n mapfile 2>/dev/null || :\n", encoding="utf-8")
+        self.env["BASH_ENV"] = str(startup)
+        result = self.run_script(self.layout())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        command = json.loads(self.log.read_text(encoding="utf-8"))
+        self.assertEqual(command[command.index('-c') + 1], 'h264_nvenc')
+        self.assertIn('Saved:', result.stderr)
+
+    def test_python2_or_lookalike_header_is_not_imported_as_companion(self):
+        for name in ("python2", "python3-helper"):
+            with self.subTest(interpreter=name):
+                script = self.layout(name, "turborec")
+                (script.parent / "turborec").write_text(
+                    f"#!/usr/bin/{name}\nraise RuntimeError('FOREIGN_HEADER_IMPORTED')\n",
+                    encoding="utf-8")
+                result = self.run_script(script)
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+                self.assertIn('companion missing', result.stderr.lower())
+                self.assertNotIn('FOREIGN_HEADER_IMPORTED', result.stderr)
+                self.assertFalse(self.log.exists())
 
     def test_failed_matched_probe_keeps_software_fallback_honest(self):
         self.pair()

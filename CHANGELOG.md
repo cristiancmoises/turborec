@@ -5,6 +5,34 @@ All notable changes to Turbo Recorder are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.4] — 2026-10-03
+
+### Portable launcher and release validation
+
+- Preserve the recording-quality and recovery improvements below, including
+  optional Manual Chroma and bounded completed-media validation.
+- The legacy Wayland helper also recognizes Python 3 installations whose
+  interpreter is named `python`; Python 2/lookalike headers remain rejected.
+- Read the validated recording plan without `mapfile`, retaining compatibility
+  with older Bash versions and preserving argument boundaries.
+- Native Windows backend-contract tests execute their synthetic Python fixtures
+  through Python, rather than relying on POSIX shebang execution. Linux-only
+  legacy-launcher integration tests remain active on POSIX platforms.
+- Version 3.10.3 remains an immutable signed source tag. Its cross-platform CI
+  gates failed before binaries were published; 3.10.4 carries these fixes.
+
+### Português do Brasil
+
+- Mantém as melhorias de qualidade e recuperação abaixo, com Manual Chroma
+  opcional e validação limitada da mídia antes de confirmar o salvamento.
+- O auxiliar legado do Wayland aceita instalações Python 3 cujo interpretador
+  se chama `python`, sem aceitar cabeçalhos Python 2 ou nomes semelhantes.
+- O plano de gravação não depende de `mapfile`, preservando os argumentos em
+  versões antigas do Bash. Os testes do backend no Windows usam fixtures
+  Python executáveis nesse sistema; a integração legado/POSIX continua ativa.
+- A tag assinada 3.10.3 foi preservada. A CI bloqueou seus binários; a 3.10.4
+  reúne as correções de portabilidade.
+
 ## [3.10.3] — 2026-10-03
 
 ### Recording compatibility and outcomes

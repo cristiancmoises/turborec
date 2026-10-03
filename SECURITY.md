@@ -48,7 +48,7 @@ startup validation is not a security audit or certification of physical capture
 on every GPU/operating system. Driver installation and reboots remain operator
 decisions, not automatic recorder actions.
 
-Version 3.10.3 validates GPU availability against the selected encoder profile.
+Version 3.10.4 validates GPU availability against the selected encoder profile.
 For a custom Wayland backend, both configured executable paths must be absolute;
 use only trusted binaries with compatible shared libraries. Path validation is
 not signature verification or proof of ABI compatibility. The SecurityOPS Guix

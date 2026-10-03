@@ -17,12 +17,13 @@ class WaylandNvencTests(unittest.TestCase):
         tr._ENCODER_PROBE_ERRORS.clear()
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
+        self.real_run = tr.subprocess.run
         self.wf = Path(self.directory.name) / "wf-recorder"
         self.ff = Path(self.directory.name) / "ffmpeg-linked"
         for path in (self.wf, self.ff):
             # Guix build chroots need not contain /bin/sh. Use the interpreter
             # already running the suite; these fixtures really execute.
-            path.write_text(f"#!{sys.executable}\nraise SystemExit(0)\n")
+            path.write_text(f"#!{sys.executable}\nraise SystemExit(0)\n", encoding="utf-8")
             path.chmod(0o700)
         self.si = tr.SystemInfo(os="linux", display_server="wayland", screen="1920x1080",
             gpu_vendor="nvidia", ffmpeg="/unrelated/ffmpeg9",
@@ -36,6 +37,13 @@ class WaylandNvencTests(unittest.TestCase):
 
     def spec(self, **kwargs):
         return tr.RecordSpec("video_only", codec="h264", out_dir="/unused", **kwargs)
+
+    def run_backend_fixture(self, command, **kwargs):
+        # Native Windows cannot execute a POSIX shebang. Adapt only the process
+        # boundary; real fixture execution and backend selection/cache stay real.
+        if command[0] != str(self.ff):
+            raise AssertionError("Probe selected an unrelated backend")
+        return self.real_run([sys.executable, *command], **kwargs)
 
     def test_unidentified_wf_never_inherits_external_nvenc_capability(self):
         with mock.patch.object(tr, "_hardware_encoder_usable", side_effect=
@@ -110,7 +118,7 @@ class WaylandNvencTests(unittest.TestCase):
         self.si.encoders = {"libx264"}
         self.si.wayland_encoders = {"h264_nvenc", "libopenh264"}
         with mock.patch.object(tr, "_run_bounded_command", return_value=(1, "NVENC unavailable")), \
-                mock.patch.object(tr.subprocess, "run", wraps=tr.subprocess.run) as runtime:
+                mock.patch.object(tr.subprocess, "run", side_effect=self.run_backend_fixture) as runtime:
             name, _params, kind, _drm = tr.wf_codec(self.si, self.spec())
         self.assertEqual((name, kind), ("libopenh264", "software"))
         self.assertEqual(runtime.call_args.args[0][0], str(self.ff))
@@ -121,7 +129,7 @@ class WaylandNvencTests(unittest.TestCase):
         self.paired()
         self.si.encoders = {"libx264"}
         self.si.wayland_encoders = {"libopenh264"}
-        with mock.patch.object(tr.subprocess, "run", wraps=tr.subprocess.run) as runtime:
+        with mock.patch.object(tr.subprocess, "run", side_effect=self.run_backend_fixture) as runtime:
             for changed in (False, False, True):
                 if changed:
                     self.wf.write_text(f"#!{sys.executable}\nraise SystemExit(0)\n# replacement backend\n")

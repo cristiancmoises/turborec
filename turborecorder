@@ -344,7 +344,7 @@ if source is None:
             interpreter = interpreter[1:]
             if interpreter and interpreter[0] == "-S":
                 interpreter = interpreter[1:]
-        if interpreter and re.fullmatch(r"python3(?:\.[0-9]+)?", Path(interpreter[0]).name):
+        if interpreter and re.fullmatch(r"python(?:3(?:\.[0-9]+)?)?", Path(interpreter[0]).name):
             source = candidate
 if source is None:
     sys.exit("TurboRec Python companion missing beside turborecorder; reinstall the complete package.")
@@ -385,7 +385,9 @@ print("\n".join(values))
 ' "${BASH_SOURCE[0]}" "$GPU_VENDOR" "$VAAPI_DEVICE" "$WL_OUTPUT" "$FPS" \
     "$QUALITY" "$CODEC" "$FORCE_SOFTWARE" "$REQUEST_RECORDING_RES")" \
     || die "Cannot validate the Wayland recording backend; see the companion error above."
-  mapfile -t selected <<< "$data"
+  local line
+  selected=()
+  while IFS= read -r line; do selected+=( "$line" ); done <<< "$data"
   [ "${#selected[@]}" -ge 4 ] || die "Invalid Wayland recording plan from companion."
   WF_CODEC="${selected[0]}"; WF_KIND="${selected[1]}"; WF_RECORDER="${selected[2]}"
   WF_BASE=( "${selected[@]:3}" )
