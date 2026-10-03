@@ -5,6 +5,9 @@ __pycache__/
 .venv/
 venv/
 
+# Local isolated development workspaces
+/.worktrees/
+
 # Build artifacts
 /build/
 /dist/
