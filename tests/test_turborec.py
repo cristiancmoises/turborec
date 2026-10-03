@@ -416,11 +416,12 @@ class DefaultsAndShutdownTests(unittest.TestCase):
 
     def test_wayland_auto_codec_uses_same_vaapi_quality_order(self):
         si = tr.SystemInfo(
-            os="linux", display_server="wayland", gpu_vendor="intel",
+            os="linux", display_server="wayland", gpu_vendor="intel", screen="1920x1080",
             vaapi_device="/dev/dri/renderD128",
             encoders={"av1_vaapi", "hevc_vaapi", "h264_vaapi", "libx264"},
         )
-        spec = tr.RecordSpec(mode="video_only")
+        # Native even-sized frames retain VAAPI; the default 4K scale requires CPU.
+        spec = tr.RecordSpec(mode="video_only", resolution="native")
         with mock.patch.object(
                 tr, "_hardware_encoder_usable", return_value=True):
             codec, _params, kind, _device = tr.wf_codec(si, spec)

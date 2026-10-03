@@ -1,5 +1,5 @@
 Name:           turborec
-Version:        3.10.1
+Version:        3.10.2
 Release:        1%{?dist}
 Summary:        State-of-the-art hardware-accelerated screen and audio recorder
 
@@ -83,6 +83,10 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/%{name}.desktop
 %{_datadir}/icons/hicolor/256x256/apps/%{name}.png
 
 %changelog
+* Fri Oct 02 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.10.2-1
+- Validate hardware recording profiles and report actionable GPU errors.
+- Keep bounded redacted diagnostics and preserve media when finalization fails.
+
 * Wed Sep 30 2026 Cristian Cezar Moises <ethicalhacker@riseup.net> - 3.10.1-1
 - Preserve quality/privacy updates and validate native Windows output paths
 

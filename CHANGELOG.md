@@ -5,6 +5,44 @@ All notable changes to Turbo Recorder are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.2] — 2026-10-02
+
+### Recording startup and outcomes
+
+- Meaningful recording failures are visible in the GUI, with stream-key
+  redaction and bounded child-process stderr rather than unbounded diagnostics.
+- Synthetic full hardware-profile startup validation runs in a GUI worker and
+  caches profile results. An encoder listing alone is not enough. These checks
+  are not physical capture tests or certification across every GPU/OS.
+- Explicit GPU requests fail actionably when unavailable instead of silently
+  selecting CPU; Auto retains software fallback. Unsupported GPU paths for
+  Wayland scaling/padding are reported truthfully.
+- Failed final muxing preserves intermediate recordings for recovery and does
+  not report a false Saved outcome.
+- Best · Auto · 23 fps · 4K · Chroma 420 and English stay unchanged. CPU 444
+  remains opt-in, with CPU/file-size/player-compatibility costs, not lossless RGB.
+- Guix/NVENC guidance explains packaged FFmpeg capabilities and matching driver
+  libraries, Auto/CPU and global `--ffmpeg`/JSON overrides. No automatic driver
+  installation or reboot is added. All 11 established release assets remain.
+
+### Português do Brasil
+
+- Falhas de gravação aparecem na GUI com mensagens úteis, chave de transmissão
+  ocultada e stderr de tamanho limitado.
+- A validação sintética do perfil completo de hardware roda em uma tarefa da
+  GUI e usa cache. Listar um codificador não comprova inicialização; isso não
+  certifica captura física em todas as GPUs e sistemas operacionais.
+- GPU explícita falha com orientação, sem troca silenciosa para CPU; Auto
+  mantém a alternativa por software. Limitações de GPU em escala/preenchimento
+  no Wayland são informadas corretamente.
+- Falha na combinação final preserva gravações intermediárias para recuperação
+  e não exibe uma falsa confirmação de arquivo salvo.
+- Best · Auto · 23 fps · 4K · Chroma 420 e inglês permanecem padrão. CPU 444 é
+  opcional, exige mais CPU/espaço e compatibilidade de reprodução; não é RGB sem perdas.
+- A orientação Guix/NVENC cobre FFmpeg, drivers/bibliotecas compatíveis,
+  Auto/CPU e `--ffmpeg` global/JSON. Sem instalação automática de driver ou
+  reinicialização; os 11 arquivos de lançamento estabelecidos são mantidos.
+
 ## [3.10.1] — 2026-09-30
 
 Quality-release follow-up retaining the 3.10.0 features below. The Windows
