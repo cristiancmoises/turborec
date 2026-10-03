@@ -4,7 +4,7 @@ O **Turbo Recorder** grava a tela, o microfone e o áudio do sistema com o
 FFmpeg. Ele detecta o sistema operacional, a tela, os dispositivos de áudio, a
 GPU e os codificadores disponíveis e oferece duas interfaces:
 
-Este guia corresponde ao **Turbo Recorder 3.10.1**. O inglês continua sendo o
+Este guia corresponde ao **Turbo Recorder 3.10.2**. O inglês continua sendo o
 idioma padrão da interface e da documentação principal; este documento oferece
 o guia completo em português do Brasil.
 
@@ -16,7 +16,7 @@ o guia completo em português do Brasil.
 Para começar, use `turborec`. Nos exemplos genéricos, substitua `*` ou `VERSÃO`
 pelo número mostrado na
 [página de lançamentos (Releases)](https://github.com/cristiancmoises/turborec/releases/latest).
-Os exemplos específicos deste lançamento usam 3.10.1.
+Os exemplos específicos deste lançamento usam 3.10.2.
 
 Ao abrir o aplicativo, o perfil inicial já prioriza qualidade: **Qualidade
 Best**, **Codec Auto**, **23 fps** e saída **4K (3840×2160)**. No modo Auto, o
@@ -25,13 +25,24 @@ nesta ordem: **AV1 → HEVC/H.265 → H.264**. Se nenhum deles funcionar, usa H.
 por software, que é a alternativa mais segura e compatível. Todos esses valores
 podem ser alterados pela GUI, CLI ou configuração JSON.
 
-A versão 3.10.1 inclui gravação opcional 4:4:4 por CPU, preenchimento de
-dimensões ímpares sem cortar pixels e conversão BT.709 no Wayland por software.
-Os arquivos portáteis, Guix e de código-fonte passam a usar `.zupt`; os formatos
-nativos de pacotes permanecem disponíveis. O perfil inicial, as verificações
-dos quatro BSDs e as correções recentes do Windows — nomes Unicode,
-identificadores estáveis do DirectShow, janelas nativas e coordenadas de vários
-monitores — são mantidos.
+A versão 3.10.2 mostra erros úteis na GUI, com chave de transmissão ocultada
+e diagnóstico de tamanho limitado. A validação sintética do perfil completo
+de hardware usa cache e roda em uma tarefa de trabalho na GUI. GPU explícita
+falha com orientação quando não pode iniciar; Auto pode usar software.
+No Wayland, limitações de GPU em caminhos de escala/preenchimento são
+informadas; falha na combinação final preserva os arquivos intermediários e
+não anuncia uma gravação salva. Isso não comprova captura física em toda GPU/OS.
+No Wayland, a validação do codificador não testa a negociação DMA-BUF nem a
+integração entre o compositor, o wf-recorder e suas bibliotecas.
+CPU 444 opcional, preenchimento sem corte, BT.709 por software e os três
+arquivos TAR-em-ZUPT são mantidos, junto aos formatos nativos e aos padrões.
+
+O FFmpeg empacotado pelo Guix pode não incluir NVENC. Codificação por GPU
+também depende de drivers e bibliotecas compatíveis. O Turbo Recorder não
+instala drivers nem reinicia o computador: use Auto/CPU, reduza resolução/fps
+quando necessário ou escolha um FFmpeg compatível já instalado com
+`turborec --ffmpeg /caminho/para/ffmpeg record`. A opção global vem antes do
+subcomando; o JSON também aceita `"ffmpeg": "/caminho/para/ffmpeg"`.
 
 Documentos relacionados:
 
@@ -159,7 +170,7 @@ Em Wayland/wlroots, instale também `wf-recorder`. O pacote que fornece `pactl`
 normalmente se chama `pulseaudio-utils`; o nome pode variar conforme a
 distribuição.
 
-O Fedora pode fornecer `ffmpeg-free` sem `libx264`. No Turbo Recorder 3.10.1, os
+O Fedora pode fornecer `ffmpeg-free` sem `libx264`. No Turbo Recorder 3.10.2, os
 caminhos Auto, H.264 explícito, CPU e transmissão podem usar `libopenh264` como
 última alternativa H.264, mas somente depois de um teste real de codificação de
 um quadro. O pacote de compatibilidade `noopenh264`, que anuncia o codificador
@@ -206,9 +217,9 @@ sudo pacman -S python tk ffmpeg libpulse
 Depois use o arquivo portátil `.zupt` ou o código-fonte:
 
 ```bash
-zupt extract -o unpack turborec-3.10.1.zupt
-tar xf unpack/turborec-3.10.1.tar
-cd turborec-3.10.1
+zupt extract -o unpack turborec-3.10.2.zupt
+tar xf unpack/turborec-3.10.2.tar
+cd turborec-3.10.2
 PREFIX="$HOME/.local" ./install.sh
 "$HOME/.local/bin/turborec" --version
 ```
@@ -220,10 +231,10 @@ e confira o arquivo baixado com `SHA256SUMS` antes da extração. O `tar` comum
 **não** abre `.zupt`: cada arquivo contém um único tar **sem compressão interna**.
 A segunda extração preserva permissões Unix e links simbólicos.
 
-O lançamento também inclui `turborec-3.10.1-source.zupt`, contendo
-`turborec-3.10.1-source.tar` com o código-fonte completo do lançamento e os
+O lançamento também inclui `turborec-3.10.2-source.zupt`, contendo
+`turborec-3.10.2-source.tar` com o código-fonte completo do lançamento e os
 testes, destinado a quem mantém ports e pacotes. Use os mesmos dois passos com
-esses nomes exatos. Para instalar e usar, prefira `turborec-3.10.1.zupt`.
+esses nomes exatos. Para instalar e usar, prefira `turborec-3.10.2.zupt`.
 São 10 payloads mais `SHA256SUMS`: 11 artefatos, mantendo os pacotes nativos.
 
 ### GNU Guix
@@ -237,8 +248,8 @@ guix package -f guix.scm
 turborec gui
 
 # ou o pack do lançamento: confira SHA256SUMS ANTES de extrair como root
-zupt extract -o guix-unpack turborec-3.10.1-guix-x86_64.zupt
-sudo tar xf guix-unpack/turborec-3.10.1-guix-x86_64.tar -C /
+zupt extract -o guix-unpack turborec-3.10.2-guix-x86_64.zupt
+sudo tar xf guix-unpack/turborec-3.10.2-guix-x86_64.tar -C /
 /bin/turborec gui
 ```
 
@@ -260,9 +271,9 @@ brew install ffmpeg
 Use o arquivo portátil `.zupt`:
 
 ```bash
-zupt extract -o unpack turborec-3.10.1.zupt
-tar xf unpack/turborec-3.10.1.tar
-cd turborec-3.10.1
+zupt extract -o unpack turborec-3.10.2.zupt
+tar xf unpack/turborec-3.10.2.tar
+cd turborec-3.10.2
 PREFIX="$HOME/.local" ./install.sh
 "$HOME/.local/bin/turborec" gui
 ```
@@ -309,9 +320,9 @@ No OpenBSD, instale os requisitos e use o arquivo portátil `.zupt`:
 
 ```sh
 pkg_add python3 ffmpeg
-zupt extract -o unpack turborec-3.10.1.zupt
-tar xf unpack/turborec-3.10.1.tar
-cd turborec-3.10.1
+zupt extract -o unpack turborec-3.10.2.zupt
+tar xf unpack/turborec-3.10.2.tar
+cd turborec-3.10.2
 doas ./install.sh
 ```
 

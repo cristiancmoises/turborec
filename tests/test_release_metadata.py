@@ -305,10 +305,16 @@ class ReleaseArchiveTests(unittest.TestCase):
         source = self.repo / "bootstrap-source"
         source.mkdir()
         (source / "zupt").symlink_to(shutil.which("zupt"))
-        env = dict(os.environ, SOURCE=str(source), ZUPT_VERSION="5.2.9")
+        # Characterize the installed tool's real version output, independent of
+        # the release bootstrap pin. A newer local ZUPT must not break this
+        # format/strict-version check or cause us to downgrade the user's tool.
+        header = self.run_command("zupt", "version").stdout.splitlines()[0]
+        version = re.fullmatch(r"zupt ([0-9]+\.[0-9]+\.[0-9]+) \(ZUPT\)", header)
+        self.assertIsNotNone(version, header)
+        env = dict(os.environ, SOURCE=str(source), ZUPT_VERSION=version.group(1))
         self.assertEqual(
             self.run_command("sh", "-c", check, env=env).stdout.strip(),
-            "zupt 5.2.9 (ZUPT)",
+            header,
         )
         env["ZUPT_VERSION"] = "0.0.0"
         self.run_command("sh", "-c", check, env=env, expected=1)

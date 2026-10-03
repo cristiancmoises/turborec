@@ -35,7 +35,7 @@
 (define turborec
   (package
     (name "turborec")
-    (version "3.10.1")
+    (version "3.10.2")
     (source
      (let ((tracked? (git-predicate %source-dir)))
        (local-file %source-dir

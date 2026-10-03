@@ -27,7 +27,7 @@
 
 ; ---- version (overridable: /DVERSION=x.y.z) ---------------------------------
 !ifndef VERSION
-  !define VERSION "3.10.1"
+  !define VERSION "3.10.2"
 !endif
 
 ; ---- bundled Python installer (overridable: /DPYTHON_INSTALLER=path) --------

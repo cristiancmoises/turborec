@@ -42,7 +42,7 @@ Actions release workflow builds the Linux artifacts on
   `py` launcher) only when no Python 3.8+ with Tk is already present — so the
   target machine needs **no prerequisites**. The uninstaller removes the app but
   never uninstalls the shared Python.
-  Setup 3.10.1 is non-elevated: app files live in
+  Setup 3.10.2 is non-elevated: app files live in
   `%LOCALAPPDATA%\Programs\Turbo Recorder`, registry entries and shortcuts belong
   to the current user, and Python/its launcher are installed per-user. Discovery
   and launchers use Python isolated mode. Remove a legacy machine-wide install
@@ -57,9 +57,9 @@ Actions release workflow builds the Linux artifacts on
   `uninstall.sh` honouring `PREFIX` (default `/usr/local`) and `DESTDIR`:
 
   ```sh
-  zupt extract -o unpack turborec-3.10.1.zupt
-  tar xf unpack/turborec-3.10.1.tar
-  cd turborec-3.10.1
+  zupt extract -o unpack turborec-3.10.2.zupt
+  tar xf unpack/turborec-3.10.2.tar
+  cd turborec-3.10.2
   sudo ./install.sh                  # → /usr/local
   PREFIX="$HOME/.local" ./install.sh # per-user
   ```
@@ -67,7 +67,7 @@ Actions release workflow builds the Linux artifacts on
 - **`build-freebsd-pkg.sh`** → `dist/turborec-<version>.pkg`. Must run on FreeBSD
   (uses `pkg create`). Stages the tree under `${PREFIX}`, generates a plist +
   `+MANIFEST`, and emits a package installable with
-  `pkg add ./turborec-3.10.1.pkg`. Runtime prerequisites (`python3`, `ffmpeg`,
+  `pkg add ./turborec-3.10.2.pkg`. Runtime prerequisites (`python3`, `ffmpeg`,
   and Tk for the GUI) are documented in the package description rather than
   declared as hard deps, so the file installs cleanly on any FreeBSD release
   (`pkg install python3 ffmpeg`).
@@ -83,8 +83,8 @@ Actions release workflow builds the Linux artifacts on
   privileged extraction of the Guix closure:
 
   ```sh
-  zupt extract -o guix-unpack turborec-3.10.1-guix-x86_64.zupt
-  sudo tar xf guix-unpack/turborec-3.10.1-guix-x86_64.tar -C /
+  zupt extract -o guix-unpack turborec-3.10.2-guix-x86_64.zupt
+  sudo tar xf guix-unpack/turborec-3.10.2-guix-x86_64.tar -C /
   ```
 
 ## Publishing release binaries to Forgejo + Codeberg
@@ -99,10 +99,10 @@ to the Forgejo and Codeberg releases, run:
 # downloads the tag's assets from the GitHub release, then attaches them to the
 # matching Forgejo + Codeberg releases (creating the release if needed)
 FJTOKEN=<forgejo-token> CBTOKEN=<codeberg-token> \
-    packaging/publish-release.sh v3.10.1
+    packaging/publish-release.sh v3.10.2
 
 # or attach files from a local directory instead of downloading
-FJTOKEN=… CBTOKEN=… packaging/publish-release.sh v3.10.1 dist/
+FJTOKEN=… CBTOKEN=… packaging/publish-release.sh v3.10.2 dist/
 ```
 
 Tokens are read only from the environment. The script requires all **10
@@ -149,7 +149,7 @@ The script:
    - `README.md`               -> `/usr/share/doc/turborec/README.md`
 2. Builds the control tree (`control` with computed `Installed-Size`,
    `md5sums`, `postinst`, `postrm`).
-3. Emits `dist/turborec_3.10.1_all.deb`.
+3. Emits `dist/turborec_3.10.2_all.deb`.
 
 ### dpkg-deb vs. portable mode
 
@@ -165,6 +165,19 @@ The PNG is generated from the SVG using the first available of
 pre-rendered `assets/turborec.png` exists, that is used instead.
 
 ## Runtime dependencies
+
+Version 3.10.2 keeps the established 11 release assets: `.deb`, binary and
+source `.rpm`, AppImage, FreeBSD `.pkg`, Windows portable `.exe` and setup
+`.exe`, portable/Guix/complete-source `.zupt`, plus `SHA256SUMS`. Each of the
+three ZUPT assets holds one real uncompressed TAR payload; these are not
+`.tar.gz` distributions.
+
+Guix's packaged FFmpeg may lack NVENC. A usable hardware profile also requires
+matching driver/runtime libraries. The recorder does not install drivers or
+reboot; operators can use Auto/CPU or an already-installed compatible FFmpeg
+with `turborec --ffmpeg /path/to/ffmpeg record` (global option before the
+subcommand), or the JSON `ffmpeg` setting. Synthetic startup validation does
+not establish physical-device support across all operating systems.
 
 All non-self-contained builds need `ffmpeg`, Python 3.8+, and Tk for the GUI.
 On Debian/Ubuntu Tk comes from `python3-tk`; the `.deb` also installs
@@ -189,8 +202,8 @@ headless environment; it does not claim a visual GUI test.
 
 ```bash
 # inspect members and metadata without installing
-ar t dist/turborec_3.10.1_all.deb
-mkdir -p /tmp/deb && ar x dist/turborec_3.10.1_all.deb --output /tmp/deb
+ar t dist/turborec_3.10.2_all.deb
+mkdir -p /tmp/deb && ar x dist/turborec_3.10.2_all.deb --output /tmp/deb
 tar -tvf /tmp/deb/data.tar.xz
 tar -xOf /tmp/deb/control.tar.gz ./control
 ```

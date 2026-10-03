@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import argparse
+import codecs
 import glob
 import json
 import locale
@@ -41,7 +42,7 @@ from datetime import datetime
 from typing import Optional
 
 APP_NAME = "Turbo Recorder"
-VERSION = "3.10.1"
+VERSION = "3.10.2"
 
 _BSD_OSES = frozenset(("freebsd", "openbsd", "netbsd", "dragonfly"))
 _X11_CAPTURE_OSES = frozenset(("linux", *_BSD_OSES))
@@ -94,9 +95,19 @@ def err(msg: str) -> None:
     print(f"{red('xx')} {msg}", file=sys.stderr)
 
 
+class RecorderError(SystemExit):
+    """A numeric CLI exit whose reason survives GUI exception handling."""
+    def __init__(self, message: str, code: int = 1):
+        super().__init__(code)
+        self.message = message
+
+    def __str__(self):
+        return self.message
+
+
 def die(msg: str, code: int = 1) -> "None":
     err(msg)
-    sys.exit(code)
+    raise RecorderError(msg, code)
 
 
 def _decode_command_output(data) -> str:
@@ -1318,10 +1329,12 @@ def _candidate_encoders(si: SystemInfo, codec: str) -> list[tuple[str, str]]:
     return table
 
 
-_ENCODER_PROBE_CACHE: dict[tuple[str, str, str], bool] = {}
+_ENCODER_PROBE_CACHE: dict[tuple, bool] = {}
+_ENCODER_PROBE_ERRORS: dict[tuple, str] = {}
 
 
-def _hardware_encoder_usable(si: SystemInfo, name: str, kind: str) -> bool:
+def _hardware_encoder_usable(si: SystemInfo, name: str, kind: str,
+                             spec: Optional[RecordSpec] = None) -> bool:
     """Verify that an advertised encoder can initialize at runtime.
 
     ``ffmpeg -encoders`` describes build capabilities, not the installed driver
@@ -1337,40 +1350,84 @@ def _hardware_encoder_usable(si: SystemInfo, name: str, kind: str) -> bool:
         return True
     # The escape hatch is useful for slow/broken hardware drivers, but must not
     # turn Fedora's advertised-yet-unusable OpenH264 shim into a selectable codec.
-    if not probe_openh264 \
+    if spec is None and not probe_openh264 \
             and os.environ.get("TURBOREC_SKIP_ENCODER_PROBE") == "1":
         return True
-    key = (os.path.normcase(os.path.abspath(si.ffmpeg)), name,
-           si.vaapi_device or "")
-    if key in _ENCODER_PROBE_CACHE:
-        return _ENCODER_PROBE_CACHE[key]
-
     cmd = [si.ffmpeg, "-hide_banner", "-loglevel", "error"]
     if kind == "vaapi":
         if not si.vaapi_device:
-            _ENCODER_PROBE_CACHE[key] = False
             return False
         cmd += ["-vaapi_device", si.vaapi_device]
     elif kind == "qsv":
         cmd += ["-init_hw_device", "qsv=hw", "-filter_hw_device", "hw"]
-    cmd += [
-        "-f", "lavfi", "-i", "color=c=black:s=256x256:r=1",
-        "-frames:v", "1",
-    ]
-    if kind == "vaapi":
+    if spec is not None:
+        dims = _capture_dims(si, spec) or _output_dims(si, spec)
+        if not dims:
+            return False  # no truthful full-profile validation without dimensions
+        codec = name.split("_", 1)[0]
+        enc = EncoderChoice(name, kind, codec)
+        wf_native = (si.os == "linux" and si.display_server == "wayland"
+                     and kind == "vaapi" and not spec.camera and not spec.stream_url)
+        cmd += ["-f", "lavfi", "-i",
+                f"color=c=black:s={dims[0]}x{dims[1]}:r={spec.fps}"
+                + (",format=bgra" if any(n % 2 for n in dims) else "")]
+        # wf-recorder owns its native VAAPI upload/conversion. Validate device,
+        # dimensions, FPS and its actual qp flags, not an invented FFmpeg profile.
+        # This synthetic upload cannot validate compositor DMA-BUF negotiation.
+        vf = ("format=nv12,hwupload" if wf_native else ",".join(
+            f for f in (_geometry_filter(si, spec), video_filter_for(enc, spec.chroma)) if f))
+        if vf:
+            cmd += ["-vf", vf]
+        cmd += (["-c:v", name, "-qp", str([18, 22, 25, 28][_quality_index(spec.quality)])]
+                if wf_native else _stream_encoder_args(enc, _stream_bitrate_k(
+                    *(_output_dims(si, spec) or dims), spec.fps), spec.fps)
+                if spec.stream_url else encoder_args(
+                    enc, spec.quality, _pixrate_mp(si, spec), spec.chroma))
+        # Several frames exercise buffering/B-frames, not just encoder presence.
+        cmd += ["-frames:v", "8", "-fps_mode", "cfr", "-r", str(spec.fps)]
+        if not wf_native:
+            cmd += ["-color_primaries", "bt709", "-color_trc", "bt709",
+                    "-colorspace", "bt709", "-color_range", "tv"]
+    else:
+        cmd += ["-f", "lavfi", "-i", "color=c=black:s=256x256:r=1", "-frames:v", "1"]
+    if spec is None and kind == "vaapi":
         cmd += ["-vf", "format=nv12,hwupload"]
-    elif kind == "qsv":
+    elif spec is None and kind == "qsv":
         cmd += ["-vf", "format=nv12,hwupload=extra_hw_frames=8"]
-    elif probe_openh264:
+    elif spec is None and probe_openh264:
         cmd += ["-pix_fmt", "yuv420p"]
-    cmd += ["-c:v", name, "-f", "null", "-"]
+    if spec is None:
+        cmd += ["-c:v", name]
+    cmd += ["-f", "null", "-"]
+    resolved = shutil.which(si.ffmpeg) or os.path.abspath(si.ffmpeg)
     try:
-        result = subprocess.run(
-            cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, timeout=12)
-        usable = result.returncode == 0
-    except (OSError, subprocess.SubprocessError):
+        binary = os.stat(resolved)
+        identity = (os.path.realpath(resolved), binary.st_mtime_ns, binary.st_size)
+    except OSError:
+        identity = (resolved,)
+    device_environment = tuple((name, os.environ.get(name, "")) for name in (
+        "CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES", "LIBVA_DRIVER_NAME",
+        "LIBVA_DRIVERS_PATH", "ONEVPL_SELECTOR"))
+    key = (identity, tuple(cmd), si.gpu_vendor, si.vaapi_device or "", device_environment)
+    if key in _ENCODER_PROBE_CACHE:
+        return _ENCODER_PROBE_CACHE[key]
+    try:
+        if spec is not None:
+            code, reason = _run_bounded_command(cmd, spec.stream_secret, timeout=12)
+            usable = code == 0
+        else:
+            result = subprocess.run(cmd, stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=12)
+            usable, reason = result.returncode == 0, "Encoder initialization failed."
+    except (OSError, subprocess.SubprocessError) as error:
         usable = False
+        reason = str(error)
+    if len(_ENCODER_PROBE_CACHE) >= 64:
+        oldest = next(iter(_ENCODER_PROBE_CACHE))
+        _ENCODER_PROBE_CACHE.pop(oldest, None)
+        _ENCODER_PROBE_ERRORS.pop(oldest, None)
+    if not usable:
+        _ENCODER_PROBE_ERRORS[key] = _mask_secret(reason, spec.stream_secret if spec else None)
     _ENCODER_PROBE_CACHE[key] = usable
     return usable
 
@@ -1384,9 +1441,9 @@ def _software_encoder_usable(si: SystemInfo, name: str) -> bool:
     return True
 
 
-def _first_usable_software_encoder(si: SystemInfo, codec: str) -> Optional[str]:
+def _first_usable_software_encoder(si: SystemInfo, codec: str, probe: bool = True) -> Optional[str]:
     for name in _software_encoder_names(si, codec):
-        if _software_encoder_usable(si, name):
+        if (name in si.encoders and not probe) or _software_encoder_usable(si, name):
             return name
     return None
 
@@ -1405,7 +1462,8 @@ def _software_encoder_error(si: SystemInfo, codec: str) -> str:
 
 
 def choose_encoder(si: SystemInfo, codec: str = "auto", force_software: bool = False,
-                   backend: str = "auto") -> EncoderChoice:
+                   backend: str = "auto", spec: Optional[RecordSpec] = None,
+                   probe: bool = True) -> EncoderChoice:
     """Pick the video encoder. backend: auto | gpu | cpu (force_software == cpu).
 
     ``codec=auto`` is deliberately quality-first without sacrificing a usable
@@ -1419,22 +1477,37 @@ def choose_encoder(si: SystemInfo, codec: str = "auto", force_software: bool = F
     if force_software:
         backend = "cpu"
 
+    def usable(name, kind):
+        if not probe:
+            return True  # preview is a tentative build, never a driver check
+        return (_hardware_encoder_usable(si, name, kind, spec) if spec is not None
+                else _hardware_encoder_usable(si, name, kind))
+
+    def gpu_error():
+        details = "\n".join(value for key, value in _ENCODER_PROBE_ERRORS.items()
+                            if key in _ENCODER_PROBE_CACHE
+                            and key[1][0] == si.ffmpeg
+                            and key[2:4] == (si.gpu_vendor, si.vaapi_device or ""))[-4096:]
+        die("No usable GPU encoder for this recording profile. Use Auto or CPU, "
+            "or install an FFmpeg build and GPU driver compatible with your hardware. "
+            "Driver mismatches must be corrected outside Turbo Recorder."
+            + ("\n" + details if details else ""))
+
     if codec == "auto":
         if backend != "cpu":
             for candidate_codec in ("av1", "hevc", "h264"):
                 for enc, kind in _candidate_encoders(si, candidate_codec):
                     if kind == "software":
                         continue
-                    if enc in si.encoders and _hardware_encoder_usable(si, enc, kind):
+                    if enc in si.encoders and usable(enc, kind):
                         return EncoderChoice(
                             enc, kind, candidate_codec,
                             f"automatic {candidate_codec.upper()} hardware encoding",
                         )
-        sw_name = _first_usable_software_encoder(si, "h264")
+        if backend == "gpu":
+            gpu_error()
+        sw_name = _first_usable_software_encoder(si, "h264", probe=probe)
         if sw_name:
-            if backend == "gpu":
-                warn("No usable hardware AV1/HEVC/H.264 encoder available — "
-                     f"falling back to CPU ({sw_name}).")
             return EncoderChoice(
                 sw_name, "software", "h264",
                 "automatic H.264 software fallback",
@@ -1443,7 +1516,7 @@ def choose_encoder(si: SystemInfo, codec: str = "auto", force_software: bool = F
             + _software_encoder_error(si, "h264"))
 
     if backend == "cpu":
-        sw_name = _first_usable_software_encoder(si, codec)
+        sw_name = _first_usable_software_encoder(si, codec, probe=probe)
         if not sw_name:
             die(_software_encoder_error(si, codec))
         note = "CPU / software encoding (user-selected)"
@@ -1456,18 +1529,14 @@ def choose_encoder(si: SystemInfo, codec: str = "auto", force_software: bool = F
         if enc in si.encoders:
             if backend == "gpu" and kind == "software":
                 break  # don't silently fall back to CPU when GPU was requested
-            if kind == "software" and not _software_encoder_usable(si, enc):
+            if kind == "software" and probe and not _software_encoder_usable(si, enc):
                 continue
-            if kind != "software" and not _hardware_encoder_usable(si, enc, kind):
+            if kind != "software" and not usable(enc, kind):
                 continue
             note = "hardware accelerated" if kind != "software" else "software (no HW encoder available)"
             return EncoderChoice(enc, kind, codec, note)
     if backend == "gpu":
-        sw_name = _first_usable_software_encoder(si, codec)
-        fallback = sw_name or "/".join(_software_encoder_names(si, codec))
-        warn(f"No hardware {codec} encoder available — falling back to CPU ({fallback}).")
-        if sw_name:
-            return EncoderChoice(sw_name, "software", codec, "software (no GPU encoder available)")
+        gpu_error()
     die(f"No usable encoder for codec {codec} in this FFmpeg build.")
 
 
@@ -2045,13 +2114,13 @@ class RecordSpec:
     chroma: str = "420"                # 444: software H.264/HEVC file recordings only
 
 
-def _recording_encoder(si: SystemInfo, spec: RecordSpec) -> EncoderChoice:
+def _recording_encoder(si: SystemInfo, spec: RecordSpec, probe: bool = True) -> EncoderChoice:
     """Enforce the opt-in detail mode without silently losing its chroma."""
     if spec.chroma not in CHROMA_MODES:
         die("--chroma must be 420 or 444")
     if spec.chroma == "420":
         return choose_encoder(si, "h264" if spec.stream_url else spec.codec,
-                              spec.force_software, spec.backend)
+                              spec.force_software, spec.backend, spec, probe)
     if spec.stream_url:
         die("--chroma 444 is for file recordings; use --chroma 420 for streaming.")
     if spec.backend == "gpu":
@@ -2142,7 +2211,7 @@ def build_command(si: SystemInfo, spec: RecordSpec, preview: bool = False) -> tu
     cam_index = None
     if is_video:
         # RTMP ingests want H.264; force it for streaming regardless of --codec.
-        enc = _recording_encoder(si, spec)
+        enc = _recording_encoder(si, spec, probe=not preview)
         geometry = spec.geometry or spec.region
         pre, vin = screen_input_args(
             si, spec.fps, geometry, enc, spec.win_title,
@@ -2285,6 +2354,8 @@ class RecordPlan:
     is_stream: bool = False           # True when pushing to an RTMP(S) target
     secret: Optional[str] = None      # credential to redact from any display
     fifos: list = field(default_factory=list)  # named pipes to create at start
+    encoder_name: str = ""
+    encoder_kind: str = ""
 
 
 # ---- Wayland (wlroots) encoder selection for wf-recorder --------------------
@@ -2299,6 +2370,12 @@ def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False,
     """
     if spec.chroma not in CHROMA_MODES:
         die("--chroma must be 420 or 444")
+    needs_software = bool(_geometry_filter(si, spec) or spec.camera or spec.stream_url)
+    if spec.backend == "gpu" and (needs_software or si.gpu_vendor not in ("intel", "amd")):
+        die("This GPU combination is unsupported by wf-recorder on Wayland "
+            "(NVENC, scaling/padding, webcam and streaming require software capture). "
+            "Use Auto/CPU, or native even dimensions with a usable VAAPI device.")
+    force_software = force_software or needs_software or spec.force_software
     qi = _quality_index(spec.quality)
     st = _speed_tier(_pixrate_mp(si, spec))
     if qi >= 2:
@@ -2322,15 +2399,19 @@ def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False,
             candidates = ("av1_vaapi", "hevc_vaapi", "h264_vaapi")
             for venc in candidates:
                 if venc in si.encoders \
-                        and _hardware_encoder_usable(si, venc, "vaapi"):
+                        and (quiet or _hardware_encoder_usable(si, venc, "vaapi", spec)):
                     qp = [18, 22, 25, 28][qi]
                     return venc, [f"qp={qp}"], "vaapi", si.vaapi_device
         else:
             venc = {"h264": "h264_vaapi", "hevc": "hevc_vaapi"}.get(codec)
-            if venc and venc in si.encoders:
+            if venc and venc in si.encoders \
+                    and (quiet or _hardware_encoder_usable(si, venc, "vaapi", spec)):
                 # Enhanced quality for 4K: lower qp = better quality
                 qp = [18, 22, 25, 28][qi]
                 return venc, [f"qp={qp}"], "vaapi", si.vaapi_device
+    if spec.backend == "gpu":
+        die("No usable VAAPI encoder for this Wayland profile. Use Auto or CPU, "
+            "or a compatible FFmpeg build and GPU driver.")
     if codec == "hevc":
         if spec.backend == "gpu" and si.gpu_vendor == "nvidia" and not quiet:
             warn("wf-recorder cannot use NVENC on Wayland; recording with "
@@ -2340,7 +2421,7 @@ def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False,
         return "libx265", [f"preset={preset}", f"crf={[18,20,23,26][qi]}"], "software", ""
     if codec == "av1" and not quiet:
         warn("AV1 software encoding is not real-time for live capture; using H.264.")
-    sw_h264 = _first_usable_software_encoder(si, "h264")
+    sw_h264 = _first_usable_software_encoder(si, "h264", probe=not quiet)
     if spec.backend == "gpu" and si.gpu_vendor == "nvidia" \
             and not quiet and sw_h264:
         warn("wf-recorder cannot use NVENC on Wayland; recording with "
@@ -2474,9 +2555,19 @@ def _activate_plan(plan: "RecordPlan") -> tuple["RecordPlan", list[str]]:
     return plan, []
 
 
-def _plan_cleanup(plan: "RecordPlan") -> None:
+def _plan_cleanup(plan: "RecordPlan", preserve_media: bool = False) -> None:
     """Remove a plan's temp files and directories (FIFOs, scratch dirs)."""
-    for path in plan.cleanup:
+    for path in list(plan.fifos) + plan.cleanup:
+        if preserve_media:
+            # Never recursively remove a recovery directory. Discard known
+            # FIFO controls and remove scratch directories only when empty.
+            if path not in plan.fifos:
+                if os.path.isdir(path):
+                    try:
+                        os.rmdir(path)
+                    except OSError:
+                        pass
+                continue
         try:
             if os.path.isdir(path):
                 shutil.rmtree(path, ignore_errors=True)
@@ -2490,33 +2581,114 @@ def _redact_cmd(argv: list, secret: Optional[str]) -> str:
     return " ".join(_shquote(_mask_secret(c, secret)) for c in argv)
 
 
-def _pump_masked_stderr(stream, secret: Optional[str]) -> None:
-    """Forward a child's stderr to ours with `secret` masked. ffmpeg prints the
-    output URL (which for a stream contains the key) at info level, and error
-    lines echo it even at error level; without this the key would appear in
-    cleartext in the terminal/scrollback/redirected logs, defeating the
-    redaction applied to everything the app prints itself. We split on both '\\n'
-    and '\\r' (so '-stats' progress still renders live) and only ever emit whole
-    lines, so the secret — always contained within one line — is fully present
-    when _mask_secret runs and can never be split across a read boundary."""
-    buf = ""
-    try:
-        while True:
-            chunk = stream.read(256)
-            if not chunk:
-                break
-            buf += chunk.decode("utf-8", "replace")
-            parts = re.split(r"([\r\n])", buf)
-            buf = parts[-1]                 # keep the trailing incomplete segment
-            done = "".join(parts[:-1])
-            if done:
-                sys.stderr.write(_mask_secret(done, secret))
+class _RecorderStderr:
+    """Continuously drain stderr; retain only a redacted, thread-safe 8KiB tail."""
+    def __init__(self, stream, secret=None, echo=False):
+        self.stream, self.secret, self.echo = stream, secret, echo
+        self._tail = ""
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._drain, daemon=True)
+        self._thread.start()
+
+    def _append(self, text):
+        with self._lock:
+            self._tail = (self._tail + text)[-8192:]
+        if self.echo:
+            try:
+                sys.stderr.write(text)
                 sys.stderr.flush()
-        if buf:
-            sys.stderr.write(_mask_secret(buf, secret))
-            sys.stderr.flush()
-    except Exception:
-        pass
+            except (OSError, ValueError):
+                pass
+
+    def _drain(self):
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        pending = ""
+        overlap = max(0, len(self.secret or "") - 1)
+        try:
+            read = getattr(self.stream, "read1", self.stream.read)
+            while True:
+                chunk = read(1024)
+                pending += decoder.decode(chunk, final=not chunk)
+                pending = _mask_secret(pending, self.secret)
+                if not chunk:
+                    self._append(pending)
+                    break
+                cut = max(0, len(pending) - overlap)
+                self._append(pending[:cut])
+                pending = pending[cut:]
+        except (OSError, ValueError):
+            pass
+        finally:
+            self.stream.close()
+
+    def join(self):
+        self._thread.join(timeout=2)
+
+    def text(self):
+        with self._lock:
+            return self._tail
+
+
+def _pump_masked_stderr(stream, secret: Optional[str]) -> None:
+    tail = _RecorderStderr(stream, secret, echo=True)
+    tail.join()
+
+
+def _nonempty_file(path):
+    try:
+        return os.path.isfile(path) and os.path.getsize(path) > 0
+    except OSError:
+        return False
+
+
+def _run_bounded_command(command, secret, timeout):
+    """Bound synthetic validation/mux time and stderr memory, without capture."""
+    proc = subprocess.Popen(command, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    tail = _RecorderStderr(proc.stderr, secret)
+    timed_out = False
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        proc.kill()
+        _reap(proc)
+    tail.join()
+    return (1 if timed_out else proc.returncode), ("Command timed out.\n" if timed_out else "") + tail.text()
+
+
+def _finalize_recording(plan, running, tails, stopped=(), forced=()):
+    """Shared GUI/CLI outcome: never discard media on recorder or mux failure."""
+    failures = []
+    for (proc, method), tail in zip(running, tails):
+        tail.join()
+        code = proc.returncode
+        clean_signal = proc in stopped and proc not in forced and code in (255, 130, -2)
+        if proc in forced or (code != 0 and not clean_signal):
+            failures.append(f"recorder exited (code {code})\n{tail.text()}")
+    if not failures and plan.finalize:
+        inputs = [path for path in plan.cleanup
+                  if not os.path.isdir(path) and path not in plan.fifos]
+        if not inputs or not all(_nonempty_file(path) for path in inputs):
+            failures.append("Recording produced no usable video/audio to mux.")
+        else:
+            try:
+                code, detail = _run_bounded_command(plan.finalize, plan.secret, timeout=60)
+                if code != 0:
+                    failures.append("mux failed:\n" + detail)
+            except OSError as error:
+                failures.append(f"mux failed: {error}")
+    if not failures and not plan.is_stream and not _nonempty_file(plan.out_path):
+        failures.append("Recording output is missing or empty.")
+    if failures:
+        recovery = [path for path in plan.cleanup if _nonempty_file(path)]
+        if _nonempty_file(plan.out_path):
+            recovery.append(plan.out_path)
+        if recovery:
+            failures.append("Recoverable files (not a successful recording):\n"
+                            + "\n".join(recovery))
+    _plan_cleanup(plan, preserve_media=bool(failures))
+    return (1 if failures else 0), _mask_secret("\n".join(failures), plan.secret)
 
 
 def _ffmpeg_audio_cmd(si: SystemInfo, spec: RecordSpec, devices: list, out_path: str) -> list[str]:
@@ -2551,14 +2723,14 @@ def _hw_init_args(si: SystemInfo, enc: EncoderChoice) -> list[str]:
 
 
 def _ffmpeg_compose_cmd(si: SystemInfo, spec: RecordSpec, fifo: str,
-                        devices: list, out_target: str) -> list[str]:
+                        devices: list, out_target: str, preview: bool = False) -> list[str]:
     """ffmpeg reads the wf-recorder video FIFO (input 0), optionally overlays the
     webcam, mixes the audio (mic denoise applied), and writes to a file or pushes
     FLV to out_target. Video is stream-copied only when there is no webcam overlay
     and we are streaming; otherwise it is re-encoded (an overlay changes pixels)."""
     streaming = bool(spec.stream_url)
     cam = bool(spec.camera)
-    enc = _recording_encoder(si, spec) if cam else None
+    enc = _recording_encoder(si, spec, probe=not preview) if cam else None
 
     base = [si.ffmpeg, "-y" if streaming else "-n", "-hide_banner",
             "-loglevel", "info" if streaming else "error", "-stats"]
@@ -2724,7 +2896,7 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
                     "record without --camera, or use --chroma 420.")
             wf_h264 = "libx264"
         else:
-            wf_h264 = _first_usable_software_encoder(si, "h264")
+            wf_h264 = _first_usable_software_encoder(si, "h264", probe=not preview)
         if not wf_h264:
             die(_software_encoder_error(si, "h264")
                 + " Wayland webcam/stream composition requires software H.264.")
@@ -2777,7 +2949,7 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
         vcmd += ["-m", "mpegts", "-f", fifo]
         devices = ([spec.monitor] if wants_sys else []) + ([spec.mic] if wants_mic else [])
         target = spec.stream_url or out_path
-        composecmd = _ffmpeg_compose_cmd(si, spec, fifo, devices, target)
+        composecmd = _ffmpeg_compose_cmd(si, spec, fifo, devices, target, preview=preview)
         # FFmpeg always supports its stdin ``q`` command, including on Windows
         # where send_signal(SIGINT) is invalid without a new process group.
         mux_stop = "q"
@@ -2860,11 +3032,24 @@ def build_plan(si: SystemInfo, spec: RecordSpec, preview: bool = False) -> Recor
     if not preview and not streaming:
         ensure_dir(out_dir)
     if is_video and si.os == "linux" and si.display_server == "wayland":
-        return _build_wayland_plan(si, spec, preview, out_dir, wants_mic, wants_sys)
+        plan = _build_wayland_plan(si, spec, preview, out_dir, wants_mic, wants_sys)
+        # Reflect the actual capture command, including forced software scaling.
+        command = plan.procs[0][1]
+        plan.encoder_name = command[command.index("-c") + 1]
+        plan.encoder_kind = "vaapi" if plan.encoder_name.endswith("_vaapi") else "software"
+        if plan.fallback:
+            plan.fallback.encoder_name, plan.fallback.encoder_kind = plan.encoder_name, plan.encoder_kind
+        return plan
     cmd, out_path = build_command(si, spec, preview=preview)
+    encoder_name = cmd[cmd.index("-c:v") + 1] if is_video else ""
+    # Auto may select AV1/HEVC; the suffix identifies the effective hardware.
+    if is_video:
+        encoder_kind = next((kind for kind in ("nvenc", "qsv", "vaapi", "amf", "videotoolbox")
+                             if encoder_name.endswith("_" + kind)), "software")
     return RecordPlan(out_path, [("ffmpeg", cmd, "q")],
                       is_video=is_video, self_timed=not streaming, backend="ffmpeg",
-                      is_stream=streaming, secret=spec.stream_secret)
+                      is_stream=streaming, secret=spec.stream_secret,
+                      encoder_name=encoder_name, encoder_kind=encoder_kind if is_video else "")
 
 
 # ---------------------------------------------------------------------------
@@ -2900,22 +3085,21 @@ def record_plan(plan: "RecordPlan", dry_run: bool = False, countdown_secs: int =
         info(f"Recording… press {bold('q')} or {bold('Ctrl-C')} to {stop_hint}.")
 
     running: list[tuple[subprocess.Popen, str]] = []
+    tails = []
     try:
         for _label, argv, method in plan.procs:
             stdin = subprocess.PIPE if method == "q" else subprocess.DEVNULL
             # For a live stream, capture the child's stderr and mask the key
             # before echoing it — ffmpeg prints the RTMP URL at info/error level.
-            stderr = subprocess.PIPE if (plan.is_stream and plan.secret) else None
-            proc = subprocess.Popen(argv, stdin=stdin, stderr=stderr)
-            if stderr is not None:
-                threading.Thread(target=_pump_masked_stderr,
-                                 args=(proc.stderr, plan.secret), daemon=True).start()
+            proc = subprocess.Popen(argv, stdin=stdin, stderr=subprocess.PIPE)
+            tails.append(_RecorderStderr(proc.stderr, plan.secret))
             running.append((proc, method))
     except OSError as e:
         for p, m in running:           # don't leak already-started processes
             _stop_proc(p, m)
         _pulse_mix_unload(pulse_ids)
-        die(f"Failed to launch recorder: {e}")
+        _plan_cleanup(plan, preserve_media=True)
+        die(_mask_secret(f"Failed to launch recorder: {e}", plan.secret))
 
     # Wait until ANY pipeline member exits (or the duration elapses), not just the
     # first one. In the compose pipeline wf-recorder (the FIFO writer, procs[0])
@@ -2943,6 +3127,7 @@ def record_plan(plan: "RecordPlan", dry_run: bool = False, countdown_secs: int =
         threading.Thread(target=_watch_for_q, daemon=True).start()
     deadline = (time.monotonic() + duration
                 if duration and duration > 0 and not plan.self_timed else None)
+    interrupted = False
     try:
         while (not stop_requested.is_set()
                and not any(p.poll() is not None for p in procs)):
@@ -2950,36 +3135,22 @@ def record_plan(plan: "RecordPlan", dry_run: bool = False, countdown_secs: int =
                 break
             time.sleep(0.2)
     except KeyboardInterrupt:
-        pass
+        interrupted = True
     stop_requested.set()
-    _stop_all(running)
+    stopped, forced = _stop_all(running)
+    if interrupted:
+        # A foreground process group receives Ctrl-C together with the CLI;
+        # FFmpeg may already have finalized/exited by the time we catch it.
+        stopped.update(proc for proc, _ in running)
     _pulse_mix_unload(pulse_ids)
 
-    # a None returncode (un-reaped / killed) is a failure, not success
-    rc = max(((p.returncode if p.returncode is not None else 1) for p, _ in running), default=0)
-    # A stream we asked to stop exits via SIGINT (255 / -2 / 130) — that's clean.
-    if plan.is_stream and rc in (255, 130, -2, -15, -signal.SIGINT if hasattr(signal, "SIGINT") else -2):
-        rc = 0
-    inputs_ok = all(os.path.exists(t) and os.path.getsize(t) > 0 for t in plan.cleanup)
-    if plan.finalize:
-        if not inputs_ok:
-            warn("recording produced no usable video/audio to mux.")
-            rc = rc or 1
-        else:
-            info("Muxing audio + video…")
-            try:
-                mux = subprocess.run(plan.finalize, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-                if mux.returncode != 0:
-                    rc = mux.returncode
-                    warn("mux failed:\n" + mux.stderr.decode("utf-8", "replace")[-400:])
-            except OSError as e:
-                rc = 1
-                warn(f"mux failed: {e}")
-    _plan_cleanup(plan)
+    rc, detail = _finalize_recording(plan, running, tails, stopped=stopped, forced=forced)
+    if detail:
+        warn(detail)
 
     if plan.is_stream:
         info(f"{green('Stream ended.')}") if rc == 0 else warn(f"stream exited with code {rc}")
-    elif rc == 0 and os.path.exists(plan.out_path):
+    elif rc == 0:
         try:
             size = _gui_fmt_size(os.path.getsize(plan.out_path))
         except OSError:
@@ -3033,12 +3204,15 @@ def _signal_stop(proc: subprocess.Popen, method: str) -> None:
             pass
 
 
-def _stop_all(running: list) -> None:
+def _stop_all(running: list) -> tuple[set, set]:
     """Stop several capture processes together. Signalling every process FIRST
     (before waiting on any) is essential for the FIFO streaming pipeline: the
     wf-recorder writer can be blocked writing to a pipe whose ffmpeg reader must
     also be told to quit — waiting on one before signalling the other deadlocks."""
+    signaled, forced = set(), set()
     for proc, method in running:
+        if method == "int" and proc.poll() is None:
+            signaled.add(proc)
         _signal_stop(proc, method)
     for proc, method in running:
         if proc.poll() is not None:
@@ -3049,17 +3223,20 @@ def _stop_all(running: list) -> None:
             if method != "int" and os.name != "nt" and hasattr(signal, "SIGINT"):
                 try:
                     proc.send_signal(signal.SIGINT)
+                    signaled.add(proc)
                 except (OSError, ValueError):
                     pass
             try:
                 proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
+                forced.add(proc)
                 proc.terminate()
                 try:
                     proc.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     _reap(proc)
+    return signaled, forced
 
 
 def _stop_proc(proc: subprocess.Popen, method: str) -> None:
@@ -3812,21 +3989,64 @@ _GUI_MODE_LABELS = (
 def _gui_build_preview(si, spec):
     """build_plan() for the *preview* path — never mutates the filesystem.
 
-    build_plan()/build_command() call ensure_dir(out_dir) -> os.makedirs(), which
-    would (a) create directories merely by opening the GUI / editing the Folder
-    field and (b) raise OSError for an unwritable path. The live preview must be a
-    pure read of the configuration, so build_plan is invoked with preview=True and
-    we additionally neutralise ensure_dir as a defensive guard against future
-    directory-creating builder paths. Returns a RecordPlan.
+    Builders skip directory creation and runtime encoder checks when preview is
+    True. The displayed encoder is tentative until start-time validation.
     """
-    g = globals()
-    real_ensure_dir = g.get("ensure_dir")
-    g["ensure_dir"] = lambda _path: None
+    # Builders already honor preview; avoid changing a process-global function
+    # while start-time validation is running on another thread.
+    return build_plan(si, spec, preview=True)
+
+
+def _gui_run_job(root, work, completed):
+    """Run blocking work without Tk access; deliver its result on the Tk thread."""
+    result = [None, None]
+    def worker():
+        try:
+            result[0] = work()
+        except (Exception, SystemExit) as error:
+            result[1] = error
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    def poll():
+        if thread.is_alive():
+            root.after(120, poll)
+        else:
+            completed(*result)
+    root.after(120, poll)
+
+
+def _prepare_recording(si, spec, cancelled, launch_lock=None):
+    plan = build_plan(si, spec)
+    launch_lock = launch_lock or threading.Lock()
+    pulse_ids, procs, tails = [], [], []
     try:
-        return build_plan(si, spec, preview=True)
-    finally:
-        if real_ensure_dir is not None:
-            g["ensure_dir"] = real_ensure_dir
+        if cancelled.is_set():
+            raise RecorderError("Start cancelled.")
+        plan, pulse_ids = _activate_plan(plan)
+        for _label, argv, method in plan.procs:
+            # GUI cancellation takes the same lock: no spawn may begin after
+            # close has marked this startup cancelled, including between checks.
+            with launch_lock:
+                if cancelled.is_set():
+                    raise RecorderError("Start cancelled.")
+                stdin = subprocess.PIPE if method == "q" else subprocess.DEVNULL
+                proc = subprocess.Popen(argv, stdin=stdin, stderr=subprocess.PIPE)
+            procs.append((proc, method))
+            tails.append(_RecorderStderr(proc.stderr, plan.secret))
+    except (Exception, SystemExit):
+        _stop_all(procs)
+        _pulse_mix_unload(pulse_ids)
+        _plan_cleanup(plan, preserve_media=True)
+        raise
+    return plan, pulse_ids, procs, tails
+
+
+def _recording_status(plan, code):
+    if code:
+        return "Recording failed — see error/recovery details"
+    if plan.is_stream:
+        return "Stream ended"
+    return "Saved ✓  " + _mask_secret(os.path.basename(plan.out_path), plan.secret)
 
 
 # ---------------------------------------------------------------------------
@@ -4525,7 +4745,11 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         _set_row_enabled([mon_label_w, mon_cb], ws)
 
         # encoder transparency chip
-        if is_video:
+        if is_video and state["recording"] and state.get("plan"):
+            actual = state["plan"]
+            enc_chip.configure(text=f"{actual.encoder_name} · {actual.encoder_kind} · actual recording",
+                               fg=C["warn"] if actual.encoder_kind == "software" else C["accent"])
+        elif is_video:
             if si.os == "linux" and si.display_server == "wayland":
                 try:
                     spec = _current_spec()
@@ -4533,14 +4757,15 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
                     spec = RecordSpec(mode=mode_var.get(), codec=codec_var.get(),
                                       backend=backend_var.get())
                 try:
-                    name, _p, kind, _d = wf_codec(si, spec)
+                    preview_plan = build_plan(si, spec, preview=True)
+                    name, kind = preview_plan.encoder_name, preview_plan.encoder_kind
                     fg = C["warn"] if kind == "software" else C["accent"]
                     enc_chip.configure(text=f"{name}  ·  {kind}  ·  wf-recorder (Wayland)", fg=fg)
                 except (SystemExit, ValueError):
                     enc_chip.configure(text="unsupported codec / chroma / backend combination", fg=C["warn"])
             else:
                 try:
-                    ec = _recording_encoder(si, _current_spec())
+                    ec = _recording_encoder(si, _current_spec(), probe=False)
                     fg = C["warn"] if ec.kind == "software" else C["accent"]
                     enc_chip.configure(text=f"{ec.name}  ·  {ec.kind}  ·  {ec.note}", fg=fg)
                 except (SystemExit, ValueError):
@@ -4736,48 +4961,51 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             pass
 
     def do_start():
+        if state["recording"] or state["stopping"]:
+            return
         spec = _current_spec()
-        # The real start path is the ONLY place allowed to create directories,
-        # so we use build_plan() directly (which calls ensure_dir()).
-        try:
-            plan = build_plan(si, spec)
-        except SystemExit as e:
-            messagebox.showerror(APP_NAME, f"Cannot start: {e}")
-            return
-        except OSError as e:
-            messagebox.showerror(APP_NAME, f"Cannot create output folder: {e}")
-            return
-        # PipeWire mix setup for synced mic+system (may switch to a fallback plan)
-        plan, pulse_ids = _activate_plan(plan)
-        procs = []
-        try:
-            for _label, argv, method in plan.procs:
-                stdin = subprocess.PIPE if method == "q" else subprocess.DEVNULL
-                # Mask the stream key out of a live stream child's stderr.
-                stderr = subprocess.PIPE if (plan.is_stream and plan.secret) else None
-                proc = subprocess.Popen(argv, stdin=stdin, stderr=stderr)
-                if stderr is not None:
-                    threading.Thread(target=_pump_masked_stderr,
-                                     args=(proc.stderr, plan.secret), daemon=True).start()
-                procs.append((proc, method))
-        except OSError as e:
-            for p, _m in procs:
-                try:
-                    p.kill()
-                except OSError:
-                    pass
-            _pulse_mix_unload(pulse_ids)
-            messagebox.showerror(APP_NAME, f"Failed to launch recorder: {e}")
-            return
-        state.update(procs=procs, plan=plan, pulse_ids=pulse_ids, out_path=plan.out_path,
-                     size_path=(plan.cleanup[0] if plan.finalize else plan.out_path),
-                     elapsed=0, recording=True, stopping=False, pulse=0)
-        timer_lbl.configure(text="00:00:00")
-        size_line.configure(text="0.0 MB")
-        state_line.configure(text="● REC", fg=C["danger"])
+        cancelled = threading.Event()
+        launch_lock = threading.Lock()
+        state.update(stopping=True, procs=[], start_cancel=cancelled, start_lock=launch_lock)
         _set_recording_ui(True)
-        state["after_tick"] = root.after(1000, _tick)
-        _pulse()
+        action_btn.configure(state="disabled")
+        state_line.configure(text="Checking encoder profile…", fg=C["warn"])
+
+        def prepare():
+            return _prepare_recording(si, spec, cancelled, launch_lock)
+
+        def prepared(result, error):
+            state["stopping"] = False
+            if error is not None:
+                state["procs"] = None
+                _set_recording_ui(False)
+                if state["closing"]:
+                    _destroy_now()
+                    return
+                reason = _mask_secret(str(error), spec.stream_secret)
+                state_line.configure(text=f"Cannot start: {reason}", fg=C["danger"])
+                messagebox.showerror(APP_NAME, f"Cannot start: {reason}")
+                return
+            plan, pulse_ids, procs, tails = result
+            state.update(procs=procs, tails=tails, plan=plan, pulse_ids=pulse_ids,
+                         out_path=plan.out_path,
+                         size_path=(plan.cleanup[0] if plan.finalize else plan.out_path),
+                         elapsed=0, recording=True, pulse=0)
+            if state["closing"]:
+                do_stop()
+                return
+            timer_lbl.configure(text="00:00:00")
+            size_line.configure(text="0.0 MB")
+            label = "● REC"
+            if plan.encoder_name:
+                label += f" · {plan.encoder_name} ({plan.encoder_kind})"
+                enc_chip.configure(text=f"{plan.encoder_name} · {plan.encoder_kind} · actual recording",
+                                   fg=C["warn"] if plan.encoder_kind == "software" else C["accent"])
+            state_line.configure(text=label, fg=C["danger"])
+            _set_recording_ui(True)
+            state["after_tick"] = root.after(1000, _tick)
+            _pulse()
+        _gui_run_job(root, prepare, prepared)
 
     def _finish_recording(crashed=False, code=0):
         # called on the Tk thread once the recorder process(es) have exited
@@ -4796,23 +5024,14 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         out_path = state.get("out_path")
         plan = state.get("plan")
         streaming = bool(plan and getattr(plan, "is_stream", False))
-        saved = bool(out_path and os.path.exists(out_path) and os.path.getsize(out_path) > 0)
-        if streaming:
-            # For a live stream out_path is the secret-bearing RTMP URL; never
-            # render it (basename would be the raw stream key). SIGINT-driven
-            # exits are the normal way to stop a stream, so they aren't "crashes".
-            state_line.configure(text=("Stream ended" if not crashed else f"Stream ended (code {code})"),
-                                 fg=(C["success"] if not crashed else C["warn"]))
-        elif crashed and not saved:
-            state_line.configure(text=f"recorder exited (code {code})", fg=C["warn"])
-        else:
-            base = os.path.basename(out_path) if out_path else ""
-            prefix = "Saved ✓" if not crashed else f"Saved (recorder stopped, code {code})"
-            state_line.configure(text=f"{prefix}  {base}",
-                                 fg=(C["success"] if not crashed else C["warn"]))
+        outcome, detail = state.get("outcome", (1, "Recorder finalization did not complete."))
+        state_line.configure(text=_recording_status(plan, outcome),
+                             fg=C["warn"] if outcome else C["success"])
+        if outcome:
+            messagebox.showerror(APP_NAME, detail or "Recording failed.")
+        elif not streaming:
             try:
-                if saved:
-                    size_line.configure(text=_gui_fmt_size(os.path.getsize(out_path)))
+                size_line.configure(text=_gui_fmt_size(os.path.getsize(out_path)))
             except OSError:
                 pass
         state["procs"] = None
@@ -4843,18 +5062,15 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         # FIFOs deadlock otherwise), unload the PipeWire mix, then mux + clean up,
         # on a worker thread so the UI keeps animating; poll completion via after().
         def _worker():
-            _stop_all(procs)
-            _pulse_mix_unload(pulse_ids)
-            if plan and plan.finalize:
-                ok = all(os.path.exists(t) and os.path.getsize(t) > 0 for t in plan.cleanup)
-                if ok:
-                    try:
-                        subprocess.run(plan.finalize, stdout=subprocess.DEVNULL,
-                                       stderr=subprocess.DEVNULL)
-                    except OSError:
-                        pass
-            if plan:
-                _plan_cleanup(plan)
+            try:
+                stopped, forced = _stop_all(procs)
+                _pulse_mix_unload(pulse_ids)
+                state["outcome"] = _finalize_recording(
+                    plan, procs, state.get("tails", []), stopped=stopped, forced=forced)
+            except Exception as error:
+                state["outcome"] = (1, _mask_secret(
+                    f"Finalization failed: {error}\nRecovery files were preserved.", plan.secret))
+                _plan_cleanup(plan, preserve_media=True)
 
         import threading  # noqa: PLC0415
         t = threading.Thread(target=_worker, daemon=True)
@@ -4946,6 +5162,9 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         if state["destroyed"] or state["closing"]:
             return
         procs = state.get("procs")
+        if state.get("start_cancel") is not None and state["stopping"] and not state["recording"]:
+            with state["start_lock"]:
+                state["start_cancel"].set()
         # A stop may already be finalizing (stopping=True, possibly recording
         # cleared). In every "work in flight" case we must NOT destroy the UI
         # out from under the worker thread / pending pollers — defer destroy.
