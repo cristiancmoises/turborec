@@ -23,7 +23,8 @@ to ZUPT and tar. Automatically downloaded or cached appimagetool binaries need
 a valid SHA-256 pin and either `sha256sum` or `shasum`; missing verification is
 an error, never a warning-only bypass. For architectures other than the pinned
 x86_64 release, supply the correct `APPIMAGETOOL_SHA256` or explicitly choose an
-operator-trusted `APPIMAGETOOL`/PATH binary. Keep build/cache folders private.
+operator-trusted `APPIMAGETOOL`/PATH binary. Keep the checkout, build/cache,
+`dist`, and release asset folders private and non-writable by other users.
 
 `turborec.py`'s `VERSION` is the release source of truth. The portable and
 FreeBSD builders derive it automatically; package formats that require literal

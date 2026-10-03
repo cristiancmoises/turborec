@@ -703,8 +703,8 @@ See [Recording and privacy](../SECURITY.md#recording-and-privacy) before sharing
 logs or recording on a shared host.
 
 - **Leave codec and backend on Auto** for the quality-first hardware path. Use
-  `--gpu` to request hardware explicitly; Turbo Recorder still warns and takes
-  the safe software fallback if no hardware candidate passes its probe.
+  `--gpu` to request hardware explicitly; it fails actionably if no hardware
+  profile passes validation. Auto can fall back to software; `--cpu` forces it.
 - **Match FPS to your content.** The 23 fps default prioritizes detail per frame
   and keeps load down; use 30 fps for talks/slides or 60 fps for fast motion and
   gameplay.
