@@ -51,6 +51,10 @@ decisions, not automatic recorder actions.
 Download releases from the project's official forges and compare `SHA256SUMS`
 before installing or extracting. Checksums detect changed bytes; they are not
 a digital signature or proof that an external dependency is uncompromised.
+When building or publishing, keep the checkout, build/cache, `dist` and release
+asset directories private. Do not publish from a directory another user can
+replace files in. Keep the verified checksum manifest and recheck payloads when
+moving them between build and publication environments.
 See the [PT-BR privacy guidance](docs/README.pt-BR.md#gravação-segura-e-privacidade).
 
 Security reviews and functional tests are complementary, not a guarantee of

@@ -850,8 +850,8 @@ turborec record -m video_mic --cpu -q balanced -f 30
 ```
 
 Use `turborec encoders` para confirmar o codificador escolhido. `--gpu` solicita
-hardware explicitamente e avisa antes de usar a alternativa segura por software
-quando nenhum candidato funciona; `--cpu` força o caminho por software.
+hardware explicitamente e mostra um erro se nenhum perfil por hardware funciona.
+Auto pode usar software; `--cpu` força o caminho por software.
 
 ## Qualidade, desempenho e compatibilidade
 
