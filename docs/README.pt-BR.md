@@ -4,7 +4,7 @@ O **Turbo Recorder** grava a tela, o microfone e o áudio do sistema com o
 FFmpeg. Ele detecta o sistema operacional, a tela, os dispositivos de áudio, a
 GPU e os codificadores disponíveis e oferece duas interfaces:
 
-Este guia corresponde ao **Turbo Recorder 3.10.2**. O inglês continua sendo o
+Este guia corresponde ao **Turbo Recorder 3.10.3**. O inglês continua sendo o
 idioma padrão da interface e da documentação principal; este documento oferece
 o guia completo em português do Brasil.
 
@@ -16,7 +16,7 @@ o guia completo em português do Brasil.
 Para começar, use `turborec`. Nos exemplos genéricos, substitua `*` ou `VERSÃO`
 pelo número mostrado na
 [página de lançamentos (Releases)](https://github.com/cristiancmoises/turborec/releases/latest).
-Os exemplos específicos deste lançamento usam 3.10.2.
+Os exemplos específicos deste lançamento usam 3.10.3.
 
 Ao abrir o aplicativo, o perfil inicial já prioriza qualidade: **Qualidade
 Best**, **Codec Auto**, **23 fps** e saída **4K (3840×2160)**. No modo Auto, o
@@ -25,15 +25,21 @@ nesta ordem: **AV1 → HEVC/H.265 → H.264**. Se nenhum deles funcionar, usa H.
 por software, que é a alternativa mais segura e compatível. Todos esses valores
 podem ser alterados pela GUI, CLI ou configuração JSON.
 
-A versão 3.10.2 mostra erros úteis na GUI, com chave de transmissão ocultada
-e diagnóstico de tamanho limitado. A validação sintética do perfil completo
-de hardware usa cache e roda em uma tarefa de trabalho na GUI. GPU explícita
-falha com orientação quando não pode iniciar; Auto pode usar software.
-No Wayland, limitações de GPU em caminhos de escala/preenchimento são
-informadas; falha na combinação final preserva os arquivos intermediários e
-não anuncia uma gravação salva. Isso não comprova captura física em toda GPU/OS.
-No Wayland, a validação do codificador não testa a negociação DMA-BUF nem a
-integração entre o compositor, o wf-recorder e suas bibliotecas.
+A versão 3.10.3 deixa **Manual Chroma desligado por padrão**: a opção automática
+usa 4:2:0 compatível, sem exigir uma escolha de chroma. Ative a caixa somente
+se quiser escolher 420 ou o modo 444 por CPU. A opção GPU aguarda a validação
+sintética do perfil completo em segundo plano; selecionar GPU nunca significa
+uma troca silenciosa para CPU. Auto pode usar software quando necessário.
+No Wayland/wlroots, NVIDIA requer um wf-recorder com NVENC e o FFmpeg pareado
+com suas bibliotecas. Instalar apenas um FFmpeg externo com NVENC não basta.
+O vídeo é codificado na GPU, mas a captura e a conversão passam pela CPU;
+isso não é captura CUDA sem cópias. A validação sintética não comprova captura
+física em todas as GPUs/sistemas nem a negociação com o compositor.
+Falhas de salvamento preservam os vídeos recuperáveis e não exibem uma falsa
+mensagem de sucesso, inclusive no launcher legado do Wayland. Erros úteis
+continuam com chave de transmissão ocultada e diagnóstico de tamanho limitado.
+O auxiliar Python do launcher legado usa imports isolados e o engine do próprio
+pacote; módulos da pasta atual ou de `PYTHONPATH` não são importados.
 CPU 444 opcional, preenchimento sem corte, BT.709 por software e os três
 arquivos TAR-em-ZUPT são mantidos, junto aos formatos nativos e aos padrões.
 
@@ -170,7 +176,7 @@ Em Wayland/wlroots, instale também `wf-recorder`. O pacote que fornece `pactl`
 normalmente se chama `pulseaudio-utils`; o nome pode variar conforme a
 distribuição.
 
-O Fedora pode fornecer `ffmpeg-free` sem `libx264`. No Turbo Recorder 3.10.2, os
+O Fedora pode fornecer `ffmpeg-free` sem `libx264`. No Turbo Recorder 3.10.3, os
 caminhos Auto, H.264 explícito, CPU e transmissão podem usar `libopenh264` como
 última alternativa H.264, mas somente depois de um teste real de codificação de
 um quadro. O pacote de compatibilidade `noopenh264`, que anuncia o codificador
@@ -217,9 +223,9 @@ sudo pacman -S python tk ffmpeg libpulse
 Depois use o arquivo portátil `.zupt` ou o código-fonte:
 
 ```bash
-zupt extract -o unpack turborec-3.10.2.zupt
-tar xf unpack/turborec-3.10.2.tar
-cd turborec-3.10.2
+zupt extract -o unpack turborec-3.10.3.zupt
+tar xf unpack/turborec-3.10.3.tar
+cd turborec-3.10.3
 PREFIX="$HOME/.local" ./install.sh
 "$HOME/.local/bin/turborec" --version
 ```
@@ -231,13 +237,41 @@ e confira o arquivo baixado com `SHA256SUMS` antes da extração. O `tar` comum
 **não** abre `.zupt`: cada arquivo contém um único tar **sem compressão interna**.
 A segunda extração preserva permissões Unix e links simbólicos.
 
-O lançamento também inclui `turborec-3.10.2-source.zupt`, contendo
-`turborec-3.10.2-source.tar` com o código-fonte completo do lançamento e os
+O lançamento também inclui `turborec-3.10.3-source.zupt`, contendo
+`turborec-3.10.3-source.tar` com o código-fonte completo do lançamento e os
 testes, destinado a quem mantém ports e pacotes. Use os mesmos dois passos com
-esses nomes exatos. Para instalar e usar, prefira `turborec-3.10.2.zupt`.
+esses nomes exatos. Para instalar e usar, prefira `turborec-3.10.3.zupt`.
 São 10 payloads mais `SHA256SUMS`: 11 artefatos, mantendo os pacotes nativos.
 
 ### GNU Guix
+
+O TurboRec já está disponível no
+[SecurityOPS Channel](https://github.com/cristiancmoises/securityops-channel).
+Depois de adicionar ou atualizar esse canal, o pacote genérico `turborec` não
+exige bibliotecas proprietárias NVIDIA. Para NVIDIA/Wayland, use a variante
+explícita `turborec-nvidia-new-feature`, com driver new-feature compatível:
+
+```sh
+# Primeira instalação: não remova um pacote que ainda não está instalado
+guix install turborec-nvidia-new-feature
+# OU substitua o turborec genérico já instalado, no mesmo perfil
+guix package -r turborec -i turborec-nvidia-new-feature
+```
+
+As duas variantes fornecem os mesmos comandos: **não instale ambas no mesmo
+perfil**. A variante NVIDIA usa FFmpeg 9.0.2 no pipeline principal e pareia
+wf-recorder 0.6.0 com FFmpeg 8.1.3/NVENC. O recorder ainda depende da ABI do
+FFmpeg 8; trocar suas bibliotecas pela versão 9 não é compatível.
+O `guix.scm` deste repositório e o pack genérico continuam com o backend livre,
+sem incluir a variante proprietária. Nenhuma opção instala ou substitui o driver
+do kernel automaticamente, nem reinicia o sistema.
+
+Para empacotadores avançados, `TURBOREC_WF_RECORDER` e `TURBOREC_WF_FFMPEG`
+aceitam os caminhos absolutos dos dois executáveis do mesmo build compatível.
+O wf-recorder deve estar ligado à libavcodec desse FFmpeg; não basta escolher
+dois binários quaisquer. Sem esse pareamento, Auto usa CPU e GPU explícita
+informa que o backend está indisponível. A captura e a conversão usam quadros
+na memória da CPU; somente a codificação NVENC é por hardware.
 
 O arquivo `guix.scm` e o pack relocável incluem a saída `tk` do Python e validam
 que o módulo `_tkinter` pode ser importado. Portanto, a CLI e a GUI são os
@@ -248,8 +282,8 @@ guix package -f guix.scm
 turborec gui
 
 # ou o pack do lançamento: confira SHA256SUMS ANTES de extrair como root
-zupt extract -o guix-unpack turborec-3.10.2-guix-x86_64.zupt
-sudo tar xf guix-unpack/turborec-3.10.2-guix-x86_64.tar -C /
+zupt extract -o guix-unpack turborec-3.10.3-guix-x86_64.zupt
+sudo tar xf guix-unpack/turborec-3.10.3-guix-x86_64.tar -C /
 /bin/turborec gui
 ```
 
@@ -271,9 +305,9 @@ brew install ffmpeg
 Use o arquivo portátil `.zupt`:
 
 ```bash
-zupt extract -o unpack turborec-3.10.2.zupt
-tar xf unpack/turborec-3.10.2.tar
-cd turborec-3.10.2
+zupt extract -o unpack turborec-3.10.3.zupt
+tar xf unpack/turborec-3.10.3.tar
+cd turborec-3.10.3
 PREFIX="$HOME/.local" ./install.sh
 "$HOME/.local/bin/turborec" gui
 ```
@@ -320,9 +354,9 @@ No OpenBSD, instale os requisitos e use o arquivo portátil `.zupt`:
 
 ```sh
 pkg_add python3 ffmpeg
-zupt extract -o unpack turborec-3.10.2.zupt
-tar xf unpack/turborec-3.10.2.tar
-cd turborec-3.10.2
+zupt extract -o unpack turborec-3.10.3.zupt
+tar xf unpack/turborec-3.10.3.tar
+cd turborec-3.10.3
 doas ./install.sh
 ```
 
@@ -425,7 +459,7 @@ Na GUI:
 2. escolha uma fonte em **Source** e atualize a lista após conectar dispositivos
    ou abrir novas janelas;
 3. para o perfil recomendado, mantenha **Best · Auto · 23 fps · 4K** e
-   **Encoder: Auto** e **Chroma: 420**;
+   **Encoder: Auto** e **Manual Chroma desmarcado**;
 4. confirme o microfone e o áudio do sistema;
 5. escolha a pasta de saída;
 6. clique em **Start** e, ao terminar, em **Stop**.
@@ -525,7 +559,7 @@ Opções importantes:
 | `-q, --quality` | `best`, `high`, `balanced`, `compact` | `best` |
 | `-R, --resolution` | `native`, `720p`, `1080p`, `1440p`, `4k` | `4k` |
 | `-c, --codec` | `auto`, `h264`, `hevc`, `av1` | `auto` |
-| `--chroma` | `420`, `444` (CPU, H.264/HEVC, somente arquivo) | `420` |
+| `--chroma` | `auto`, `420`, `444` (CPU, H.264/HEVC, somente arquivo) | `auto` |
 | `-f, --fps` | `23`, `30`, `60` ou outro inteiro | `23` |
 | `-o, --out` | pasta de saída | `~/Videos` ou `~/Audio` |
 | `--backend` | `auto`, `gpu`, `cpu` | `auto` |
@@ -897,8 +931,9 @@ digital. Relate problemas de segurança de forma privada conforme a
 
 ### Chroma 4:4:4 para texto colorido
 
-`--chroma 420` continua sendo o padrão compatível, com seleção automática de
-hardware. Use `--chroma 444` ou o seletor **Chroma → 444** da GUI para preservar
+`--chroma auto` é o padrão: usa 4:2:0 compatível sem ajuste manual. A escolha
+explícita `--chroma 420` continua disponível. Use `--chroma 444` ou marque
+**Manual Chroma** e escolha **444** na GUI para preservar
 a resolução completa da cor em texto colorido e gráficos de desktop:
 
 ```bash
@@ -941,7 +976,7 @@ Exemplo:
   "mode": "auto",
   "quality": "best",
   "codec": "auto",
-  "chroma": "420",
+  "chroma": "auto",
   "fps": 23,
   "resolution": "4k",
   "backend": "auto",

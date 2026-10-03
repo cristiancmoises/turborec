@@ -58,6 +58,117 @@ class ErrorAndDrainTests(unittest.TestCase):
 
 
 class GuiBoundaryTests(unittest.TestCase):
+    def test_owned_job_cancel_removes_latest_poll_before_destroy_and_ignores_late_result(self):
+        main_thread = threading.get_ident()
+        started, release, finished = threading.Event(), threading.Event(), threading.Event()
+        pending, completed = set(), []
+        self_test = self
+        class Root:
+            def __init__(self):
+                self.callbacks, self.next_id, self.destroyed = {}, 0, False
+            def after(self, delay, callback):
+                self_test.assertEqual(threading.get_ident(), main_thread)
+                self_test.assertFalse(self.destroyed, "Tk scheduled after destroy")
+                self.next_id += 1
+                self.callbacks[self.next_id] = callback
+                return self.next_id
+            def after_cancel(self, handle):
+                self_test.assertEqual(threading.get_ident(), main_thread)
+                self_test.assertFalse(self.destroyed, "Tk cancelled after destroy")
+                del self.callbacks[handle]
+            def destroy(self):
+                self_test.assertFalse(self.callbacks, "destroy left an unowned Tk after callback")
+                self.destroyed = True
+            def fire(self):
+                handle = next(iter(self.callbacks))
+                self.callbacks.pop(handle)()
+        def work():
+            self.assertNotEqual(threading.get_ident(), main_thread)
+            started.set()
+            if not release.wait(3):
+                raise AssertionError("test did not release worker")
+            finished.set()
+            return "late result"
+        root = Root()
+        try:
+            cancel = tr._gui_run_job(root, work,
+                lambda result, error: completed.append((result, error)), pending=pending)
+            self.assertTrue(started.wait(2))
+            self.assertEqual(pending, {cancel})
+            # Execute one poll while work remains blocked, forcing rescheduling.
+            root.fire()
+            late_poll = next(iter(root.callbacks.values()))
+            for cancel_job in tuple(pending):
+                cancel_job()
+            self.assertFalse(pending)
+            root.destroy()
+            release.set()
+            self.assertTrue(finished.wait(2))
+            # Even an already-dispatched callback must not deliver to dead Tk.
+            late_poll()
+            cancel()  # cancellation is idempotent, with no post-destroy Tk access
+            self.assertEqual(completed, [])
+            self.assertFalse(root.callbacks)
+        finally:
+            release.set()
+
+    def test_manual_chroma_off_ignores_stale_444_selection(self):
+        self.assertEqual(tr._gui_chroma_mode(False, "444"), "auto")
+        self.assertEqual(tr._gui_chroma_mode(True, "444"), "444")
+        self.assertEqual(tr._gui_chroma_mode(True, "420"), "420")
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            tr._gui_chroma_mode(True, "invalid")
+
+    def test_gui_gpu_availability_requires_full_profile_not_tentative_preview(self):
+        si = tr.SystemInfo(os="linux", display_server="x11", screen="1920x1080",
+            gpu_vendor="nvidia", encoders={"h264_nvenc", "libx264"})
+        tr._ENCODER_PROBE_CACHE.clear()
+        spec = tr.RecordSpec("video_only", codec="h264")
+        with mock.patch.object(tr, "_run_bounded_command", return_value=(1, "driver mismatch")), \
+                redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            tr._gui_gpu_choice(si, spec)
+        # Full validation must not mutate the caller's Auto setting.
+        self.assertEqual(spec.backend, "auto")
+
+    def test_gui_gpu_availability_reports_true_encoder_without_output_mutation(self):
+        si = tr.SystemInfo(os="linux", display_server="x11", screen="1920x1080",
+            gpu_vendor="nvidia", encoders={"h264_nvenc", "libx264"})
+        tr._ENCODER_PROBE_CACHE.clear()
+        with mock.patch.object(tr, "_run_bounded_command", return_value=(0, "")), \
+                mock.patch.object(tr, "ensure_dir", side_effect=AssertionError("availability creates no output")):
+            encoder = tr._gui_gpu_choice(si, tr.RecordSpec("video_only", codec="h264"))
+        self.assertEqual((encoder.name, encoder.kind), ("h264_nvenc", "nvenc"))
+
+    def test_overlapping_availability_and_start_share_one_profile_probe(self):
+        si = tr.SystemInfo(os="linux", display_server="x11", screen="1920x1080",
+            gpu_vendor="nvidia", encoders={"h264_nvenc", "libx264"})
+        tr._ENCODER_PROBE_CACHE.clear()
+        entered, duplicate, release = threading.Event(), threading.Event(), threading.Event()
+        calls, choices = [], []
+        def probe(command, secret, timeout):
+            calls.append(command)
+            if entered.is_set():
+                duplicate.set()
+            entered.set()
+            if not release.wait(3):
+                raise AssertionError("test did not release synthetic probe")
+            return 0, ""
+        def choose():
+            choices.append(tr._gui_gpu_choice(si, tr.RecordSpec("video_only", codec="h264")))
+        with mock.patch.object(tr, "_run_bounded_command", side_effect=probe):
+            workers = [threading.Thread(target=choose) for _ in range(2)]
+            workers[0].start()
+            self.assertTrue(entered.wait(2))
+            workers[1].start()
+            duplicated = duplicate.wait(0.1)
+            release.set()
+            for worker in workers:
+                worker.join(3)
+                self.assertFalse(worker.is_alive())
+        self.assertFalse(duplicated, "overlapping validations initialized the same GPU twice")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual([choice.name for choice in choices], ["h264_nvenc", "h264_nvenc"])
+
     def test_cancellation_before_atomic_launch_releases_without_spawning(self):
         cancelled, launch_lock = threading.Event(), threading.Lock()
         ready, done = threading.Event(), threading.Event()
@@ -113,6 +224,7 @@ class GuiBoundaryTests(unittest.TestCase):
         main_thread = threading.get_ident()
         callbacks = []
         calls = []
+        pending = set()
         class Root:
             def after(self, delay, callback):
                 self_test.assertEqual(threading.get_ident(), main_thread)
@@ -124,13 +236,14 @@ class GuiBoundaryTests(unittest.TestCase):
                 tr.die("NVENC device unavailable")
         def completed(result, error):
             calls.append((threading.get_ident(), result, str(error)))
-        tr._gui_run_job(Root(), work, completed)
+        tr._gui_run_job(Root(), work, completed, pending=pending)
         deadline = time.monotonic() + 3
         while not calls and time.monotonic() < deadline:
             if callbacks:
                 callbacks.pop(0)()
             time.sleep(0.001)
         self.assertEqual(calls, [(main_thread, None, "NVENC device unavailable")])
+        self.assertFalse(pending, "completed worker retained its owner cancellation callback")
 
     def test_failed_nonempty_gui_output_does_not_get_saved_label(self):
         plan = tr.RecordPlan("/unused/header.mkv")
@@ -168,6 +281,7 @@ class RecordingOutcomeTests(unittest.TestCase):
         def launch(*args, **kw):
             proc = real_popen(*args, **kw)
             children.append(proc)
+            self.addCleanup(proc.stdin.close)
             return proc
         def ctrl_c(_seconds):
             children[0].wait(timeout=3)
@@ -183,6 +297,7 @@ class RecordingOutcomeTests(unittest.TestCase):
                 code = tr.record_plan(plan)
             self.assertEqual(code, 0)
             self.assertIn("Saved", output.getvalue())
+            self.assertTrue(children[0].stdin.closed, "reaped recorder retains its stdin pipe")
 
     def run_plan(self, directory, body, finalize=None, cleanup=None, secret=None):
         destination = str(Path(directory) / "output.mkv")

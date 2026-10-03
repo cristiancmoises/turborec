@@ -7,9 +7,9 @@
 > pipeline. Use the **GUI** or the **CLI**. English is the default interface and
 > documentation language; [the complete PT-BR guide](README.pt-BR.md) is also available.
 
-This guide covers **3.10.2**: visible redacted recording errors, bounded
-diagnostics, worker-based cached synthetic hardware-profile startup validation,
-and honest GPU/Auto outcomes. Optional CPU 4:4:4, pixel-preserving padding,
+This guide covers **3.10.3**: manual Chroma off by default, matched Wayland
+NVENC backends, background GPU availability checks, and honest save outcomes
+in both front-ends. Optional CPU 4:4:4, pixel-preserving padding,
 BT.709 software Wayland conversion and `.zupt` archives remain available.
 Best · Auto · 23 fps · 4K and default 4:2:0 remain unchanged.
 
@@ -51,20 +51,20 @@ Hyprland, river, …) screen capture additionally needs
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./turborec_3.10.2_all.deb        # pulls ffmpeg, python3, python3-tk
+sudo apt install ./turborec_3.10.3_all.deb        # pulls ffmpeg, python3, python3-tk
 
 # Fedora / RHEL / openSUSE
-sudo dnf install ./turborec-3.10.2-1.noarch.rpm   # accepts any RPM provider of /usr/bin/ffmpeg
+sudo dnf install ./turborec-3.10.3-1.noarch.rpm   # accepts any RPM provider of /usr/bin/ffmpeg
 
 # Any Linux — portable AppImage (uses your host ffmpeg/python/tk)
-chmod +x Turbo_Recorder-3.10.2-x86_64.AppImage
-./Turbo_Recorder-3.10.2-x86_64.AppImage
+chmod +x Turbo_Recorder-3.10.3-x86_64.AppImage
+./Turbo_Recorder-3.10.3-x86_64.AppImage
 ```
 
 Get these from the project **Releases** page, or build them yourself with the
 scripts in [`packaging/`](../packaging/).
 
-Fedora's `ffmpeg-free` can omit `libx264`. In v3.10.2 the automatic, explicit
+Fedora's `ffmpeg-free` can omit `libx264`. In v3.10.3 the automatic, explicit
 H.264, CPU and streaming paths can fall through to `libopenh264`, but only after
 Turbo Recorder proves that encoder with a real one-frame test. Fedora's
 `noopenh264` compatibility shim is deliberately rejected. With the Cisco
@@ -87,13 +87,13 @@ Python plus a POSIX shell front-end, so one archive runs everywhere.
 
 ```sh
 # FreeBSD — native package
-pkg add ./turborec-3.10.2.pkg
+pkg add ./turborec-3.10.3.pkg
 pkg install python3 ffmpeg          # runtime prerequisites; screen via X11/XWayland
 
 # Any Unix — portable archive (installs to /usr/local by default)
-zupt extract -o unpack turborec-3.10.2.zupt
-tar xf unpack/turborec-3.10.2.tar
-cd turborec-3.10.2
+zupt extract -o unpack turborec-3.10.3.zupt
+tar xf unpack/turborec-3.10.3.tar
+cd turborec-3.10.3
 sudo ./install.sh                   # or: PREFIX="$HOME/.local" ./install.sh
 ```
 
@@ -114,8 +114,8 @@ and verify each download against the release `SHA256SUMS` before extracting it.
 Standard `tar` does **not** read `.zupt`. Each `.zupt` holds one uncompressed tar
 payload so that the second extraction preserves Unix modes and symlinks.
 
-`turborec-3.10.2.zupt` is the portable end-user installer;
-`turborec-3.10.2-source.zupt` holds `turborec-3.10.2-source.tar`, the complete
+`turborec-3.10.3.zupt` is the portable end-user installer;
+`turborec-3.10.3-source.zupt` holds `turborec-3.10.3-source.tar`, the complete
 release source and tests for ports/distribution maintainers. Extract the source
 in the same two steps, substituting those exact filenames. The release offers
 10 payloads plus `SHA256SUMS`: 11 assets in total, including the unchanged native
@@ -134,6 +134,27 @@ Install Tk for the GUI: `sudo apt install python3-tk` (Debian/Ubuntu),
 
 ### GNU Guix
 
+TurboRec is available in the
+[SecurityOPS Channel](https://github.com/cristiancmoises/securityops-channel).
+After configuring/updating the channel, use its free generic `turborec` or the
+explicit NVIDIA variant. First installation: `guix install turborec-nvidia-new-feature`.
+To replace an already-installed generic package in the same profile:
+`guix package -r turborec -i turborec-nvidia-new-feature`.
+Do not coinstall variants: they provide the same commands; do not use `-r` if
+the old package is absent.
+
+The NVIDIA variant pins wf-recorder 0.6.0 to an NVENC-enabled FFmpeg 8.1.3
+library, and uses FFmpeg 9.0.2 elsewhere. Recorder 0.6.0 is not compatible with
+FFmpeg 9's ABI. The generic repository definition/pack below does not include
+the proprietary variant. Driver/userspace compatibility remains required;
+the app does not change kernel drivers or reboot.
+
+Advanced packagers may set `TURBOREC_WF_RECORDER` and `TURBOREC_WF_FFMPEG` to
+absolute executable paths from a verified compatible build. wf-recorder must
+link that FFmpeg's libavcodec; unrelated FFmpeg encoder listings are not proof.
+NVENC is GPU encoding of CPU-resident captured/converted frames, not zero-copy
+CUDA screen capture. Synthetic profile probes are not compositor/device tests.
+
 **Easiest — the package definition or the relocatable pack.** The repo ships a
 `guix.scm`, and every release ships a relocatable pack inside `.zupt`. Both give you a
 working `turborec` CLI and Tk GUI with `ffmpeg`, `wf-recorder`, `pactl` and the
@@ -147,8 +168,8 @@ guix shell   -f guix.scm -- turborec detect   # run it ad-hoc
 
 # Or the prebuilt relocatable pack from the Releases page (no Guix daemon needed
 # to run it; verify SHA256SUMS BEFORE the privileged tar extraction)
-zupt extract -o guix-unpack turborec-3.10.2-guix-x86_64.zupt
-sudo tar xf guix-unpack/turborec-3.10.2-guix-x86_64.tar -C /
+zupt extract -o guix-unpack turborec-3.10.3-guix-x86_64.zupt
+sudo tar xf guix-unpack/turborec-3.10.3-guix-x86_64.tar -C /
 /bin/turborec record -m video_both
 ```
 
@@ -179,7 +200,7 @@ It is **fully self-contained** — Python, Tk **and FFmpeg are bundled inside th
 admin rights needed:
 
 ```powershell
-Turbo_Recorder-3.10.2-windows-x64.exe gui        # or: detect / record / --help
+Turbo_Recorder-3.10.3-windows-x64.exe gui        # or: detect / record / --help
 ```
 
 Prefer a classic install with Start-Menu shortcuts and an uninstaller? Use
@@ -257,7 +278,7 @@ Recorder** from your application menu.
 │ Source [ Full screen (3280x1200)        ▾] ⟳                  │  ← screen / monitor / window
 │ Region [________]  blank = full screen                        │  ← optional exact override
 │ Output resolution [4K (3840×2160) ▾]                           │
-│ Chroma [420 ▾]  compatible / 444 CPU file recording            │
+│ [ ] Manual Chroma  [420 ▾ disabled] / 444 CPU file recording   │
 │ AUDIO                                                      ⟳   │
 │ ● Microphone   [ Built-in / your mic           ▾]            │
 │ ● System audio [ ...monitor                     ▾]            │
@@ -284,7 +305,8 @@ Recorder** from your application menu.
   re-probes devices. Dots show whether a real device is selected.
 - **OUTPUT** — choose the folder; the filename preview updates live.
 - **Encoder** — `Auto` (default), `GPU` (request hardware) or `CPU` (force software).
-- **Chroma** — `420` is the compatible default. `444` uses software H.264/HEVC
+- **Manual Chroma** — off by default; automatic mode chooses compatible 4:2:0.
+  Enable the checkbox to select `420` or `444`. `444` uses software H.264/HEVC
   for file recording only; see [4:4:4 chroma](#444-chroma-for-colored-text).
 - **command preview** — expand to see (and `copy`) the exact FFmpeg command.
 - **Footer** — press **● START** to record. While recording you get a live
@@ -314,7 +336,7 @@ Most-used `record` options:
 | `-m, --mode` | what to capture (see [modes](#6-capture-modes)) | `auto` |
 | `-q, --quality` | `best` · `high` · `balanced` · `compact` | `best` |
 | `-c, --codec` | `auto` · `h264` · `hevc` · `av1` | `auto` |
-| `--chroma` | `420` · `444` (CPU H.264/HEVC file recording) | `420` |
+| `--chroma` | `auto` · `420` · `444` (CPU H.264/HEVC file recording) | `auto` |
 | `-f, --fps` | frames per second | `23` |
 | `-R, --resolution` | `native` · `720p` · `1080p` · `1440p` · `4k` | `4k` |
 | `-o, --out` | output folder | `~/Videos` or `~/Audio` |
@@ -387,8 +409,10 @@ windows). Notes:
   overlap is captured too.
 - On **Linux Wayland** (sway/Hyprland/river), capture uses `wf-recorder` automatically.
   Pick an output with `--monitor <name>` (or the Source dropdown); a region with
-  `--region`; a sway window with `--window`. NVENC isn't available through
-  `wf-recorder`, so encoding is software `libx264`/`libx265` (real-time at 1080p).
+  `--region`; a sway window with `--window`. NVIDIA NVENC requires an explicitly
+  matched NVENC-capable recorder/FFmpeg pair; a generic recorder does not gain
+  NVENC just because your external FFmpeg lists it. Auto uses software when
+  that pair is unavailable; explicit GPU fails clearly.
   `video_both` records synchronized audio via a temporary PipeWire combined
   source. (Install `wf-recorder` if it's missing.)
 - On the **BSDs**, use an X11 session or XWayland. X11 retains the `x11grab`
@@ -411,7 +435,7 @@ turborec record            # auto: hardware if available, else software
 GPU encoding is much lighter on the CPU and is the default when available. CPU
 encoding is the universal fallback and is fine for smaller regions / lower fps.
 
-In 3.10.2, explicit GPU requests fail with an actionable error if the selected
+In 3.10.3, explicit GPU requests fail with an actionable error if the selected
 profile cannot start; Auto may fall back to software. Startup validation uses a
 bounded synthetic full hardware profile, cached by profile and run in a worker
 for the GUI. It is not a physical screen/audio/camera test. Wayland scaling and
@@ -447,8 +471,9 @@ turborec encoders          # shows the best h264/hevc/av1 encoder for your machi
 
 ### 4:4:4 chroma for colored text
 
-`--chroma 420` is the default, retaining broad compatibility and automatic
-hardware encoding. Choose `--chroma 444` (or **Chroma → 444** in the GUI) to
+`--chroma auto` is the default, retaining broad compatibility through 4:2:0
+without a manual override. `--chroma 420` remains supported explicitly.
+Choose `--chroma 444` (or enable **Manual Chroma**, then select **444**) to
 retain full chroma resolution for colored text and desktop graphics:
 
 ```bash

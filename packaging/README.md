@@ -43,7 +43,7 @@ Actions release workflow builds the Linux artifacts on
   `py` launcher) only when no Python 3.8+ with Tk is already present — so the
   target machine needs **no prerequisites**. The uninstaller removes the app but
   never uninstalls the shared Python.
-  Setup 3.10.2 is non-elevated: app files live in
+  Setup 3.10.3 is non-elevated: app files live in
   `%LOCALAPPDATA%\Programs\Turbo Recorder`, registry entries and shortcuts belong
   to the current user, and Python/its launcher are installed per-user. Discovery
   and launchers use Python isolated mode. Remove a legacy machine-wide install
@@ -58,9 +58,9 @@ Actions release workflow builds the Linux artifacts on
   `uninstall.sh` honouring `PREFIX` (default `/usr/local`) and `DESTDIR`:
 
   ```sh
-  zupt extract -o unpack turborec-3.10.2.zupt
-  tar xf unpack/turborec-3.10.2.tar
-  cd turborec-3.10.2
+  zupt extract -o unpack turborec-3.10.3.zupt
+  tar xf unpack/turborec-3.10.3.tar
+  cd turborec-3.10.3
   sudo ./install.sh                  # → /usr/local
   PREFIX="$HOME/.local" ./install.sh # per-user
   ```
@@ -68,7 +68,7 @@ Actions release workflow builds the Linux artifacts on
 - **`build-freebsd-pkg.sh`** → `dist/turborec-<version>.pkg`. Must run on FreeBSD
   (uses `pkg create`). Stages the tree under `${PREFIX}`, generates a plist +
   `+MANIFEST`, and emits a package installable with
-  `pkg add ./turborec-3.10.2.pkg`. Runtime prerequisites (`python3`, `ffmpeg`,
+  `pkg add ./turborec-3.10.3.pkg`. Runtime prerequisites (`python3`, `ffmpeg`,
   and Tk for the GUI) are documented in the package description rather than
   declared as hard deps, so the file installs cleanly on any FreeBSD release
   (`pkg install python3 ffmpeg`).
@@ -84,26 +84,27 @@ Actions release workflow builds the Linux artifacts on
   privileged extraction of the Guix closure:
 
   ```sh
-  zupt extract -o guix-unpack turborec-3.10.2-guix-x86_64.zupt
-  sudo tar xf guix-unpack/turborec-3.10.2-guix-x86_64.tar -C /
+  zupt extract -o guix-unpack turborec-3.10.3-guix-x86_64.zupt
+  sudo tar xf guix-unpack/turborec-3.10.3-guix-x86_64.tar -C /
   ```
 
-## Publishing release binaries to Forgejo + Codeberg
+## Publishing release binaries to four remotes
 
-Forgejo (`git.securityops.com.br`) is the primary repo; GitHub and Codeberg are
+Forgejo (`git.securityops.com.br`) is the primary repo; GitHub, Codeberg and
+the second Forgejo (`git.securityops.co`) are
 independent Git remotes synchronized deliberately during a release. Git pushes
 replicate branches and tags but **not** release objects or their binaries.
 GitHub builds its binaries via `release.yml`; to attach that same verified set
-to the Forgejo and Codeberg releases, run:
+to both Forgejo instances and Codeberg releases, run:
 
 ```sh
 # downloads the tag's assets from the GitHub release, then attaches them to the
 # matching Forgejo + Codeberg releases (creating the release if needed)
-FJTOKEN=<forgejo-token> CBTOKEN=<codeberg-token> \
-    packaging/publish-release.sh v3.10.2
+FJTOKEN=<forgejo-br-token> FJTOKEN_LEGACY=<forgejo-co-token> CBTOKEN=<codeberg-token> \
+    packaging/publish-release.sh v3.10.3
 
 # or attach files from a local directory instead of downloading
-FJTOKEN=… CBTOKEN=… packaging/publish-release.sh v3.10.2 dist/
+FJTOKEN=… FJTOKEN_LEGACY=… CBTOKEN=… packaging/publish-release.sh v3.10.3 dist/
 ```
 
 Tokens are read only from the environment. The script requires all **10
@@ -113,6 +114,11 @@ mirrors the checksum file, validates each public download URL against the forge
 origin, downloads every asset without sending credentials, and compares remote
 bytes with the locally verified files. Equal name/size alone is not accepted.
 Incomplete uploads or changed bytes fail; identical re-runs are idempotent.
+Denied or ambiguous uploads are not blindly retried with disguised metadata.
+Review the authoritative release state and diagnose the cause before rerunning.
+Python helpers use isolated imports (`-I`), so CWD, `PYTHONPATH` and user-site
+modules cannot replace their standard-library imports. This does not remove
+trust in the selected interpreter or the package/tool directories.
 Requires Bash, curl, Python 3 and `cmp`; `gh` is needed only for automatic
 asset downloads. No GNU `find` or checksum utility is required by the publisher.
 
@@ -150,7 +156,7 @@ The script:
    - `README.md`               -> `/usr/share/doc/turborec/README.md`
 2. Builds the control tree (`control` with computed `Installed-Size`,
    `md5sums`, `postinst`, `postrm`).
-3. Emits `dist/turborec_3.10.2_all.deb`.
+3. Emits `dist/turborec_3.10.3_all.deb`.
 
 ### dpkg-deb vs. portable mode
 
@@ -167,7 +173,7 @@ pre-rendered `assets/turborec.png` exists, that is used instead.
 
 ## Runtime dependencies
 
-Version 3.10.2 keeps the established 11 release assets: `.deb`, binary and
+Version 3.10.3 keeps the established 11 release assets: `.deb`, binary and
 source `.rpm`, AppImage, FreeBSD `.pkg`, Windows portable `.exe` and setup
 `.exe`, portable/Guix/complete-source `.zupt`, plus `SHA256SUMS`. Each of the
 three ZUPT assets holds one real uncompressed TAR payload; these are not
@@ -179,6 +185,12 @@ reboot; operators can use Auto/CPU or an already-installed compatible FFmpeg
 with `turborec --ffmpeg /path/to/ffmpeg record` (global option before the
 subcommand), or the JSON `ffmpeg` setting. Synthetic startup validation does
 not establish physical-device support across all operating systems.
+
+Windows builds bundle the pinned Gyan FFmpeg 9.0.2 essentials build. Local setup
+builds re-extract the checksum-verified ZIP every time, so a previous version's
+cached executables cannot silently enter a new installer. Native Windows CI
+checks the bundled capture backends, a synthetic encode, pixel fidelity and the
+actual installed launchers; it does not certify physical microphones or GPUs.
 
 All non-self-contained builds need `ffmpeg`, Python 3.8+, and Tk for the GUI.
 On Debian/Ubuntu Tk comes from `python3-tk`; the `.deb` also installs
@@ -203,8 +215,8 @@ headless environment; it does not claim a visual GUI test.
 
 ```bash
 # inspect members and metadata without installing
-ar t dist/turborec_3.10.2_all.deb
-mkdir -p /tmp/deb && ar x dist/turborec_3.10.2_all.deb --output /tmp/deb
+ar t dist/turborec_3.10.3_all.deb
+mkdir -p /tmp/deb && ar x dist/turborec_3.10.3_all.deb --output /tmp/deb
 tar -tvf /tmp/deb/data.tar.xz
 tar -xOf /tmp/deb/control.tar.gz ./control
 ```

@@ -316,42 +316,102 @@ detect_wl_output(){
   printf '%s' "$o"
 }
 
-# wf-recorder can't use NVENC — VAAPI on Intel/AMD, else software libx264/x265.
+# Reuse the companion's backend-specific profile validation, not PATH FFmpeg's
+# advertised GPU encoders. Legacy flags/defaults and audio routing stay here.
 select_wf_encoder(){
-  local qi; qi="$(quality_index)"
-  WF_CODEC="libx264"; WF_PARAMS=(); WF_DRM=""
-  [ "$CODEC" = "hevc" ] && WF_CODEC="libx265"
-  if [ "$FORCE_SOFTWARE" != "1" ] && [ -n "$VAAPI_DEVICE" ] \
-     && { [ "$GPU_VENDOR" = "intel" ] || [ "$GPU_VENDOR" = "amd" ]; } \
-     && ffmpeg_has_encoder "${CODEC}_vaapi"; then
-    WF_CODEC="${CODEC}_vaapi"; WF_DRM="$VAAPI_DEVICE"
-    WF_PARAMS=( -p "qp=$(pick_from "$qi" 20 24 27 31)" )
-  else
-    WF_PARAMS=( -p "preset=$(pick_from "$qi" slow medium fast veryfast)" \
-                -p "crf=$(pick_from "$qi" 18 21 24 27)" )
-  fi
+  have python3 || die "Wayland recording requires Python 3 and the TurboRec companion."
+  local data; local -a selected
+  # Ignore CWD, user-site and PYTHONPATH before importing the owned companion.
+  data="$(python3 -I -c '
+import importlib.util, re, shlex, shutil, sys
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+folder = Path(sys.argv[1]).resolve().parent
+source = next((path for path in (folder / "turborec.py", folder / ".turborec-real")
+               if path.is_file()), None)
+if source is None:
+    # Deb/RPM/portable/AppImage installs rename the Python payload to turborec.
+    # A Guix shell wrapper with that name is not Python; hidden source wins.
+    candidate = folder / "turborec"
+    if candidate.is_file() and candidate.resolve().parent == folder:
+        with candidate.open("rb") as payload:
+            header = payload.readline(4096).decode("ascii", "replace").strip()
+        try:
+            interpreter = shlex.split(header[2:]) if header.startswith("#!") else []
+        except ValueError:
+            interpreter = []
+        if interpreter and Path(interpreter[0]).name == "env":
+            interpreter = interpreter[1:]
+            if interpreter and interpreter[0] == "-S":
+                interpreter = interpreter[1:]
+        if interpreter and re.fullmatch(r"python3(?:\.[0-9]+)?", Path(interpreter[0]).name):
+            source = candidate
+if source is None:
+    sys.exit("TurboRec Python companion missing beside turborecorder; reinstall the complete package.")
+loader = SourceFileLoader("turborec_legacy_companion", str(source))
+module_spec = importlib.util.spec_from_loader(loader.name, loader)
+tr = importlib.util.module_from_spec(module_spec)
+sys.modules[loader.name] = tr
+loader.exec_module(tr)
+vendor, device, output, fps, quality, codec, software, requested = sys.argv[2:]
+wf, wf_ff = tr._configured_wf_pair()
+si = tr.SystemInfo(os="linux", display_server="wayland", gpu_vendor=vendor,
+    vaapi_device=device, ffmpeg=shutil.which("ffmpeg") or "ffmpeg",
+    wayland_recorder=wf or shutil.which("wf-recorder") or "", wayland_ffmpeg=wf_ff)
+si.encoders = tr.list_encoders(si.ffmpeg)
+if wf_ff:
+    si.wayland_encoders = tr.list_encoders(wf_ff)
+si.wl_outputs, si.wl_default_output = tr._detect_outputs_wayland()
+spec = tr.RecordSpec("video_only", codec=codec, quality=quality, fps=int(fps),
+    resolution="native", out_dir="/unused", wl_output=output,
+    backend="cpu" if software == "1" else "auto")
+if requested:
+    if not re.fullmatch(r"[1-9][0-9]*x[1-9][0-9]*", requested):
+        tr.die("Capture size must be positive WxH.")
+    dims = tr._capture_dims(si, spec)
+    if not dims:
+        tr.die("Cannot verify the Wayland output size for the requested capture region.")
+    w, h = map(int, requested.split("x"))
+    spec.wl_geometry = f"0,0 {min(w, dims[0])}x{min(h, dims[1])}"
+name, params, kind, drm = tr.wf_codec(si, spec)
+# Preview builds argv without touching the filesystem. Pin the validated path
+# so a failed hardware probe cannot be reselected by the tentative builder.
+spec.backend = "cpu" if kind == "software" else "gpu"
+plan = tr.build_plan(si, spec, preview=True)
+values = [plan.encoder_name, plan.encoder_kind, *plan.procs[0][1][:-2]]
+if any("\n" in value or "\r" in value for value in values):
+    tr.die("Backend paths and options must not contain newlines.")
+print("\n".join(values))
+' "${BASH_SOURCE[0]}" "$GPU_VENDOR" "$VAAPI_DEVICE" "$WL_OUTPUT" "$FPS" \
+    "$QUALITY" "$CODEC" "$FORCE_SOFTWARE" "$REQUEST_RECORDING_RES")" \
+    || die "Cannot validate the Wayland recording backend; see the companion error above."
+  mapfile -t selected <<< "$data"
+  [ "${#selected[@]}" -ge 4 ] || die "Invalid Wayland recording plan from companion."
+  WF_CODEC="${selected[0]}"; WF_KIND="${selected[1]}"; WF_RECORDER="${selected[2]}"
+  WF_BASE=( "${selected[@]:3}" )
   case "$AUDIO_CODEC" in
     opus) WF_ACODEC="libopus" ;; aac) WF_ACODEC="aac" ;; *) WF_ACODEC="flac" ;;
   esac
-}
-
-build_wf_base(){
-  # -D (no-damage) captures at a constant framerate so wf-recorder always polls
-  # its stop flag and exits cleanly on Ctrl-C even when the screen is static.
-  WF_BASE=( -o "$WL_OUTPUT" -D -c "$WF_CODEC" -r "$FPS" -x yuv420p "${WF_PARAMS[@]}" )
-  if [ -n "$WF_DRM" ]; then WF_BASE+=( -d "$WF_DRM" ); fi
-  return 0
 }
 
 # Run wf-recorder in the background and forward Ctrl-C to it so it finalizes the
 # file cleanly, whether the signal reaches the whole process group (a terminal
 # Ctrl-C) or just this script (e.g. `kill -INT`). Waits for it to fully exit.
 run_wf(){
-  local pid
-  wf-recorder "$@" & pid=$!
+  local pid status=0 out="${@: -1}"
+  [ ! -e "$out" ] || die "Refusing to overwrite an existing recording: $out"
+  "$WF_RECORDER" "$@" & pid=$!
   trap 'kill -INT "$pid" 2>/dev/null || true' INT TERM
-  while kill -0 "$pid" 2>/dev/null; do wait "$pid" 2>/dev/null || true; done
+  while true; do
+    if wait "$pid"; then status=0; else status=$?; fi
+    kill -0 "$pid" 2>/dev/null || break
+  done
   trap - INT TERM
+  if [ "$status" -ne 0 ]; then
+    printf 'Recording failed (exit %s); any recoverable file remains at %s\n' "$status" "$out" >&2
+    return "$status"
+  fi
+  [ -s "$out" ] || die "Recording failed: no nonempty output at $out"
   return 0
 }
 
@@ -446,7 +506,7 @@ ARESAMPLE="aresample=${AUDIO_RATE}:resampler=soxr"
 
 detect_cpu
 detect_gpu
-select_encoder
+if ! is_wayland; then select_encoder; fi
 build_audio_args
 compute_capture_res
 build_x11_args
@@ -458,18 +518,17 @@ detect_mic_channel "$MIC_SOURCE"
 BACKEND="x11grab"
 if is_wayland; then
   BACKEND="wf-recorder"
-  have wf-recorder || die "Wayland session detected but 'wf-recorder' is not installed.
+  { [ -n "${TURBOREC_WF_RECORDER:-}" ] || have wf-recorder; } || die "Wayland session detected but 'wf-recorder' is not installed.
   Install:  guix install wf-recorder  ·  sudo apt install wf-recorder  ·  sudo dnf install wf-recorder"
   WL_OUTPUT="$(detect_wl_output)"
   [ -n "$WL_OUTPUT" ] || die "Wayland session but no output detected (install wlr-randr or swaymsg)."
   select_wf_encoder
-  build_wf_base
 fi
 
 printf '%s\n' \
   "Turbo Recorder — CPU:${CPU_VENDOR} GPU:${GPU_VENDOR} · session:$( is_wayland && echo wayland || echo x11 ) · backend:${BACKEND}" \
   "$( [ "$BACKEND" = wf-recorder ] \
-        && echo "Encoder: ${WF_CODEC} (${QUALITY}) · output:${WL_OUTPUT} @ ${FPS}fps" \
+        && echo "Encoder: ${WF_CODEC} (${WF_KIND}, ${QUALITY}) · output:${WL_OUTPUT} @ ${FPS}fps" \
         || echo "Encoder: ${VENCODER} (${ENC_KIND}, ${QUALITY}) · ${CAPTURE_RES} @ ${FPS}fps" )" \
   "Monitor: ${MONITOR_SOURCE:-<none>}" \
   "Mic:     ${MIC_SOURCE:-<none>}  PAN:${PAN}" >&2

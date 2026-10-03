@@ -37,12 +37,12 @@ import tempfile
 import threading
 import time
 import unicodedata
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from typing import Optional
 
 APP_NAME = "Turbo Recorder"
-VERSION = "3.10.2"
+VERSION = "3.10.3"
 
 _BSD_OSES = frozenset(("freebsd", "openbsd", "netbsd", "dragonfly"))
 _X11_CAPTURE_OSES = frozenset(("linux", *_BSD_OSES))
@@ -225,6 +225,8 @@ class SystemInfo:
     default_monitor: Optional[AudioDevice] = None
     # Wayland / wlroots capture (sway, Hyprland, river, …)
     wayland_recorder: str = ""   # path to wf-recorder, or "" if unavailable
+    wayland_ffmpeg: str = ""    # explicit FFmpeg built with this wf-recorder
+    wayland_encoders: set[str] = field(default_factory=set)
     wl_outputs: list = field(default_factory=list)  # CaptureTarget per output
     wl_default_output: str = ""  # focused/primary output name
 
@@ -1224,6 +1226,23 @@ def detect_capture_targets(si: SystemInfo) -> list[CaptureTarget]:
 # ---------------------------------------------------------------------------
 # Full system probe
 # ---------------------------------------------------------------------------
+def _configured_wf_pair() -> tuple[str, str]:
+    """Optional packaging contract: the exact backend and its linked FFmpeg.
+
+    The provider must verify matching libav dependencies; paths alone cannot
+    prove that linkage. Never infer wf-recorder capabilities from PATH FFmpeg.
+    """
+    wf = os.environ.get("TURBOREC_WF_RECORDER", "")
+    ff = os.environ.get("TURBOREC_WF_FFMPEG", "")
+    if not (wf or ff):
+        return "", ""
+    if not all(os.path.isabs(path) and os.path.isfile(path)
+               and os.access(path, os.X_OK) for path in (wf, ff)):
+        die("TURBOREC_WF_RECORDER and TURBOREC_WF_FFMPEG must both name absolute "
+            "executable paths from a matched wf-recorder/FFmpeg build.")
+    return wf, ff
+
+
 def probe_system(ffmpeg: Optional[str] = None) -> SystemInfo:
     ff = ffmpeg or find_ffmpeg()
     if not ff:
@@ -1241,7 +1260,11 @@ def probe_system(ffmpeg: Optional[str] = None) -> SystemInfo:
         si.os, ff, indevs=si.indevs if si.os in _BSD_OSES else None)
     # Wayland (wlroots) capture backend
     if si.os == "linux" and si.display_server == "wayland":
-        si.wayland_recorder = shutil.which("wf-recorder") or ""
+        wf, wf_ff = _configured_wf_pair()
+        si.wayland_recorder = wf or shutil.which("wf-recorder") or ""
+        si.wayland_ffmpeg = wf_ff
+        if wf_ff:
+            si.wayland_encoders = list_encoders(wf_ff)
         si.wl_outputs, si.wl_default_output = _detect_outputs_wayland()
         if not si.screen and si.wl_outputs:
             # global desktop bounding box from output rects
@@ -1331,6 +1354,16 @@ def _candidate_encoders(si: SystemInfo, codec: str) -> list[tuple[str, str]]:
 
 _ENCODER_PROBE_CACHE: dict[tuple, bool] = {}
 _ENCODER_PROBE_ERRORS: dict[tuple, str] = {}
+_ENCODER_PROBE_LOCK = threading.Lock()
+
+
+def _binary_identity(path: str) -> tuple:
+    resolved = shutil.which(path) or os.path.abspath(path)
+    try:
+        binary = os.stat(resolved)
+        return (os.path.realpath(resolved), binary.st_mtime_ns, binary.st_size)
+    except OSError:
+        return (resolved,)
 
 
 def _hardware_encoder_usable(si: SystemInfo, name: str, kind: str,
@@ -1353,7 +1386,12 @@ def _hardware_encoder_usable(si: SystemInfo, name: str, kind: str,
     if spec is None and not probe_openh264 \
             and os.environ.get("TURBOREC_SKIP_ENCODER_PROBE") == "1":
         return True
-    cmd = [si.ffmpeg, "-hide_banner", "-loglevel", "error"]
+    wf_nvenc = (spec is not None and si.os == "linux" and si.display_server == "wayland"
+                and kind == "nvenc" and not spec.camera and not spec.stream_url)
+    if wf_nvenc and not si.wayland_ffmpeg:
+        return False
+    ffmpeg = si.wayland_ffmpeg if wf_nvenc else si.ffmpeg
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error"]
     if kind == "vaapi":
         if not si.vaapi_device:
             return False
@@ -1370,7 +1408,7 @@ def _hardware_encoder_usable(si: SystemInfo, name: str, kind: str,
                      and kind == "vaapi" and not spec.camera and not spec.stream_url)
         cmd += ["-f", "lavfi", "-i",
                 f"color=c=black:s={dims[0]}x{dims[1]}:r={spec.fps}"
-                + (",format=bgra" if any(n % 2 for n in dims) else "")]
+                + (",format=bgra" if wf_nvenc or any(n % 2 for n in dims) else "")]
         # wf-recorder owns its native VAAPI upload/conversion. Validate device,
         # dimensions, FPS and its actual qp flags, not an invented FFmpeg profile.
         # This synthetic upload cannot validate compositor DMA-BUF negotiation.
@@ -1399,37 +1437,38 @@ def _hardware_encoder_usable(si: SystemInfo, name: str, kind: str,
     if spec is None:
         cmd += ["-c:v", name]
     cmd += ["-f", "null", "-"]
-    resolved = shutil.which(si.ffmpeg) or os.path.abspath(si.ffmpeg)
-    try:
-        binary = os.stat(resolved)
-        identity = (os.path.realpath(resolved), binary.st_mtime_ns, binary.st_size)
-    except OSError:
-        identity = (resolved,)
+    identity = _binary_identity(ffmpeg)
+    if wf_nvenc or (si.os == "linux" and si.display_server == "wayland"
+                    and si.wayland_ffmpeg and si.ffmpeg == si.wayland_ffmpeg):
+        identity = (identity, _binary_identity(si.wayland_recorder))
     device_environment = tuple((name, os.environ.get(name, "")) for name in (
         "CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES", "LIBVA_DRIVER_NAME",
         "LIBVA_DRIVERS_PATH", "ONEVPL_SELECTOR"))
     key = (identity, tuple(cmd), si.gpu_vendor, si.vaapi_device or "", device_environment)
-    if key in _ENCODER_PROBE_CACHE:
-        return _ENCODER_PROBE_CACHE[key]
-    try:
-        if spec is not None:
-            code, reason = _run_bounded_command(cmd, spec.stream_secret, timeout=12)
-            usable = code == 0
-        else:
-            result = subprocess.run(cmd, stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=12)
-            usable, reason = result.returncode == 0, "Encoder initialization failed."
-    except (OSError, subprocess.SubprocessError) as error:
-        usable = False
-        reason = str(error)
-    if len(_ENCODER_PROBE_CACHE) >= 64:
-        oldest = next(iter(_ENCODER_PROBE_CACHE))
-        _ENCODER_PROBE_CACHE.pop(oldest, None)
-        _ENCODER_PROBE_ERRORS.pop(oldest, None)
-    if not usable:
-        _ENCODER_PROBE_ERRORS[key] = _mask_secret(reason, spec.stream_secret if spec else None)
-    _ENCODER_PROBE_CACHE[key] = usable
-    return usable
+    # Availability and Start can overlap. Serialize initialization and cache
+    # updates so they never initialize the same device/profile concurrently.
+    with _ENCODER_PROBE_LOCK:
+        if key in _ENCODER_PROBE_CACHE:
+            return _ENCODER_PROBE_CACHE[key]
+        try:
+            if spec is not None:
+                code, reason = _run_bounded_command(cmd, spec.stream_secret, timeout=12)
+                usable = code == 0
+            else:
+                result = subprocess.run(cmd, stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=12)
+                usable, reason = result.returncode == 0, "Encoder initialization failed."
+        except (OSError, subprocess.SubprocessError) as error:
+            usable = False
+            reason = str(error)
+        if len(_ENCODER_PROBE_CACHE) >= 64:
+            oldest = next(iter(_ENCODER_PROBE_CACHE))
+            _ENCODER_PROBE_CACHE.pop(oldest, None)
+            _ENCODER_PROBE_ERRORS.pop(oldest, None)
+        if not usable:
+            _ENCODER_PROBE_ERRORS[key] = _mask_secret(reason, spec.stream_secret if spec else None)
+        _ENCODER_PROBE_CACHE[key] = usable
+        return usable
 
 
 def _software_encoder_usable(si: SystemInfo, name: str) -> bool:
@@ -1484,10 +1523,11 @@ def choose_encoder(si: SystemInfo, codec: str = "auto", force_software: bool = F
                 else _hardware_encoder_usable(si, name, kind))
 
     def gpu_error():
-        details = "\n".join(value for key, value in _ENCODER_PROBE_ERRORS.items()
-                            if key in _ENCODER_PROBE_CACHE
-                            and key[1][0] == si.ffmpeg
-                            and key[2:4] == (si.gpu_vendor, si.vaapi_device or ""))[-4096:]
+        with _ENCODER_PROBE_LOCK:
+            details = "\n".join(value for key, value in _ENCODER_PROBE_ERRORS.items()
+                                if key in _ENCODER_PROBE_CACHE
+                                and key[1][0] == si.ffmpeg
+                                and key[2:4] == (si.gpu_vendor, si.vaapi_device or ""))[-4096:]
         die("No usable GPU encoder for this recording profile. Use Auto or CPU, "
             "or install an FFmpeg build and GPU driver compatible with your hardware. "
             "Driver mismatches must be corrected outside Turbo Recorder."
@@ -1555,7 +1595,7 @@ DEFAULT_RESOLUTION = "4k"
 # (and bitrate budget) from the uploaded resolution, so a 4K upload gets the
 # high-bitrate 4K pipeline even when the source screen is 1080p/1200p.
 RESOLUTIONS = ("native", "720p", "1080p", "1440p", "4k")
-CHROMA_MODES = ("420", "444")
+CHROMA_MODES = ("auto", "420", "444")
 _RES_DIMS = {"720p": (1280, 720), "1080p": (1920, 1080),
              "1440p": (2560, 1440), "4k": (3840, 2160)}
 
@@ -2111,14 +2151,14 @@ class RecordSpec:
     camera_position: str = "bottom-right"  # top-left | top-right | bottom-left | bottom-right | center
     # Mic noise suppression (NoiseTorch-style, built in via ffmpeg afftdn).
     denoise: str = "off"               # off | light | medium | strong
-    chroma: str = "420"                # 444: software H.264/HEVC file recordings only
+    chroma: str = "auto"               # auto: compatible 420; 444: CPU file recordings
 
 
 def _recording_encoder(si: SystemInfo, spec: RecordSpec, probe: bool = True) -> EncoderChoice:
     """Enforce the opt-in detail mode without silently losing its chroma."""
     if spec.chroma not in CHROMA_MODES:
-        die("--chroma must be 420 or 444")
-    if spec.chroma == "420":
+        die("--chroma must be auto, 420 or 444")
+    if spec.chroma != "444":
         return choose_encoder(si, "h264" if spec.stream_url else spec.codec,
                               spec.force_software, spec.backend, spec, probe)
     if spec.stream_url:
@@ -2359,21 +2399,30 @@ class RecordPlan:
 
 
 # ---- Wayland (wlroots) encoder selection for wf-recorder --------------------
+def _wf_encoder_system(si: SystemInfo) -> SystemInfo:
+    """Use the matched backend's encoder inventory without changing mux/compose FFmpeg."""
+    if si.wayland_ffmpeg:
+        return replace(si, ffmpeg=si.wayland_ffmpeg, encoders=si.wayland_encoders)
+    return si
+
+
 def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False,
              force_software: bool = False) -> tuple[str, list[str], str, str]:
     """Return (codec, [codec params], kind, drm_device) for wf-recorder.
 
-    wf-recorder cannot use NVENC; on NVIDIA it uses software (x264/OpenH264
-    for H.264, or x265 for HEVC).
-    VAAPI is used only on Intel/AMD when available. Presets adapt to the output
-    pixel rate: slower/higher-quality when there's headroom, fast at 4K.
+    NVIDIA uses NVENC only with the explicit matched backend packaging contract.
+    Capture and colour/geometry conversion still use CPU frames, not zero-copy.
+    VAAPI is used only on Intel/AMD when available.
     """
+    si = _wf_encoder_system(si)
     if spec.chroma not in CHROMA_MODES:
-        die("--chroma must be 420 or 444")
-    needs_software = bool(_geometry_filter(si, spec) or spec.camera or spec.stream_url)
-    if spec.backend == "gpu" and (needs_software or si.gpu_vendor not in ("intel", "amd")):
+        die("--chroma must be auto, 420 or 444")
+    needs_compose = bool(spec.camera or spec.stream_url)
+    needs_software = bool(needs_compose or
+                          (_geometry_filter(si, spec) and si.gpu_vendor != "nvidia"))
+    if spec.backend == "gpu" and needs_software:
         die("This GPU combination is unsupported by wf-recorder on Wayland "
-            "(NVENC, scaling/padding, webcam and streaming require software capture). "
+            "(VAAPI scaling/padding, webcam and streaming require software capture). "
             "Use Auto/CPU, or native even dimensions with a usable VAAPI device.")
     force_software = force_software or needs_software or spec.force_software
     qi = _quality_index(spec.quality)
@@ -2381,18 +2430,35 @@ def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False,
     if qi >= 2:
         st = min(3, st + 1)
     if spec.chroma == "444":
-        enc = _recording_encoder(si, spec)
+        # Composition re-encodes in external FFmpeg; the captured intermediate
+        # is H.264 regardless of the requested final file codec.
+        enc = _recording_encoder(si, replace(spec, codec="h264") if needs_compose else spec)
         args = encoder_args(enc, spec.quality, _pixrate_mp(si, spec), spec.chroma)[2:]
         params = [f"{args[i].lstrip('-').replace(':v', '')}={args[i + 1]}"
                   for i in range(0, len(args), 2)]
         return enc.name, params, "software", ""
-    codec = spec.codec
-    # wf-recorder cannot use NVENC/QSV/AMF.  Its quality-first automatic mode
-    # therefore checks the usable VAAPI codecs in the same order as FFmpeg and
-    # otherwise takes the predictable real-time software H.264 fallback.
+    codec = "h264" if needs_compose else spec.codec
+    # Prefer only encoders validated against the real recording backend.
     auto_codec = codec == "auto"
     if auto_codec:
         codec = "h264"
+    if not force_software and spec.backend != "cpu" and si.gpu_vendor == "nvidia":
+        if not si.wayland_ffmpeg:
+            if spec.backend == "gpu":
+                die("Wayland NVENC requires TURBOREC_WF_RECORDER and TURBOREC_WF_FFMPEG "
+                    "from a matched NVIDIA-enabled wf-recorder/FFmpeg build. Use Auto "
+                    "or CPU with the generic backend.")
+        else:
+            candidates = ("av1", "hevc", "h264") if auto_codec else (codec,)
+            for candidate in candidates:
+                name = candidate + "_nvenc"
+                if name in si.wayland_encoders and (quiet or
+                        _hardware_encoder_usable(si, name, "nvenc", spec)):
+                    enc = EncoderChoice(name, "nvenc", candidate)
+                    args = encoder_args(enc, spec.quality, _pixrate_mp(si, spec), spec.chroma)[2:]
+                    params = [f"{args[i].lstrip('-').replace(':v', '')}={args[i + 1]}"
+                              for i in range(0, len(args), 2)]
+                    return name, params, "nvenc", ""
     if not force_software and spec.backend != "cpu" \
             and si.gpu_vendor in ("intel", "amd") and si.vaapi_device:
         if auto_codec:
@@ -2410,22 +2476,23 @@ def wf_codec(si: SystemInfo, spec: RecordSpec, quiet: bool = False,
                 qp = [18, 22, 25, 28][qi]
                 return venc, [f"qp={qp}"], "vaapi", si.vaapi_device
     if spec.backend == "gpu":
-        die("No usable VAAPI encoder for this Wayland profile. Use Auto or CPU, "
-            "or a compatible FFmpeg build and GPU driver.")
+        ff = si.wayland_ffmpeg if si.gpu_vendor == "nvidia" else si.ffmpeg
+        with _ENCODER_PROBE_LOCK:
+            details = "\n".join(value for key, value in _ENCODER_PROBE_ERRORS.items()
+                                if key[1][0] == ff and key[2] == si.gpu_vendor)[-4096:]
+        die("No usable GPU encoder for this Wayland profile. Use Auto or CPU, "
+            "or a compatible backend build and GPU driver."
+            + ("\n" + details if details else ""))
     if codec == "hevc":
-        if spec.backend == "gpu" and si.gpu_vendor == "nvidia" and not quiet:
-            warn("wf-recorder cannot use NVENC on Wayland; recording with "
-                 "software libx265.")
+        if not _software_encoder_usable(si, "libx265"):
+            die(_software_encoder_error(si, "hevc")
+                + " Software HEVC requires libx265 in the wf-recorder backend.")
         preset = ["medium", "fast", "faster", "veryfast"][st]
         # Enhanced quality for 4K: lower CRF = better quality
         return "libx265", [f"preset={preset}", f"crf={[18,20,23,26][qi]}"], "software", ""
     if codec == "av1" and not quiet:
         warn("AV1 software encoding is not real-time for live capture; using H.264.")
     sw_h264 = _first_usable_software_encoder(si, "h264", probe=not quiet)
-    if spec.backend == "gpu" and si.gpu_vendor == "nvidia" \
-            and not quiet and sw_h264:
-        warn("wf-recorder cannot use NVENC on Wayland; recording with "
-             f"software {sw_h264}.")
     if not sw_h264:
         die(_software_encoder_error(si, "h264")
             + " A software H.264 encoder is required by wf-recorder here.")
@@ -2854,9 +2921,9 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
     color_params = ["color_primaries=bt709", "color_trc=bt709",
                     "colorspace=bt709", "color_range=tv"]
     pix_fmt = "yuv444p" if spec.chroma == "444" else "yuv420p"
-    if kind == "software" or spec.camera or spec.stream_url:
+    if kind in ("software", "nvenc") or spec.camera or spec.stream_url:
         scale = ",".join(f for f in (scale, _sdr_video_filter(pix_fmt)) if f)
-    if kind == "software":
+    if kind in ("software", "nvenc"):
         cparams += color_params
     container = spec.container or "mkv"
     ts = timestamp()
@@ -2889,16 +2956,17 @@ def _build_wayland_plan(si: SystemInfo, spec: RecordSpec, preview: bool,
     # so it encodes the screen into an mpegts FIFO which ffmpeg reads to overlay
     # the webcam, mix + denoise the audio, and write the file (or push the FLV).
     if spec.stream_url or spec.camera:
+        wf_si = _wf_encoder_system(si)
         if spec.chroma == "444":
-            if "libx264" not in si.encoders:
+            if "libx264" not in wf_si.encoders:
                 die("Wayland --chroma 444 webcam overlays require libx264 for the "
                     "4:4:4 screen intermediate. Install FFmpeg with libx264, "
                     "record without --camera, or use --chroma 420.")
             wf_h264 = "libx264"
         else:
-            wf_h264 = _first_usable_software_encoder(si, "h264", probe=not preview)
+            wf_h264 = _first_usable_software_encoder(wf_si, "h264", probe=not preview)
         if not wf_h264:
-            die(_software_encoder_error(si, "h264")
+            die(_software_encoder_error(wf_si, "h264")
                 + " Wayland webcam/stream composition requires software H.264.")
         # Only mint a real temp dir + FIFO when we will actually record; the live
         # GUI preview and CLI --dry-run rebuild this plan repeatedly and would
@@ -3036,7 +3104,8 @@ def build_plan(si: SystemInfo, spec: RecordSpec, preview: bool = False) -> Recor
         # Reflect the actual capture command, including forced software scaling.
         command = plan.procs[0][1]
         plan.encoder_name = command[command.index("-c") + 1]
-        plan.encoder_kind = "vaapi" if plan.encoder_name.endswith("_vaapi") else "software"
+        plan.encoder_kind = next((kind for kind in ("vaapi", "nvenc")
+                                  if plan.encoder_name.endswith("_" + kind)), "software")
         if plan.fallback:
             plan.fallback.encoder_name, plan.fallback.encoder_kind = plan.encoder_name, plan.encoder_kind
         return plan
@@ -3236,6 +3305,14 @@ def _stop_all(running: list) -> tuple[set, set]:
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     _reap(proc)
+    for proc, _method in running:
+        # Popen.wait() reaps a child but does not close its stdin. Retained GUI
+        # or fixture process objects must not retain a pipe after finalization.
+        if proc.stdin is not None:
+            try:
+                proc.stdin.close()
+            except (OSError, ValueError):
+                pass
     return signaled, forced
 
 
@@ -3448,7 +3525,7 @@ def _mode_for_audio(
 # explicit CLI flag always wins.
 _RC_KEYS = (
     "mode", "quality", "codec", "fps", "resolution", "chroma", "stream_url", "out", "region", "audio_rate",
-    "audio_codec", "audio_channels", "container", "mic_device", "system_device", "software",
+    "audio_codec", "audio_channels", "container", "mic_device", "system_device", "software", "backend",
     "duration", "countdown", "open", "quiet", "ffmpeg",
     "camera", "camera_size", "camera_position", "denoise",
 )
@@ -3563,12 +3640,21 @@ def _resolve_audio_devices(si: SystemInfo, args) -> tuple[Optional[AudioDevice],
     return mic, mon
 
 
+_BACKEND_CHOICES = ("auto", "gpu", "cpu")
+
+
 def _resolve_backend(args) -> str:
     if getattr(args, "cpu", False) or getattr(args, "software", False):
         return "cpu"
     if getattr(args, "gpu", False):
         return "gpu"
-    return getattr(args, "backend", None) or "auto"
+    backend = getattr(args, "backend", "auto")
+    # argparse checks explicit choices, not JSON defaults. Validate after flags
+    # override defaults, preserving --software/--cpu precedence over --gpu.
+    if backend not in _BACKEND_CHOICES:
+        die(f"Invalid backend {backend!r}: choose --backend auto, gpu or cpu "
+            "(or correct backend in the saved config).")
+    return backend
 
 
 def _resolve_capture_target(si: SystemInfo, args) -> Optional[CaptureTarget]:
@@ -3638,8 +3724,8 @@ def _apply_target_to_spec(si: SystemInfo, target: Optional[CaptureTarget], spec:
 
 
 def cmd_record(args) -> int:
-    si = probe_system(args.ffmpeg)
     backend = _resolve_backend(args)
+    si = probe_system(args.ffmpeg)
     target = _resolve_capture_target(si, args)
     mic, mon = _resolve_audio_devices(si, args)
     mode = _mode_for_audio(mic, mon) if args.mode == "auto" else args.mode
@@ -3855,8 +3941,8 @@ def build_parser(rc: Optional[dict] = None) -> argparse.ArgumentParser:
                    default=d("codec", DEFAULT_CODEC),
                    help="video codec (default: auto — hardware AV1, HEVC, H.264; "
                         "then software H.264)")
-    r.add_argument("--chroma", choices=CHROMA_MODES, default=d("chroma", "420"),
-                   help="colour detail: 420 (default, compatible) or 444 "
+    r.add_argument("--chroma", choices=CHROMA_MODES, default=d("chroma", "auto"),
+                   help="colour detail: auto (default, compatible 420), 420 or 444 "
                         "(CPU libx264/libx265 files; sharper coloured text, "
                         "higher CPU use, limited player support; no streaming)")
     r.add_argument("-f", "--fps", type=int, default=d("fps", DEFAULT_FPS),
@@ -3888,7 +3974,7 @@ def build_parser(rc: Optional[dict] = None) -> argparse.ArgumentParser:
                    help="microphone device id/name (default: auto)")
     r.add_argument("--system-device", default=d("system_device", None),
                    help="system-audio source id/name (default: auto)")
-    r.add_argument("--backend", choices=("auto", "gpu", "cpu"), default=d("backend", "auto"),
+    r.add_argument("--backend", choices=_BACKEND_CHOICES, default=d("backend", "auto"),
                    help="encoder backend: auto (default), gpu (hardware), cpu (software)")
     r.add_argument("--gpu", action="store_true", help="shorthand for --backend gpu")
     r.add_argument("--cpu", action="store_true", help="shorthand for --backend cpu")
@@ -3997,9 +4083,49 @@ def _gui_build_preview(si, spec):
     return build_plan(si, spec, preview=True)
 
 
-def _gui_run_job(root, work, completed):
-    """Run blocking work without Tk access; deliver its result on the Tk thread."""
+def _gui_chroma_mode(manual: bool, selected: str) -> str:
+    if not manual:
+        return "auto"
+    if selected not in ("420", "444"):
+        die("Manual Chroma requires 420 or 444.")
+    return selected
+
+
+def _gui_gpu_choice(si: SystemInfo, spec: RecordSpec) -> EncoderChoice:
+    """Synthetic full-profile check, never a preview or capture validation.
+
+    This is called on a worker; selection must fail rather than return CPU.
+    It creates no output paths, FIFOs, capture or microphone processes.
+    """
+    if not spec.mode.startswith("video"):
+        raise RecorderError("GPU encoding is not used in audio-only modes.")
+    gpu_spec = replace(spec, backend="gpu", force_software=False)
+    _validate_capture_geometry(si, gpu_spec)
+    if si.os == "linux" and si.display_server == "wayland":
+        if not si.wayland_recorder:
+            raise RecorderError("wf-recorder is not installed.")
+        name, _params, kind, _drm = wf_codec(si, gpu_spec)
+        return EncoderChoice(name, kind, name.split("_", 1)[0])
+    return _recording_encoder(si, gpu_spec)
+
+
+def _gui_run_job(root, work, completed, *, pending=None):
+    """Run work without Tk access; return a main-thread poll/delivery cancel.
+
+    The owner registers cancels in ``pending`` and calls them before destroying
+    Tk. Cancelling delivery does not abort work or replace startup cancellation.
+    """
     result = [None, None]
+    after_id = None
+    cancelled = False
+    def cancel():
+        nonlocal after_id, cancelled
+        cancelled = True
+        if after_id is not None:
+            root.after_cancel(after_id)
+            after_id = None
+        if pending is not None:
+            pending.discard(cancel)
     def worker():
         try:
             result[0] = work()
@@ -4008,11 +4134,20 @@ def _gui_run_job(root, work, completed):
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
     def poll():
+        nonlocal after_id
+        after_id = None
+        if cancelled:
+            return
         if thread.is_alive():
-            root.after(120, poll)
+            after_id = root.after(120, poll)
         else:
+            if pending is not None:
+                pending.discard(cancel)
             completed(*result)
-    root.after(120, poll)
+    if pending is not None:
+        pending.add(cancel)
+    after_id = root.after(120, poll)
+    return cancel
 
 
 def _prepare_recording(si, spec, cancelled, launch_lock=None):
@@ -4243,7 +4378,9 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
              "destroyed": False, "pulse": 0,
              "after_tick": None, "after_pulse": None, "after_preview": None,
              "after_refresh": None, "after_copy": None, "after_close": None,
-             "after_stop": None}
+             "after_stop": None,
+             "gpu_generation": 0, "gpu_checking": False, "gpu_available": False,
+             "preview_valid": False, "job_cancels": set()}
 
     def _cancel_after(key):
         h = state.get(key)
@@ -4258,12 +4395,15 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         for key in ("after_tick", "after_pulse", "after_preview",
                     "after_refresh", "after_copy", "after_close", "after_stop"):
             _cancel_after(key)
+        for cancel_job in tuple(state["job_cancels"]):
+            cancel_job()
 
     mode_var = tk.StringVar(value=_automatic_mode(si))
     quality_var = tk.StringVar(value=DEFAULT_QUALITY)
     res_var = tk.StringVar(value=DEFAULT_RESOLUTION)
     codec_var = tk.StringVar(value=DEFAULT_CODEC)
     chroma_var = tk.StringVar(value="420")
+    manual_chroma_var = tk.BooleanVar(value=False)
     fps_var = tk.StringVar(value=str(DEFAULT_FPS))
     acodec_var = tk.StringVar(value="flac")
     achan_var = tk.StringVar(value="stereo")
@@ -4343,10 +4483,15 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     res_hint = label(grid, "native = capture size · 4k best for YouTube",
                      fg=C["faint"], font=F["hint"])
     res_hint.grid(row=1, column=2, columnspan=4, sticky="w", pady=4)
-    label(grid, "Chroma", fg=C["muted"]).grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
-    chroma_cb = _combo(grid, chroma_var, CHROMA_MODES)
+    manual_chroma_cb = tk.Checkbutton(
+        grid, text="Manual Chroma", variable=manual_chroma_var,
+        bg=C["bg"], fg=C["muted"], activebackground=C["bg"],
+        activeforeground=C["text"], selectcolor=C["surface2"],
+        font=F["label"], takefocus=1, highlightthickness=1)
+    manual_chroma_cb.grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+    chroma_cb = _combo(grid, chroma_var, ("420", "444"), state_="disabled")
     chroma_cb.grid(row=2, column=1, sticky="ew", padx=(0, 14), pady=4)
-    label(grid, "444 = finer colour detail · CPU files only",
+    label(grid, "off = automatic · 444 = CPU files only",
           fg=C["muted"], font=F["hint"]).grid(row=2, column=2, columnspan=4, sticky="w", pady=4)
 
     # encoder transparency chip
@@ -4625,9 +4770,14 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             indicatoron=0, bd=0, highlightthickness=0, relief="flat",
             font=F["seg"], padx=14, pady=5, cursor="hand2",
             selectcolor=C["surface2"], bg=C["surface2"], fg=C["muted"],
-            activebackground=C["surface3"], activeforeground=C["text"], takefocus=0)
+            activebackground=C["surface3"], activeforeground=C["text"], takefocus=1,
+            state=("disabled" if value == "gpu" else "normal"))
         b.pack(side="left", padx=(0, 4))
         backend_buttons[value] = b
+    gpu_status = label(inner, "GPU: checking recording profile…", fg=C["muted"], font=F["hint"],
+                       justify="left", wraplength=560)
+    gpu_status.pack(fill="x", pady=(4, 0))
+    inner.bind("<Configure>", lambda event: gpu_status.configure(wraplength=max(1, event.width)), add="+")
 
     # =====================================================================
     # SECTION: COMMAND PREVIEW (collapsible)
@@ -4733,8 +4883,12 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
 
         # video-only rows
         vid_state = "readonly" if is_video else "disabled"
-        for cb in (quality_cb, codec_cb, fps_cb, res_cb, chroma_cb):
+        for cb in (quality_cb, codec_cb, fps_cb, res_cb):
             cb.configure(state=vid_state)
+        chroma_cb.configure(state=("readonly" if is_video and manual_chroma_var.get()
+                                  and not (state["recording"] or state["stopping"]) else "disabled"))
+        manual_chroma_cb.configure(state=("normal" if is_video and not
+                                          (state["recording"] or state["stopping"]) else "disabled"))
         region_entry.configure(state=("normal" if is_video else "disabled"))
         region_hint.configure(
             text=(f"blank = full screen {si.screen or '?'}" if is_video else "n/a for audio modes"),
@@ -4760,14 +4914,14 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
                     preview_plan = build_plan(si, spec, preview=True)
                     name, kind = preview_plan.encoder_name, preview_plan.encoder_kind
                     fg = C["warn"] if kind == "software" else C["accent"]
-                    enc_chip.configure(text=f"{name}  ·  {kind}  ·  wf-recorder (Wayland)", fg=fg)
+                    enc_chip.configure(text=f"{name}  ·  {kind}  ·  Wayland preview (tentative)", fg=fg)
                 except (SystemExit, ValueError):
                     enc_chip.configure(text="unsupported codec / chroma / backend combination", fg=C["warn"])
             else:
                 try:
                     ec = _recording_encoder(si, _current_spec(), probe=False)
                     fg = C["warn"] if ec.kind == "software" else C["accent"]
-                    enc_chip.configure(text=f"{ec.name}  ·  {ec.kind}  ·  {ec.note}", fg=fg)
+                    enc_chip.configure(text=f"{ec.name}  ·  {ec.kind}  ·  preview (tentative)", fg=fg)
                 except (SystemExit, ValueError):
                     enc_chip.configure(text="no usable encoder for this codec", fg=C["warn"])
         else:
@@ -4817,7 +4971,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             quality=quality_var.get(),
             resolution=res_var.get(),
             codec=codec_var.get(),
-            chroma=chroma_var.get(),
+            chroma=_gui_chroma_mode(manual_chroma_var.get(), chroma_var.get()),
             fps=fps,
             out_dir=out_var.get(),
             audio_codec=acodec_var.get(),
@@ -4836,11 +4990,40 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         return spec
 
     # ---- live command preview (debounced) ---------------------------------
+    def _check_gpu_profile(spec):
+        if state["gpu_checking"] or state["closing"] or state["destroyed"]:
+            return
+        state["gpu_checking"] = True
+        generation = state["gpu_generation"]
+        def checked(choice, error):
+            state["gpu_checking"] = False
+            if state["closing"] or state["destroyed"]:
+                return
+            if generation != state["gpu_generation"]:
+                _check_gpu_profile(_current_spec())
+                return
+            state["gpu_available"] = error is None and choice is not None
+            idle = not (state["recording"] or state["stopping"])
+            backend_buttons["gpu"].configure(state=("normal" if state["gpu_available"] and idle
+                                                   else "disabled"))
+            if state["gpu_available"]:
+                gpu_status.configure(text=f"GPU: {choice.name} · synthetic profile verified; capture not tested",
+                                     fg=C["accent"])
+            else:
+                reason = _mask_secret(str(error), spec.stream_secret).splitlines()[0]
+                gpu_status.configure(text=f"GPU unavailable: {reason}", fg=C["muted"])
+            if idle and backend_var.get() == "gpu":
+                action_btn.configure(state=("normal" if state["gpu_available"] and
+                                            state["preview_valid"] else "disabled"))
+        _gui_run_job(root, lambda: _gui_gpu_choice(si, spec), checked, pending=state["job_cancels"])
+
     def _do_preview():
         state["after_preview"] = None
         if state["destroyed"]:
             return
         spec = _current_spec()
+        state["preview_valid"] = False
+        _check_gpu_profile(spec)
         try:
             # Use the preview-safe builder: it neutralises ensure_dir so that
             # merely opening the GUI or typing in the Folder field never creates
@@ -4870,9 +5053,11 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
                 state_line.configure(text="configuration error", fg=C["danger"])
                 action_btn.configure(state="disabled")
             return
+        state["preview_valid"] = True
         if not (state["recording"] or state["stopping"]):
             state_line.configure(text="idle", fg=C["muted"])
-            action_btn.configure(state="normal")
+            action_btn.configure(state=("disabled" if backend_var.get() == "gpu" and
+                                        not state["gpu_available"] else "normal"))
         if plan.is_stream:
             fname_preview.configure(text="↳ ● LIVE → " + _mask_secret(plan.out_path, plan.secret),
                                     fg=C["success"])
@@ -4890,6 +5075,12 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     def schedule_preview(*_a):
         if state["destroyed"] or state["closing"]:
             return
+        state["gpu_generation"] += 1
+        state["gpu_available"] = False
+        backend_buttons["gpu"].configure(state="disabled")
+        gpu_status.configure(text="GPU: checking recording profile…", fg=C["muted"])
+        if backend_var.get() == "gpu" and not (state["recording"] or state["stopping"]):
+            action_btn.configure(state="disabled")
         _cancel_after("after_preview")
         state["after_preview"] = root.after(250, _do_preview)
 
@@ -4951,7 +5142,9 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
         # lock the encoder + source controls while recording is in progress
         for b in backend_buttons.values():
             try:
-                b.configure(state=("disabled" if on else "normal"))
+                b.configure(state=("disabled" if on or
+                                   (b is backend_buttons["gpu"] and not state["gpu_available"])
+                                   else "normal"))
             except tk.TclError:
                 pass
         try:
@@ -4959,6 +5152,10 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             src_refresh.configure(state=("disabled" if on else "normal"))
         except tk.TclError:
             pass
+        manual_chroma_cb.configure(state=("disabled" if on or not mode_var.get().startswith("video")
+                                          else "normal"))
+        chroma_cb.configure(state=("readonly" if not on and mode_var.get().startswith("video")
+                                  and manual_chroma_var.get() else "disabled"))
 
     def do_start():
         if state["recording"] or state["stopping"]:
@@ -5005,7 +5202,7 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
             _set_recording_ui(True)
             state["after_tick"] = root.after(1000, _tick)
             _pulse()
-        _gui_run_job(root, prepare, prepared)
+        _gui_run_job(root, prepare, prepared, pending=state["job_cancels"])
 
     def _finish_recording(crashed=False, code=0):
         # called on the Tk thread once the recorder process(es) have exited
@@ -5194,7 +5391,9 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     # ---- keyboard shortcuts ----------------------------------------------
     def _on_space(_e=None):
         # don't steal the spacebar while typing in an entry/text field
-        if root.focus_get() in (region_entry, out_entry, preview_box, stream_entry):
+        focus = root.focus_get()
+        if focus in (region_entry, out_entry, preview_box, stream_entry) or isinstance(
+                focus, (tk.Checkbutton, tk.Radiobutton, ttk.Combobox)):
             return None
         toggle_record()
         return "break"
@@ -5210,11 +5409,11 @@ def launch_gui(ffmpeg: Optional[str]) -> int:
     root.bind("<Escape>", _on_escape)
 
     # ---- wire traces (live preview + dependent state) ---------------------
-    for v in (mode_var, quality_var, res_var, codec_var, chroma_var, fps_var, acodec_var, achan_var,
+    for v in (mode_var, quality_var, res_var, codec_var, chroma_var, manual_chroma_var, fps_var, acodec_var, achan_var,
               region_var, mic_var, mon_var, out_var, backend_var, source_var, stream_var,
               denoise_var, camera_var, camsize_var, campos_var):
         v.trace_add("write", schedule_preview)
-    for v in (mode_var, codec_var, chroma_var, stream_var, acodec_var, backend_var):
+    for v in (mode_var, codec_var, chroma_var, manual_chroma_var, stream_var, acodec_var, backend_var):
         v.trace_add("write", _refresh_dependent)
     mode_var.trace_add("write", _restyle_segments)
     backend_var.trace_add("write", _restyle_backend)

@@ -40,13 +40,19 @@ credentials nevertheless appear in the child FFmpeg argv and may be visible
 to other users on a shared host or in shell history. Review diagnostic logs
 before sharing: device names, window titles, paths and recordings can be private.
 
-Version 3.10.2 bounds retained child-process diagnostics and presents redacted
+Since version 3.10.2 the app bounds retained child-process diagnostics and presents redacted
 recording failures in the GUI. Review errors before sharing them anyway. A
 failed final mux preserves intermediate recordings for recovery; those files
 may contain the same private content as the intended output. Synthetic encoder
 startup validation is not a security audit or certification of physical capture
 on every GPU/operating system. Driver installation and reboots remain operator
 decisions, not automatic recorder actions.
+
+Version 3.10.3 validates GPU availability against the selected encoder profile.
+For a custom Wayland backend, both configured executable paths must be absolute;
+use only trusted binaries with compatible shared libraries. Path validation is
+not signature verification or proof of ABI compatibility. The SecurityOPS Guix
+NVIDIA variant pins the matching backend without changing global library paths.
 
 Download releases from the project's official forges and compare `SHA256SUMS`
 before installing or extracting. Checksums detect changed bytes; they are not

@@ -29,8 +29,8 @@ if [ -z "${VERSION}" ]; then
 fi
 
 # --- Pinned Windows FFmpeg (must match .github/workflows/release.yml). --------
-FFMPEG_URL="https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-essentials_build.zip"
-FFMPEG_SHA256="db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec"
+FFMPEG_URL="https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip"
+FFMPEG_SHA256="60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba"
 
 # --- Pinned Python 3.12 installer (bundled so the app needs no prerequisites).
 # The newest 3.12.x with Windows binaries (3.12.11+ are source-only); 3.13+
@@ -57,19 +57,19 @@ if [ ! -f "${ZIP}" ] || ! echo "${FFMPEG_SHA256}  ${ZIP}" | sha256sum -c - >/dev
     echo "${FFMPEG_SHA256}  ${ZIP}" | sha256sum -c -   # abort on tamper/mismatch
 fi
 
-if [ ! -f "${WIN_DIR}/ffmpeg.exe" ] || [ ! -f "${WIN_DIR}/ffprobe.exe" ]; then
-    rm -rf "${BUILD_DIR}/ffmpeg-extract"
-    mkdir -p "${BUILD_DIR}/ffmpeg-extract"
-    7z x -y -o"${BUILD_DIR}/ffmpeg-extract" "${ZIP}" >/dev/null
-    FF="$(find "${BUILD_DIR}/ffmpeg-extract" -type f -name ffmpeg.exe | head -1)"
-    FP="$(find "${BUILD_DIR}/ffmpeg-extract" -type f -name ffprobe.exe | head -1)"
-    if [ -z "${FF}" ] || [ -z "${FP}" ]; then
-        echo "error: ffmpeg.exe/ffprobe.exe not in archive" >&2
-        exit 1
-    fi
-    cp -p "${FF}" "${WIN_DIR}/ffmpeg.exe"
-    cp -p "${FP}" "${WIN_DIR}/ffprobe.exe"
+# Re-extract every build: existing executables are not evidence that the
+# verified ZIP was their source (especially after updating the pinned version).
+EXTRACT_DIR="$(mktemp -d "${BUILD_DIR}/ffmpeg-extract.XXXXXX")"
+trap 'rm -rf -- "${EXTRACT_DIR}"' EXIT
+7z x -y -o"${EXTRACT_DIR}" "${ZIP}" >/dev/null
+FF="$(find "${EXTRACT_DIR}" -type f -name ffmpeg.exe | head -1)"
+FP="$(find "${EXTRACT_DIR}" -type f -name ffprobe.exe | head -1)"
+if [ -z "${FF}" ] || [ -z "${FP}" ]; then
+    echo "error: ffmpeg.exe/ffprobe.exe not in archive" >&2
+    exit 1
 fi
+cp -p "${FF}" "${WIN_DIR}/ffmpeg.exe"
+cp -p "${FP}" "${WIN_DIR}/ffprobe.exe"
 
 # --- Fetch + verify the pinned Python installer. ------------------------------
 PYEXE="${BUILD_DIR}/python-3.12.10-amd64.exe"

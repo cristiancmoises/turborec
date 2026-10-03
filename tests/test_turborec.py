@@ -375,6 +375,62 @@ class CaptureTargetTests(unittest.TestCase):
             tr._validate_capture_geometry(si, spec)
 
 
+class BackendConfigTests(unittest.TestCase):
+    def config_args(self, value, flags=(), *, nested=False, software=False):
+        data = {"backend": value, "software": software}
+        if nested:
+            data = {"record": data}
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "config.json")
+            with open(path, "w") as config:
+                json.dump(data, config)
+            with mock.patch.object(tr, "_config_paths", return_value=[]):
+                rc = tr.load_config(path)
+        return tr.build_parser(rc).parse_args(["record", *flags])
+
+    def test_saved_cpu_gpu_and_auto_control_effective_backend(self):
+        for value in ("cpu", "gpu", "auto"):
+            for nested in (False, True):
+                with self.subTest(value=value, nested=nested):
+                    args = self.config_args(value, nested=nested)
+                    self.assertEqual(tr._resolve_backend(args), value)
+
+    def test_cli_backend_overrides_saved_backend(self):
+        cases = (("cpu", ("--backend", "gpu"), "gpu"),
+                 ("gpu", ("--backend", "cpu"), "cpu"),
+                 ("gpu", ("--backend", "auto"), "auto"),
+                 ("cpu", ("--gpu",), "gpu"),
+                 ("gpu", ("--cpu",), "cpu"),
+                 ("invalid", ("--backend", "cpu"), "cpu"),
+                 ("invalid", ("--gpu",), "gpu"))
+        for saved, flags, expected in cases:
+            with self.subTest(saved=saved, flags=flags):
+                self.assertEqual(tr._resolve_backend(self.config_args(saved, flags)), expected)
+
+    def test_software_override_keeps_precedence_over_gpu_and_config(self):
+        for flags, software in ((("--gpu", "--software"), False),
+                                (("--backend", "gpu"), True),
+                                (("--gpu", "--cpu"), False)):
+            with self.subTest(flags=flags, software=software):
+                args = self.config_args("gpu", flags, software=software)
+                self.assertEqual(tr._resolve_backend(args), "cpu")
+
+    def test_invalid_saved_backend_fails_before_system_probe(self):
+        for value in ("GPU", "invalid", "", None, True, [], {}):
+            with self.subTest(value=value):
+                args = self.config_args(value)
+                stderr = io.StringIO()
+                with mock.patch.object(tr, "probe_system", side_effect=AssertionError(
+                        "invalid config must not probe a recording backend")), \
+                        mock.patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                    tr.cmd_record(args)
+                self.assertNotEqual(raised.exception.code, 0)
+                message = stderr.getvalue()
+                self.assertIn("backend", message)
+                for choice in ("auto", "gpu", "cpu"):
+                    self.assertIn(choice, message)
+
+
 class DefaultsAndShutdownTests(unittest.TestCase):
     def test_video_defaults_are_quality_first_4k_at_23_fps(self):
         spec = tr.RecordSpec(mode="video_only")
@@ -626,16 +682,20 @@ class VideoFidelityTests(unittest.TestCase):
         with mock.patch.object(tr, "ensure_dir"):
             return tr.build_command(si, spec)[0]
 
-    def test_default_chroma_remains_compatible_420(self):
-        self.assertEqual(getattr(tr.RecordSpec(mode="video_only"), "chroma", None), "420")
+    def test_default_chroma_is_automatic_and_encodes_compatible_420(self):
+        self.assertEqual(tr.RecordSpec(mode="video_only").chroma, "auto")
         args = tr.build_parser().parse_args(["record"])
-        self.assertEqual(getattr(args, "chroma", None), "420")
+        self.assertEqual(args.chroma, "auto")
+        command = self.command(self.spec())
+        self.assertIn("format=yuv420p", command[command.index("-filter_complex") + 1])
+        self.assertEqual(command[command.index("-profile:v") + 1], "high")
 
     def test_chroma_cli_and_config_are_explicit_and_overridable(self):
         self.assertEqual(tr.build_parser().parse_args(["record", "--chroma", "444"]).chroma, "444")
         parser = tr.build_parser({"chroma": "444"})
         self.assertEqual(parser.parse_args(["record"]).chroma, "444")
         self.assertEqual(parser.parse_args(["record", "--chroma", "420"]).chroma, "420")
+        self.assertEqual(parser.parse_args(["record", "--chroma", "auto"]).chroma, "auto")
 
     def test_444_auto_uses_x264_high444_without_hardware_probe(self):
         si = tr.SystemInfo(os="windows", gpu_vendor="nvidia", has_gpu=True,

@@ -82,6 +82,9 @@ elif parsed.path == base + "/releases/42":
     print(json.dumps({"id": 42, "tag_name": "v3.10.0", "assets": assets()}))
 elif parsed.path == base + "/releases/42/assets" and method == "POST":
     name = parse_qs(parsed.query)["name"][0]
+    if state.get("reject_upload") == name:
+        print("403", end="")
+        sys.exit(0)
     source = args[args.index("-F") + 1].split(";", 1)[0].removeprefix("attachment=@")
     shutil.copyfile(source, root / "remote" / name)
     if state.get("corrupt_upload") == name:
@@ -129,7 +132,7 @@ class PublishReleaseTests(unittest.TestCase):
             "exists": True, "urls": {}, "metadata_reads": 0,
         }
         curl = self.bin / "curl"
-        curl.write_text("#!" + sys.executable + "\n" + FAKE_CURL)
+        curl.write_text("#!" + sys.executable + " -I\n" + FAKE_CURL)
         curl.chmod(0o700)
         # Exercise the same Python version that runs each CI matrix job.
         (self.bin / "python3").symlink_to(sys.executable)
@@ -162,6 +165,35 @@ class PublishReleaseTests(unittest.TestCase):
 
     def public_calls(self):
         return [call for call in self.calls() if "/api/v1/" not in call["url"]]
+
+    def shadow_module(self, directory, module):
+        marker = self.workspace / (module + "-imported")
+        (directory / (module + ".py")).write_text(
+            "open(" + repr(str(marker)) + ", 'w').write('fixture imported')\n"
+            "raise RuntimeError('unexpected ambient fixture import')\n"
+        )
+        return marker
+
+    def test_working_directory_modules_do_not_replace_publisher_imports(self):
+        for module in ("hashlib", "json"):
+            with self.subTest(module=module):
+                marker = self.shadow_module(self.workspace, module)
+                result = self.publish()
+                (self.workspace / (module + ".py")).unlink()
+                self.assertFalse(marker.exists(), result.stdout + result.stderr)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_pythonpath_modules_do_not_replace_publisher_imports(self):
+        imports = self.workspace / "imports"
+        imports.mkdir()
+        self.environment["PYTHONPATH"] = str(imports)
+        for module in ("hashlib", "json"):
+            with self.subTest(module=module):
+                marker = self.shadow_module(imports, module)
+                result = self.publish()
+                (imports / (module + ".py")).unlink()
+                self.assertFalse(marker.exists(), result.stdout + result.stderr)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_same_size_changed_remote_bytes_are_rejected(self):
         # The checksum file itself is part of the identity contract, too.
@@ -253,6 +285,30 @@ class PublishReleaseTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(len(self.public_calls()), 11)
         self.assertTrue(all(call["url"].startswith("https://codeberg.org/") for call in self.calls()))
+
+    def test_secondary_forgejo_uses_its_own_token_and_public_origin(self):
+        self.state.update(origin="https://git.securityops.co", owner="cristiancmoises")
+        self.environment.update(FJTOKEN="", CBTOKEN="", FJTOKEN_LEGACY=DUMMY_TOKEN)
+        result = self.publish()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(self.public_calls()), 11)
+        for call in self.calls():
+            self.assertTrue(call["url"].startswith("https://git.securityops.co/"))
+            self.assertNotIn(DUMMY_TOKEN, " ".join(call["argv"]))
+            if "/api/v1/" in call["url"]:
+                self.assertIn(DUMMY_TOKEN, call["stdin"])
+            else:
+                self.assertEqual(call["stdin"], "")
+
+    def test_upload_403_is_not_retried_with_disguised_metadata(self):
+        name = ASSET_NAMES[1]
+        (self.remote / name).unlink()
+        self.state["reject_upload"] = name
+        result = self.publish()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        uploads = [call for call in self.calls() if "POST" in call["argv"]]
+        self.assertEqual(len(uploads), 1, "a denied write was blindly repeated")
+        self.assertIn("filename=" + name, " ".join(uploads[0]["argv"]))
 
     def test_invalid_local_checksums_stop_before_any_transport(self):
         (self.assets / ASSET_NAMES[1]).write_bytes(b"changed local input")

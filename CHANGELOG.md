@@ -5,6 +5,57 @@ All notable changes to Turbo Recorder are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.3] — 2026-10-03
+
+### Recording compatibility and outcomes
+
+- Manual Chroma is off by default. `--chroma auto` uses compatible 4:2:0;
+  explicit 420/444 and saved manual choices remain supported.
+- Wayland NVENC uses an explicitly matched wf-recorder/FFmpeg backend and
+  validates the full profile against that pair, not an unrelated FFmpeg.
+  Captured/converted frames remain CPU-resident; encoding is on NVIDIA hardware.
+- GPU selection waits for a bounded background profile check; explicit GPU
+  never silently becomes CPU. Best/Auto/23 fps/4K and English remain the main
+  app defaults; unsupported hardware and compositor paths remain explicit.
+- GUI teardown cancels owned background-job polling callbacks before Tk is
+  destroyed, including closing during encoder validation.
+- The legacy Wayland launcher reuses profile selection, honors capture size,
+  propagates recorder failures and preserves nonempty recovery files. It no
+  longer prints Saved for a failed or empty recording. Legacy defaults remain.
+- Its Python helper uses isolated imports: working-directory modules, user-site
+  packages and `PYTHONPATH` cannot override the helper's standard-library imports.
+- SecurityOPS Channel provides a free generic package and an explicit NVIDIA
+  variant with wf-recorder 0.6.0/FFmpeg 8.1.3, alongside FFmpeg 9.0.2.
+- Release mirroring supports both Forgejo instances and Codeberg, retaining
+  exact checksums/public byte verification. Denied writes are not repeated
+  using disguised multipart filenames. Its Python helpers use isolated imports.
+  All 11 release formats remain.
+- Windows bundles pinned FFmpeg 9.0.2; setup builds re-extract its verified ZIP
+  instead of reusing potentially stale binaries from an older build.
+
+### Português do Brasil
+
+- Manual Chroma começa desmarcado; `--chroma auto` usa 4:2:0 compatível, sem
+  exigir ajuste manual. As escolhas explícitas 420/444 continuam disponíveis.
+- NVENC no Wayland usa wf-recorder/FFmpeg realmente pareados e valida o perfil
+  nesse backend. A captura/conversão passa pela CPU; a codificação usa a GPU.
+- A opção GPU aguarda a checagem em segundo plano, sem troca silenciosa para
+  CPU. Best/Auto/23 fps/4K e inglês continuam padrão no aplicativo principal.
+- Fechar a GUI cancela seus callbacks pendentes antes de destruir a janela,
+  inclusive durante a validação do codificador.
+- O launcher legado não confirma vídeos vazios ou gravações que falharam;
+  preserva arquivos recuperáveis e passa a respeitar o tamanho de captura.
+- Seu auxiliar Python usa imports isolados: módulos da pasta atual, pacotes do
+  usuário e `PYTHONPATH` não substituem os imports da biblioteca padrão.
+- O SecurityOPS Channel oferece o pacote livre e a variante NVIDIA explícita;
+  os guias EN/PT-BR explicam primeira instalação, substituição e compatibilidade.
+- Publicação nos dois Forgejos e no Codeberg mantém checksums e comparação dos
+  bytes públicos, com auxiliares Python de imports isolados e sem repetir uploads
+  negados com nome disfarçado. Os pacotes nativos e os três arquivos .zupt
+  permanecem: 11 artefatos ao todo.
+- No Windows, o FFmpeg incluído passa a 9.0.2. O build do instalador extrai
+  novamente o ZIP verificado, sem reaproveitar executáveis de versões antigas.
+
 ## [3.10.2] — 2026-10-02
 
 ### Recording startup and outcomes

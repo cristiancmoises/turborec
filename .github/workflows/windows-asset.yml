@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to build from and attach the .exe to (e.g. v3.10.2)
+        description: Release tag to build from and attach the .exe to (e.g. v3.10.3)
         required: true
-        default: v3.10.2
+        default: v3.10.3
 
 permissions:
   contents: write
@@ -34,8 +34,8 @@ jobs:
       - name: Fetch + verify a pinned static FFmpeg to bundle
         shell: bash
         env:
-          FFMPEG_URL: https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-essentials_build.zip
-          FFMPEG_SHA256: db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec
+          FFMPEG_URL: https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip
+          FFMPEG_SHA256: 60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba
         run: |
           set -eu
           curl -L --retry 3 -o ffmpeg.zip "$FFMPEG_URL"

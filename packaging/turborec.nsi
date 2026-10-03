@@ -6,7 +6,7 @@
 ;
 ;  What gets installed:
 ;    * turborec.py            - the cross-platform Python CLI + GUI engine
-;    * ffmpeg.exe/ffprobe.exe - Windows static FFmpeg build (pinned 8.1.2),
+;    * ffmpeg.exe/ffprobe.exe - Windows static FFmpeg build (pinned 9.0.2),
 ;                               placed on PATH only for the launched app
 ;    * python-3.12.10-amd64.exe - pinned Python 3.12 installer; run silently
 ;                               during install UNLESS a Python 3.8+ (with Tk)
@@ -27,7 +27,7 @@
 
 ; ---- version (overridable: /DVERSION=x.y.z) ---------------------------------
 !ifndef VERSION
-  !define VERSION "3.10.2"
+  !define VERSION "3.10.3"
 !endif
 
 ; ---- bundled Python installer (overridable: /DPYTHON_INSTALLER=path) --------

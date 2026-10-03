@@ -130,6 +130,63 @@ else:
 
 
 @unittest.skipUnless(os.name == "posix" and BASH and SHELL, "Bash packaging resolver")
+class WindowsFFmpegCacheTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="turborec-windows-cache-")
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name)
+        self.tools = self.directory / "tools"
+        self.tools.mkdir()
+        for name in ("mkdir", "sha256sum", "find", "head", "cp", "rm", "mktemp"):
+            link_tool(self.tools, name)
+        self.build_dir = self.directory / "build"
+        self.win_dir = self.build_dir / "win-bundle"
+        self.win_dir.mkdir(parents=True)
+        self.zip_bytes = b"verified ZIP fixture"
+        (self.build_dir / "ffmpeg-win.zip").write_bytes(self.zip_bytes)
+        for name in ("ffmpeg.exe", "ffprobe.exe"):
+            (self.win_dir / name).write_bytes(b"stale extracted executable")
+        executable(self.tools / "7z", f"#!{sys.executable}\n" + '''
+import sys
+from pathlib import Path
+destination = Path(next(arg[2:] for arg in sys.argv if arg.startswith("-o")))
+destination.mkdir(parents=True, exist_ok=True)
+for name in ("ffmpeg.exe", "ffprobe.exe"):
+    (destination / name).write_bytes(b"fresh verified executable")
+''')
+        executable(self.tools / "curl", f"#!{sys.executable}\n" + '''
+import sys
+from pathlib import Path
+args = sys.argv[1:]
+Path(args[args.index("-o") + 1]).write_bytes(b"bad downloaded ZIP")
+''')
+        source = (ROOT / "packaging/build-windows.sh").read_text(encoding="utf-8")
+        self.harness = "set -euo pipefail\n" + source[
+            source.index("# --- Fetch + verify the pinned FFmpeg build."):
+            source.index("# --- Fetch + verify the pinned Python installer.")]
+
+    def build(self):
+        return subprocess.run([BASH, "-c", self.harness], cwd=self.directory,
+            env=dict(PATH=str(self.tools), BUILD_DIR=str(self.build_dir),
+                     WIN_DIR=str(self.win_dir), FFMPEG_URL="https://fixture.invalid/ffmpeg.zip",
+                     FFMPEG_SHA256=hashlib.sha256(self.zip_bytes).hexdigest()),
+            capture_output=True, text=True, timeout=15)
+
+    def test_verified_archive_replaces_stale_extracted_binaries(self):
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for name in ("ffmpeg.exe", "ffprobe.exe"):
+            self.assertEqual((self.win_dir / name).read_bytes(), b"fresh verified executable")
+
+    def test_bad_download_cannot_replace_existing_binaries(self):
+        (self.build_dir / "ffmpeg-win.zip").write_bytes(b"invalid cached ZIP")
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        for name in ("ffmpeg.exe", "ffprobe.exe"):
+            self.assertEqual((self.win_dir / name).read_bytes(), b"stale extracted executable")
+
+
+@unittest.skipUnless(os.name == "posix" and BASH and SHELL, "Bash packaging resolver")
 class AppImageToolIntegrityTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="turborec-appimage-tool-")
