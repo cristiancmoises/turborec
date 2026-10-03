@@ -177,9 +177,9 @@ class ReleaseArchiveTests(unittest.TestCase):
         self.run_command("git", "init", "-q")
         self.commit()
 
-    def run_command(self, *args, expected=0, env=None):
+    def run_command(self, *args, expected=0, env=None, umask=-1):
         result = subprocess.run(
-            args, cwd=self.repo, env=env, text=True, capture_output=True,
+            args, cwd=self.repo, env=env, text=True, capture_output=True, umask=umask,
         )
         self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
         return result
@@ -205,7 +205,12 @@ class ReleaseArchiveTests(unittest.TestCase):
         output = self.repo / "unpacked"
         payload = self.unpack_tar(archive, output)
         self.assertEqual(payload.name, f"turborec-{turborec.VERSION}.tar")
-        self.run_command("tar", "xf", str(payload), "-C", str(output))
+        with tarfile.open(payload) as portable:
+            for name in ("turborec", "turborecorder", "install.sh", "uninstall.sh"):
+                self.assertEqual(portable.getmember(f"turborec-{turborec.VERSION}/{name}").mode, 0o755)
+        # tar's default extraction applies the caller's umask. Test the archive's
+        # actual modes and explicitly preserve them, even in a private 077 shell.
+        self.run_command("tar", "xpf", str(payload), "-C", str(output), umask=0o077)
         product = output / f"turborec-{turborec.VERSION}"
         for name in ("turborec", "turborecorder", "install.sh", "uninstall.sh"):
             self.assertEqual((product / name).stat().st_mode & 0o777, 0o755)

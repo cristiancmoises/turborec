@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Recording compatibility and outcomes
 
+- GUI/CLI validate completed-file streams, positive duration and initial frames
+  before reporting Saved or opening files; failures preserve recovery media.
+  Checks are bounded, not a whole-file scan. Wayland duration includes startup.
+- Portable archive tests verify TAR modes and preserve them explicitly during
+  extraction, including private shells with umask 077.
 - Manual Chroma is off by default. `--chroma auto` uses compatible 4:2:0;
   explicit 420/444 and saved manual choices remain supported.
 - Wayland NVENC uses an explicitly matched wf-recorder/FFmpeg backend and
@@ -35,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Português do Brasil
 
+- A GUI/CLI verifica fluxos, duração positiva e primeiros quadros antes de
+  confirmar Saved ou abrir arquivos; falhas preservam mídia recuperável.
+  A checagem é limitada, não uma varredura completa. No Wayland, o tempo inclui
+  a inicialização. Testes do pacote portátil também funcionam com umask 077.
 - Manual Chroma começa desmarcado; `--chroma auto` usa 4:2:0 compatível, sem
   exigir ajuste manual. As escolhas explícitas 420/444 continuam disponíveis.
 - NVENC no Wayland usa wf-recorder/FFmpeg realmente pareados e valida o perfil

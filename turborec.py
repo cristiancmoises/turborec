@@ -25,6 +25,7 @@ import codecs
 import glob
 import json
 import locale
+import math
 import os
 import platform
 import re
@@ -2396,6 +2397,8 @@ class RecordPlan:
     fifos: list = field(default_factory=list)  # named pipes to create at start
     encoder_name: str = ""
     encoder_kind: str = ""
+    media_ffmpeg: str = "ffmpeg"  # matched toolchain for completed-file validation
+    media_audio: bool = False     # video modes that explicitly requested audio
 
 
 # ---- Wayland (wlroots) encoder selection for wf-recorder --------------------
@@ -2724,6 +2727,109 @@ def _run_bounded_command(command, secret, timeout):
     return (1 if timed_out else proc.returncode), ("Command timed out.\n" if timed_out else "") + tail.text()
 
 
+def _run_media_probe(command, timeout=10):
+    """Keep at most 64 KiB of structured output; kill/reap only our child."""
+    output = bytearray()
+    overflow = threading.Event()
+    proc = subprocess.Popen(command, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+    def read_output():
+        try:
+            while True:
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
+                if len(output) + len(chunk) > 65536:
+                    overflow.set()
+                    proc.kill()
+                    break
+                output.extend(chunk)
+        except (OSError, ValueError):
+            overflow.set()
+        finally:
+            proc.stdout.close()
+
+    reader = threading.Thread(target=read_output, daemon=True)
+    reader.start()
+    timed_out = False
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        proc.kill()
+        _reap(proc)
+    reader.join(timeout=2)
+    return (1 if timed_out or overflow.is_set() or reader.is_alive() else proc.returncode), \
+        _decode_command_output(output)
+
+
+def _validate_recorded_media(plan):
+    """Bounded metadata and initial-frame checks, not a whole-file integrity scan."""
+    ffmpeg = plan.media_ffmpeg
+    if not os.path.dirname(ffmpeg):
+        ffmpeg = shutil.which(ffmpeg) or ffmpeg
+    probe = os.path.join(os.path.dirname(ffmpeg),
+                         "ffprobe.exe" if ffmpeg.lower().endswith(".exe") else "ffprobe")
+    stream = "v:0" if plan.is_video else "a:0"
+    expected = "video" if plan.is_video else "audio"
+    path = os.path.abspath(plan.out_path)
+    command = [probe, "-v", "error", "-protocol_whitelist", "file,pipe",
+               "-read_intervals", "%+#16", "-select_streams", stream,
+               "-show_entries", "stream=codec_type,duration:format=duration:packet=pts_time,dts_time,duration_time",
+               "-of", "json", path]
+    try:
+        code, output = _run_media_probe(command)
+        if code != 0:
+            return "Media validation failed: matching ffprobe could not inspect the recording."
+        metadata = json.loads(output)
+        streams = metadata.get("streams", [])
+        if not streams or streams[0].get("codec_type") != expected:
+            return f"Media validation failed: recording has no usable {expected} stream."
+
+        def number(value):
+            try:
+                result = float(value)
+                return result if math.isfinite(result) else None
+            except (ValueError, TypeError):
+                return None
+
+        stream_duration = number(streams[0].get("duration"))
+        if stream_duration is not None and stream_duration <= 0:
+            return "Media validation failed: recording has no positive media duration."
+        durations = [stream_duration,
+                     number(metadata.get("format", {}).get("duration"))]
+        positive = any(value is not None and value > 0 for value in durations)
+        # Matroska/live-style metadata can omit duration. In that case, a short
+        # packet prefix must demonstrate a positive timeline (negative DTS is OK).
+        if not positive and not any(value is not None for value in durations):
+            starts, ends = [], []
+            for packet in metadata.get("packets", []):
+                start = number(packet.get("pts_time", packet.get("dts_time")))
+                length = number(packet.get("duration_time"))
+                if start is not None:
+                    starts.append(start)
+                    ends.append(start + max(length or 0, 0))
+            positive = bool(starts) and max(ends) > min(starts)
+        if not positive:
+            return "Media validation failed: recording has no positive media duration."
+        decode = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error",
+                  "-xerror", "-protocol_whitelist", "file,pipe", "-i", path,
+                  "-map", "0:" + stream, "-frames:" + stream[0], "2",
+                  "-progress", "pipe:2", "-nostats", "-f", "null", "-"]
+        code, detail = _run_bounded_command(decode, plan.secret, timeout=10)
+        progress_key = "frame" if plan.is_video else "out_time_us"
+        emitted = any(int(value) > 0 for value in
+                      re.findall(r"(?m)^" + progress_key + r"=(\d{1,18})$", detail))
+        if code != 0 or not emitted:
+            return "Media validation failed: initial frames could not be decoded.\n" + detail
+    except (OSError, ValueError, TypeError, AttributeError, IndexError) as error:
+        return f"Media validation failed: check the matching FFmpeg/ffprobe installation ({error})."
+    if plan.is_video and plan.media_audio:
+        return _validate_recorded_media(replace(plan, is_video=False))
+    return ""
+
+
 def _finalize_recording(plan, running, tails, stopped=(), forced=()):
     """Shared GUI/CLI outcome: never discard media on recorder or mux failure."""
     failures = []
@@ -2747,6 +2853,10 @@ def _finalize_recording(plan, running, tails, stopped=(), forced=()):
                 failures.append(f"mux failed: {error}")
     if not failures and not plan.is_stream and not _nonempty_file(plan.out_path):
         failures.append("Recording output is missing or empty.")
+    if not failures and not plan.is_stream:
+        validation = _validate_recorded_media(plan)
+        if validation:
+            failures.append(validation)
     if failures:
         recovery = [path for path in plan.cleanup if _nonempty_file(path)]
         if _nonempty_file(plan.out_path):
@@ -3108,6 +3218,11 @@ def build_plan(si: SystemInfo, spec: RecordSpec, preview: bool = False) -> Recor
                                   if plan.encoder_name.endswith("_" + kind)), "software")
         if plan.fallback:
             plan.fallback.encoder_name, plan.fallback.encoder_kind = plan.encoder_name, plan.encoder_kind
+            plan.fallback.media_ffmpeg = si.ffmpeg
+            plan.fallback.media_audio = wants_mic or wants_sys
+        plan.media_ffmpeg = (si.ffmpeg if plan.backend == "wf-recorder+ffmpeg"
+                             else si.wayland_ffmpeg or si.ffmpeg)
+        plan.media_audio = wants_mic or wants_sys
         return plan
     cmd, out_path = build_command(si, spec, preview=preview)
     encoder_name = cmd[cmd.index("-c:v") + 1] if is_video else ""
@@ -3118,6 +3233,8 @@ def build_plan(si: SystemInfo, spec: RecordSpec, preview: bool = False) -> Recor
     return RecordPlan(out_path, [("ffmpeg", cmd, "q")],
                       is_video=is_video, self_timed=not streaming, backend="ffmpeg",
                       is_stream=streaming, secret=spec.stream_secret,
+                      media_ffmpeg=si.ffmpeg,
+                      media_audio=is_video and (wants_mic or wants_sys),
                       encoder_name=encoder_name, encoder_kind=encoder_kind if is_video else "")
 
 

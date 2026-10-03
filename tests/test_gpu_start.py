@@ -293,19 +293,30 @@ class RecordingOutcomeTests(unittest.TestCase):
             plan = tr.RecordPlan(dest, [("synthetic", [sys.executable, "-c", body, dest], "q")])
             with mock.patch.object(tr.subprocess, "Popen", side_effect=launch), \
                     mock.patch.object(tr, "time", mock.Mock(monotonic=time.monotonic, sleep=ctrl_c)), \
+                    mock.patch.object(tr, "_run_media_probe", return_value=(0,
+                        '{"streams":[{"codec_type":"video","duration":"1.0"}]}')), \
+                    mock.patch.object(tr, "_run_bounded_command", return_value=(0, "frame=1\n")), \
                     redirect_stderr(io.StringIO()) as output:
                 code = tr.record_plan(plan)
             self.assertEqual(code, 0)
             self.assertIn("Saved", output.getvalue())
             self.assertTrue(children[0].stdin.closed, "reaped recorder retains its stdin pipe")
 
-    def run_plan(self, directory, body, finalize=None, cleanup=None, secret=None):
+    def run_plan(self, directory, body, finalize=None, cleanup=None, secret=None, valid_media=False):
         destination = str(Path(directory) / "output.mkv")
         plan = tr.RecordPlan(destination,
             [("synthetic", [sys.executable, "-c", body, destination], "q")],
             finalize=finalize, cleanup=cleanup or [], secret=secret)
+        real_command = tr._run_bounded_command
+        def command(argv, secret, timeout):
+            if valid_media and "-progress" in argv:
+                return 0, "frame=1\n"
+            return real_command(argv, secret, timeout)
         with redirect_stderr(io.StringIO()) as output, \
-                mock.patch.object(tr, "open_file") as opener:
+                mock.patch.object(tr, "open_file") as opener, \
+                mock.patch.object(tr, "_run_bounded_command", side_effect=command), \
+                mock.patch.object(tr, "_run_media_probe", return_value=(0,
+                    '{"streams":[{"codec_type":"video","duration":"1.0"}]}')):
             code = tr.record_plan(plan, open_when_done=True)
         return code, output.getvalue(), opener.called
 
@@ -330,7 +341,7 @@ class RecordingOutcomeTests(unittest.TestCase):
     def test_success_reports_saved_and_opens_output(self):
         with tempfile.TemporaryDirectory() as directory:
             code, text, opened = self.run_plan(directory,
-                "import sys; open(sys.argv[1], 'wb').write(b'frames')")
+                "import sys; open(sys.argv[1], 'wb').write(b'frames')", valid_media=True)
         self.assertEqual(code, 0)
         self.assertIn("Saved", text)
         self.assertTrue(opened)
@@ -352,7 +363,7 @@ class RecordingOutcomeTests(unittest.TestCase):
             video.write_bytes(b"frames")
             dest = str(Path(directory) / "output.mkv")
             mux = [sys.executable, "-c", "import sys; open(sys.argv[1], 'wb').write(b'muxed')", dest]
-            code, text, opened = self.run_plan(directory, "pass", mux, [str(video), str(scratch)])
+            code, text, opened = self.run_plan(directory, "pass", mux, [str(video), str(scratch)], valid_media=True)
             self.assertEqual(code, 0)
             self.assertIn("Saved", text)
             self.assertTrue(opened)

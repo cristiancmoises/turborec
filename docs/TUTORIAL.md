@@ -804,9 +804,12 @@ monitor; capture one with `--monitor NAME` or pick it in the GUI **Source** menu
 **Can I record just audio?** Yes — `-m audio_mic`, `-m audio_system`, or
 `-m audio_both`.
 
-**How do I stop a CLI recording?** Press **`q`** or **Ctrl-C**, or use `-t` for a
-fixed length. A normal stop finalizes the file cleanly; interruption or system
-failure can still affect recovery.
+**How do I stop a CLI recording?** Press **`q`** or **Ctrl-C**, or use `-t` for an
+automatic stop. Wayland measures wall-clock time after launch, including backend
+startup; very short GPU clips may contain less media than requested. **Saved**
+requires successful finalization plus bounded stream/duration/initial-frame
+checks using matching FFmpeg/ffprobe. These checks are not a full-file scan.
+On failure, available media is retained for recovery instead of auto-opened.
 
 **Is it really lossless?** Audio is lossless with FLAC (default). Video uses
 lossy quality-oriented encoding at `-q best`; 4:4:4 does not make it lossless RGB.

@@ -465,13 +465,22 @@ Subcommands: `detect` (`--json`), `record`, `gui`, `devices`, `encoders`, `targe
 Modes: `auto` (default), `video_both`, `video_mic`, `video_system`, `video_only`,
 `audio_both`, `audio_mic`, `audio_system`.
 
-Stop a recording with **`q`** or **Ctrl-C** (the file is finalized cleanly), or
-use `-t/--duration` for a fixed length — `90`, `90s`, `5m`, `1h30m`, the `1h30`
+Stop a recording with **`q`** or **Ctrl-C**, or use `-t/--duration` to stop
+automatically — `90`, `90s`, `5m`, `1h30m`, the `1h30`
 shorthand for 1h 30m, or `HH:MM:SS`. Everything is overridable
 (`--mic-device`, `--system-device`, `--region`, `--software`, `--open`,
 `--countdown`, …) and defaults can be saved in a JSON config (`--config`, or
 `$TURBOREC_CONFIG` / `~/.config/turborec/config.json`). Run
 `python3 turborec.py record -h` for the full list.
+
+On Wayland, the duration limit counts wall-clock time after launch; backend
+startup can make the recorded media shorter, especially for very short GPU
+clips. GUI/CLI report **Saved** only after the recorder/mux succeeds and the
+completed file passes bounded checks for the requested streams, positive media
+duration and initial frame decoding. This is not a whole-file integrity scan.
+Keep the matching `ffprobe` beside the selected FFmpeg (both are bundled on
+Windows). Missing tools or unusable media produce an error, do not auto-open
+the file, and preserve available output/intermediates for recovery.
 
 ### 📡 Live streaming to YouTube
 

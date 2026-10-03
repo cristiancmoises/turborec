@@ -437,9 +437,19 @@ turborec record
 
 Use `-m video_both` quando quiser exigir explicitamente as duas fontes.
 
-Na CLI, pressione `q` ou `Ctrl+C` para encerrar e finalizar o arquivo
-corretamente. Por padrão, vídeos são salvos em `~/Videos` e gravações somente de
+Na CLI, pressione `q` ou `Ctrl+C` para encerrar a gravação. Por padrão, vídeos
+são salvos em `~/Videos` e gravações somente de
 áudio em `~/Audio`. No Windows, essas pastas ficam dentro do perfil do usuário.
+
+No Wayland, `-t/--duration` conta o tempo de relógio após iniciar o processo;
+a inicialização do backend pode deixar a mídia mais curta, sobretudo em clipes
+GPU muito breves. A GUI e a CLI só exibem **Saved** após o gravador/mux terminar
+com sucesso e o arquivo passar por verificações limitadas: presença dos fluxos
+solicitados, duração positiva e decodificação dos primeiros quadros. Isso não
+verifica a integridade do arquivo inteiro. Mantenha o `ffprobe` correspondente
+ao lado do FFmpeg selecionado (ambos acompanham a versão Windows). Se faltar
+uma ferramenta ou a mídia for inutilizável, o programa mostra erro, não abre
+o vídeo automaticamente e preserva arquivos disponíveis para recuperação.
 
 Ao executar a partir do código-fonte, troque `turborec` por
 `python3 turborec.py` (`py turborec.py` no Windows). Ao usar o `.exe`, troque por
